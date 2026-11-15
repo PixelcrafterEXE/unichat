@@ -4,6 +4,16 @@ One app for WhatsApp, Signal, Matrix, Mattermost, Instagram and Discord (more me
 personal chats, polls, reactions, attachments, locations, contact cards, mesh groups that span platforms, a local encrypted
 message archive, and read-only archives for accounts you signed out of.
 
+## Screenshots
+
+Mock data (`?mock`), no real accounts.
+
+<p>
+  <img src="docs/screenshots/desktop.png" alt="UniChat on the desktop: chat list, communities rail and a conversation" width="640">
+  <img src="docs/screenshots/phone-list.png" alt="UniChat on a phone: chat list" width="160">
+  <img src="docs/screenshots/phone-chat.png" alt="UniChat on a phone: a conversation" width="160">
+</p>
+
 ## Run it
 
 ```
