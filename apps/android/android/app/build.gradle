@@ -1,0 +1,97 @@
+apply plugin: 'com.android.application'
+
+import groovy.json.JsonSlurper
+
+// versionName / versionCode come from apps/android/package.json ("version": "MAJOR.MINOR.PATCH" -> code = MAJOR*10000 + MINOR*100 + PATCH).
+// Override the code with -Punimsg.versionCode=N (Play wants a strictly increasing integer per upload).
+def pkgVersion = new JsonSlurper().parse(file('../../package.json')).version as String
+def vparts = pkgVersion.tokenize('.-').take(3).collect { it.isInteger() ? it.toInteger() : 0 }
+while (vparts.size() < 3) vparts << 0
+def computedVersionCode = vparts[0] * 10000 + vparts[1] * 100 + vparts[2]
+
+// Foreground service type: specialUse (default) or remoteMessaging. -Punimsg.fgsType=remoteMessaging
+def fgsType = (project.findProperty('unimsg.fgsType') ?: 'specialUse') as String
+if (!['specialUse', 'remoteMessaging'].contains(fgsType)) throw new GradleException("unimsg.fgsType must be specialUse or remoteMessaging, got " + fgsType)
+
+// Release signing: NEVER commit secrets. Provide UNIMSG_KEYSTORE (path), UNIMSG_KEYSTORE_PASSWORD, UNIMSG_KEY_ALIAS, UNIMSG_KEY_PASSWORD
+// as environment variables or in ~/.gradle/gradle.properties (same names). Without them release builds are produced UNSIGNED.
+def signProp = { String n -> System.getenv(n) ?: (project.findProperty(n) as String) }
+def releaseKeystore = signProp('UNIMSG_KEYSTORE')
+
+android {
+    namespace = "app.unimsg.android"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "app.unimsg.android"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode((project.findProperty('unimsg.versionCode') ?: System.getenv('UNICHAT_VERSION_CODE') ?: computedVersionCode) as int)
+        versionName((project.findProperty('unimsg.versionName') ?: System.getenv('UNICHAT_VERSION') ?: pkgVersion) as String)   // CI: UNICHAT_VERSION=0.1.<run>, UNICHAT_VERSION_CODE=1000+<run> (see release.yml)
+        manifestPlaceholders = [fgsType: fgsType, fgsPermission: "android.permission.FOREGROUND_SERVICE_" + (fgsType == 'specialUse' ? 'SPECIAL_USE' : 'REMOTE_MESSAGING')]
+        buildConfigField 'String', 'FGS_TYPE', '"' + fgsType + '"'
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }   // add 'armeabi-v7a' if you fetched it; libnode.so is ~25 MB per ABI
+        externalNativeBuild { cmake { cppFlags '-std=c++17'; arguments '-DANDROID_STL=c++_shared' } }  // libnode.so links libc++_shared.so
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    ndkVersion = rootProject.ext.ndkVersion
+    externalNativeBuild { cmake { path = file('src/main/cpp/CMakeLists.txt'); version = '3.22.1' } }
+    sourceSets { main { jniLibs.srcDirs = ['libnode/bin', 'libsignal/bin', 'hyperdht/bin'] } }   // libsignal/bin/<abi>/libsignal_client_node.so from scripts/build-libsignal-android.sh (optional; absent = Signal stays a stub); hyperdht/bin/<abi>/lib{udx,sodium}_native.so from scripts/build-hyperdht-android.sh (optional; absent = "Reach my devices from anywhere" reports "not available on this platform")
+    compileOptions { sourceCompatibility JavaVersion.VERSION_21; targetCompatibility JavaVersion.VERSION_21 }
+    buildFeatures { buildConfig = true }
+    signingConfigs {
+        release {
+            if (releaseKeystore) {
+                storeFile file(releaseKeystore)
+                storePassword signProp('UNIMSG_KEYSTORE_PASSWORD')
+                keyAlias signProp('UNIMSG_KEY_ALIAS')
+                keyPassword signProp('UNIMSG_KEY_PASSWORD')
+            }
+        }
+    }
+    // native debug symbols for Play crash reports (uploaded inside the AAB)
+    packaging { jniLibs { useLegacyPackaging = false } }
+    buildTypes {
+        release {
+            if (releaseKeystore) signingConfig signingConfigs.release
+            minifyEnabled true
+            shrinkResources true
+            ndk { debugSymbolLevel 'SYMBOL_TABLE' }
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"   // WebMessageListener + document-start script (UnimsgPlugin)
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

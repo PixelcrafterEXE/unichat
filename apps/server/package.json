@@ -1,0 +1,4 @@
+{ "name": "@unimsg/server", "version": "0.1.0", "type": "module",
+  "dependencies": { "@unimsg/core": "workspace:*", "@unimsg/host": "workspace:*", "ws": "^8.18.0" },
+  "devDependencies": { "@types/ws": "^8.5.12", "@unimsg/sync": "workspace:*" },
+  "scripts": { "dev": "tsx src/main.ts", "relay": "tsx src/relay-main.ts", "typecheck": "tsc -p .", "test": "tsx --test src/backup-http.test.ts src/relay.test.ts" } }

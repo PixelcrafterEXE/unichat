@@ -1,0 +1,30 @@
+{
+  "name": "@unimsg/android",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Android shell: Capacitor WebView (apps/ui) + the TypeScript backend inside the app via nodejs-mobile",
+  "scripts": {
+    "bundle": "node scripts/build-backend-bundle.mjs",
+    "smoke": "node scripts/persist-test.mjs && node scripts/build-backend-bundle.mjs --smoke",
+    "test": "node scripts/persist-test.mjs && node scripts/build-backend-bundle.mjs --smoke",
+    "ui": "pnpm --filter @unimsg/ui build",
+    "sync": "pnpm run ui && pnpm run bundle && cap sync android",
+    "debug": "pnpm run sync && cd android && ./gradlew assembleDebug",
+    "release": "pnpm run sync && cd android && ./gradlew bundleRelease",
+    "check-env": "node scripts/check-android-env.mjs",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/core": "8.6.2",
+    "@unimsg/host": "workspace:*",
+    "sql.js": "1.16.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.2",
+    "@types/sql.js": "1.4.11",
+    "esbuild": "0.28.2",
+    "ws": "^8.18.0"
+  }
+}

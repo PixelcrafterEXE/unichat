@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=UniChat
+Comment=Unified messenger
+Exec=unichat %U
+Icon=org.unichat.desktop
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+StartupWMClass=UniChat

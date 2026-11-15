@@ -1,0 +1,17 @@
+.bk h3 { margin: 28px 0 8px; font-size: 15px; } .bk .box { background: var(--bg2); border-radius: 6px; padding: 12px 14px; margin: 8px 0; }
+.bk label.opt { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; } .bk label.opt input { margin-top: 3px; } .bk label.opt small, .bk .sub { display: block; color: var(--muted); font-size: 12px; }
+.bk .warn { border-left: 3px solid #d29922; background: var(--bg3); padding: 8px 12px; border-radius: 4px; font-size: 13px; margin: 8px 0; } .bk .warn b { color: #e3b341; }
+.bk .bar { height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; margin: 8px 0 4px; } .bk .bar i { display: block; height: 100%; background: var(--accent); transition: width .15s; }
+.bk .strength { font-size: 12px; margin: 4px 0 8px; } .bk .strength.weak { color: var(--danger); } .bk .strength.ok { color: #d29922; } .bk .strength.strong { color: #3ba55d; }
+.bk .drop { border: 2px dashed var(--border); border-radius: 8px; padding: 18px; text-align: center; color: var(--muted); cursor: pointer; } .bk .drop.over { border-color: var(--accent); color: var(--fg); }
+.bk .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; } .bk input[type=password], .bk input[type=text] { margin: 4px 0; }
+.bk .ok { color: #3ba55d; } .bk .err { color: var(--danger); } .bk table { width: 100%; font-size: 13px; border-collapse: collapse; } .bk td { padding: 3px 6px 3px 0; vertical-align: top; } .bk code { word-break: break-all; font-size: 12px; }
+
+/* account picker of the "Move a login" wizard: selectable cards instead of bare radios */
+.bk label.opt input[type=radio], .bk label.opt input[type=checkbox] { width: auto; flex: 0 0 auto; padding: 0; margin: 0; }
+.bk label.acctcard { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin: 6px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg3); cursor: pointer; }
+.bk label.acctcard:hover { background: var(--hover); }
+.bk label.acctcard.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg3)); }
+.bk label.acctcard.off { opacity: .55; cursor: not-allowed; }
+.bk label.acctcard .acctname { display: flex; flex-direction: column; min-width: 0; flex: 1; } .bk label.acctcard .acctname b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk .btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; } .bk .btns > button { margin: 0; height: 38px; padding: 0 18px; }

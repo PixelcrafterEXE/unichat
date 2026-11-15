@@ -1,0 +1,19 @@
+{
+  "name": "@unimsg/provider-whatsapp",
+  "version": "0.2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@unimsg/core": "workspace:*",
+    "@whiskeysockets/baileys": "6.7.24"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --import tsx --test src/map.test.ts src/connector.test.ts src/resend.test.ts src/pollwire.test.ts src/names.test.ts src/features.test.ts src/sessionalias.test.ts src/sessionalias2.test.ts src/pollwire2.test.ts src/resend2.test.ts src/features2.test.ts src/pins.test.ts"
+  }
+}

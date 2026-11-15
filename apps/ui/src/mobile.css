@@ -1,0 +1,144 @@
+/* ===== touch / narrow-screen layer (loaded after styles.css) =====
+   Layout switches at 720px (phone); sizing for fingers follows the input device (pointer: coarse), so tablets get big targets
+   without losing the three-column layout. Safe-area insets keep controls clear of the notch / gesture bar (viewport-fit=cover). */
+
+/* ---- windowed lists (all sizes): fixed row heights come from these variables, see VList.tsx ---- */
+.chats ul { --rowh: 48px; --headh: 32px; --emptyh: 28px; }
+.chats ul.virt > li[data-chat] { height: var(--rowh); }
+.chats ul.virt > li.cathead { height: var(--headh); }
+.chats ul.virt > li.catempty { height: var(--emptyh); }
+.chats li.vspace { display: block; padding: 0; pointer-events: none; background: none !important; }
+.messages { overflow-anchor: auto; }
+.messages.win { overflow-anchor: none; } /* the windowed list keeps its own anchor (Conversation.tsx) */
+.vgap { overflow-anchor: none; }
+.minner.win > div { display: flow-root; } /* margins inside a row count in its measured height */
+.selbox { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--muted); flex: none; display: inline-grid; place-items: center; }
+.selbox.on { background: var(--accent); border-color: var(--accent); } .selbox.on::after { content: ""; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); }
+.msgmore { display: none; }
+.vsrc { display: none; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
+
+/* ---- finger-sized controls (any width) ---- */
+@media (pointer: coarse) {
+  .chats ul { --rowh: 60px; --headh: 40px; --emptyh: 36px; }
+  .chats li[data-chat] { min-height: var(--rowh); } .chats li.cathead { min-height: var(--headh); }
+  .icon { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+  .chats li .more { display: inline-flex; min-width: 40px; min-height: 40px; }
+  .chats li:hover .unread, .chats li.menuopen .unread { display: revert; }
+  .chats li.cathead .more { display: inline-flex; }
+  .popmenu > button, .railmenu button, .ctxmenu > button { min-height: 44px; }
+  .actions { display: none !important; }
+  .msgmore { display: none !important; } /* phones: hold a message for its menu (no per-message "..." button) */
+  .msg { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  .chats li { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  .msg .body { position: relative; }
+  .msg:hover, .bubbles .msg:hover { background: none; }
+  .chats li:hover:not(.active):not(.selected):not(.menuopen) { background: none; }
+  .vidctrls { opacity: 1; } .vidbtn { padding: 8px; }
+  .member .rm { opacity: .8; }
+  .tabs button, .secondary, .danger { min-height: 44px; }
+  .emojigrid button { min-height: 44px; font-size: 24px; }
+  .reactpick button { font-size: 24px; min-width: 40px; min-height: 40px; }
+  .ctxreacts button { font-size: 26px; min-width: 44px; min-height: 44px; }
+}
+@media (pointer: coarse), (max-width: 720px) { input, textarea, select { font-size: 16px; } } /* below 16px Android / iOS zoom the page when an input is focused */
+
+/* ---- phone ---- */
+@media (max-width: 720px) {
+  html, body { overflow-x: hidden; overscroll-behavior: none; }
+  .app, .app.withinfo { height: 100dvh; }
+  .app.inchat, .app.inchat.withinfo { grid-template-columns: minmax(0, 1fr); } /* a chat gets the whole width; the rail comes back with the chat list */
+  .app.inchat .rail { display: none; }
+  .rail { padding-top: calc(12px + env(safe-area-inset-top)); padding-bottom: calc(12px + env(safe-area-inset-bottom)); gap: 10px; }
+  .pill { width: 48px; height: 48px; flex: none; }
+  .chats > header, main > header, aside.info > header, .gsearch .gh { height: calc(52px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); }
+  .chats { padding-right: env(safe-area-inset-right); }
+  .chats ul { padding-bottom: 8px; }
+  .chats footer { padding-bottom: calc(10px + env(safe-area-inset-bottom)); min-height: 44px; }
+  .archivedbar { min-height: 44px; }
+  .chatsearch input { padding: 10px 0; }
+  main > header { padding-left: 4px; padding-right: 8px; gap: 4px; }
+  .burger { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: none; color: var(--fg); }
+  .titlebtn { min-width: 0; flex: 1; justify-content: flex-start; min-height: 44px; }
+  .hright { gap: 0; flex: none; } .hright .icon { min-width: 44px; min-height: 44px; }
+  .selbar { position: sticky; top: 0; z-index: 3; flex-wrap: nowrap; overflow-x: auto; margin: 6px 8px 0; scrollbar-width: none; } .selbar::-webkit-scrollbar { display: none; }
+  .selbar > b { flex: none; } .selbar button:not(.icon) { flex: none; min-height: 40px; padding: 6px 12px; font-size: 14px; white-space: nowrap; } .selbar .icon { margin-left: 0; }
+
+  /* conversation */
+  .messages { padding-bottom: 8px; }
+  .msg, .bubbles .msg { padding-left: 10px; padding-right: 10px; gap: 8px; }
+  .msg .avatar { width: 32px !important; height: 32px !important; font-size: 12px !important; } .gtime { width: 32px; font-size: 0; }
+  .bubbles .msg .body { max-width: 88%; } .bubbles .msg.grouped:not(.k-dm):not(.mine) .body { margin-left: 40px; }
+  .body, .msg p, .meta, .quote, .ctitle, .cbody { overflow-wrap: anywhere; word-break: break-word; } .msg a { overflow-wrap: anywhere; }
+  .imgwrap, .vid { max-width: 100%; min-width: 0; } .filecard, .pollcard, .cardmsg, .contactcard { min-width: 0; max-width: 100%; } .pollcard, .cardmsg { width: 100%; }
+  .loccard { max-width: 100%; } .map.off { max-width: 100%; }
+  .fn b { overflow-wrap: anywhere; white-space: normal; }
+  .replybar, .pendingbar { padding: 8px 12px; } .replybar { min-height: 44px; }
+  .viabar { padding: 6px 10px; } .viabtn { min-height: 40px; }
+  .composer { margin: 0 8px calc(8px + env(safe-area-inset-bottom)); }
+  .composer .tools .icon.big, .composer > .icon.big { height: 44px; width: 42px; }
+  .composer textarea { min-height: 44px; padding: 10px 6px; }
+  .composer .sendbtn { width: 44px; height: 44px; border-radius: 22px; margin: 0 0 0 2px; }
+  .composer.ro, .composer.recording { margin-bottom: calc(8px + env(safe-area-inset-bottom)); }
+  .composer .popmenu { max-width: calc(100vw - 24px); bottom: 50px; } .composer .emojipop { min-width: 0; width: min(300px, calc(100vw - 24px)); }
+  .mentionpop { left: 8px; right: 8px; max-width: none; }
+  .tolatest { right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); width: 44px; height: 44px; }
+  .reactpick { right: 8px; max-width: calc(100vw - 16px); flex-wrap: wrap; }
+  .toast { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); max-width: none; }
+  .notice, .error { margin: 6px 10px; }
+
+  /* right-hand panels become full-height sheets */
+  aside.info, .app.withinfo aside.info { position: fixed; inset: 0; width: 100%; z-index: 12; border-left: 0; padding-bottom: env(safe-area-inset-bottom); }
+  .infobody { padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); }
+  .infoactions button { min-height: 44px; } .member { padding: 8px 0; min-height: 48px; }
+  .thumbs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sidesearch .sbox input { padding: 12px 0; } .sres { padding: 12px 10px; }
+
+  /* dialogs are bottom sheets */
+  .modalbg { place-items: end stretch; }
+  .modalbg.top { place-items: start stretch; padding-top: 0; }
+  .modal, .modal.wide { width: 100%; max-width: none; max-height: min(92dvh, calc(100dvh - env(safe-area-inset-top) - 8px)); border-radius: 16px 16px 0 0; padding: 14px 16px calc(18px + env(safe-area-inset-bottom)); overscroll-behavior: contain; }
+  .modalbg.top .modal { border-radius: 0 0 16px 16px; padding-top: calc(14px + env(safe-area-inset-top)); }
+  .modal::before { content: ""; display: block; width: 36px; height: 4px; border-radius: 2px; background: var(--muted); opacity: .45; margin: 0 auto 10px; }
+  .modalbg.top .modal::before { display: none; }
+  .mhead .icon { min-width: 44px; min-height: 44px; margin-right: -10px; }
+  .modal input:not([type=checkbox]), .modal select, .modal textarea { padding: 12px; min-height: 46px; }
+  .modal input[type=checkbox], .pick input[type=checkbox] { width: 22px; height: 22px; }
+  .pick label, .rowbtn, .menuitem, .modal .primary, .modal .secondary, .modal .danger { min-height: 46px; }
+  .btnrow { flex-wrap: wrap; } .btnrow > button { flex: 1 1 auto; min-height: 46px; }
+  .row2 { grid-template-columns: 1fr; } .optrow input { min-width: 0; }
+  .qr svg { max-width: 100%; height: auto; }
+  .lightbox { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  .lightbox img { max-width: 100vw; max-height: calc(100dvh - 110px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); border-radius: 0; }
+  .lightbox .lbvideo { width: 100vw; height: auto; max-height: calc(100dvh - 110px); }
+  .lightbox .dl { min-height: 44px; display: inline-flex; align-items: center; }
+
+  /* context menus: bottom sheets with a dimmed backdrop (positions given by the click are ignored) */
+  .ctxmenu, .railmenu, .chatmenu { position: fixed !important; left: 0 !important; right: 0 !important; top: auto !important; bottom: 0 !important; width: auto; min-width: 0 !important; max-width: none !important; max-height: 72dvh; overflow-y: auto;
+    border-radius: 16px 16px 0 0; padding: 8px 8px calc(12px + env(safe-area-inset-bottom)); box-shadow: 0 0 0 100vmax #0007; z-index: 45; overscroll-behavior: contain; }
+  .ctxmenu > button, .railmenu button, .chatmenu > button { min-height: 50px; font-size: 16px; padding: 10px 14px; gap: 14px; }
+  .railmenu .hd { max-width: none; padding: 8px 14px; font-size: 13px; }
+  .ctxreacts { justify-content: space-around; } .ctxinfo { padding: 10px 14px calc(4px); }
+
+  /* settings */
+  .settings { padding-top: env(safe-area-inset-top); }
+  .settings > section { padding: 16px 14px calc(24px + env(safe-area-inset-bottom)); max-width: none; }
+  .row { flex-wrap: wrap; gap: 8px; } .row select, .privrow select { width: min(220px, 100%) !important; }
+  .privrow { flex-wrap: wrap; } .toggle { min-height: 56px; }
+  .toggle i { width: 48px; height: 28px; } .toggle i::after { width: 22px; height: 22px; } .toggle input:checked + i::after { left: 23px; }
+  .settings nav button { min-height: 44px; } .closex { width: 44px; height: 44px; }
+  .acard { padding: 12px; }
+  .aactions button, .aactions .primary.inline { min-height: 44px; }
+  .connectcard { max-width: 100%; }
+}
+@media (max-width: 400px) { .bubbles .msg .body { max-width: 92%; } .modal { padding-left: 14px; padding-right: 14px; } }
+@media (max-width: 720px) { main > header .prov { display: none; } .titlebtn span:last-child { min-width: 0; } }
+
+/* link previews are compact on a phone: a small picture, a clamped description */
+@media (max-width: 720px) {
+  .cardmsg { padding: 8px 10px; }
+  .cardmsg .cardpic { max-height: 110px; margin-bottom: 6px; }
+  .cardmsg.thumbimg { padding-right: 70px; min-height: 60px; } .cardmsg.thumbimg .cardpic { width: 54px; height: 54px; top: 8px; right: 8px; }
+  .cardmsg p, .cardmsg .cdesc, .cardmsg .cbody { font-size: 12.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .cardmsg b, .cardmsg .ctitle { font-size: 13.5px; }
+}

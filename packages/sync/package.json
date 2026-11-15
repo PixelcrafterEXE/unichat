@@ -1,0 +1,24 @@
+{
+  "name": "@unimsg/sync",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testkit": "./src/testkit.ts"
+  },
+  "dependencies": {
+    "@unimsg/core": "workspace:*",
+    "@unimsg/provider-remote": "workspace:*",
+    "hyperdht": "6.35.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.12",
+    "@unimsg/store-sqlite": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "tsx --test src/*.test.ts",
+    "test:node18": "node scripts/node18.mjs"
+  }
+}

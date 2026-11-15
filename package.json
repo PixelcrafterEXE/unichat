@@ -1,0 +1,17 @@
+{
+  "name": "unimsg",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ui": "pnpm --filter @unimsg/ui dev",
+    "server": "pnpm --filter @unimsg/server dev",
+    "desktop": "pnpm --filter @unimsg/desktop dev",
+    "e2e": "pnpm --filter @unimsg/ui e2e",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.5.0"
+  }
+}

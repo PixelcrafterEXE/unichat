@@ -1,0 +1,49 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+out/
+.test-build/
+*.tsbuildinfo
+apps/ui/e2e/out/
+
+# Android: generated or fetched native/binary parts (rebuilt by apps/android/scripts)
+apps/android/android/.gradle/
+apps/android/android/build/
+apps/android/android/app/build/
+apps/android/android/capacitor-cordova-android-plugins/build/
+apps/android/android/app/libnode/
+apps/android/android/app/libsignal/
+apps/android/android/app/hyperdht/
+apps/android/android/app/src/main/assets/nodejs-project/
+apps/android/android/app/src/main/assets/public/
+apps/android/android/app/src/main/assets/capacitor.config.json
+apps/android/android/app/src/main/assets/capacitor.plugins.json
+apps/android/android/local.properties
+apps/android/android/.idea/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# local data and secrets (never commit)
+*.db
+*.db-wal
+*.db-shm
+*.key
+.env
+.env.*
+unimsg-data/
+accounts/
+backups/
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+*.log
+*.swp
+apps/ui/e2e/shots/

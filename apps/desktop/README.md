@@ -1,0 +1,51 @@
+# UniChat desktop (Electron)
+
+Electron shell for UniChat. The backend (`@unimsg/host` `startBackend`, all providers, SQLite store) runs **in-process in the main
+process**; the UI (`apps/ui`) is the renderer and talks to it over IPC (`window.unimsg.call` / `onEvent`, see `src/preload.ts`).
+No server, no port. Data directory stays `~/.config/unimsg` (Linux), `%APPDATA%/unimsg` (Windows); override with `UNIMSG_DATA=/some/dir`.
+
+## Requirements
+- Electron **>= 35** is required: `store-sqlite` uses `node:sqlite` (Node >= 22.13). Electron 32 (Node 20) does not have it. We use Electron 45 (Node 24.22, verified `node:sqlite` works).
+- Electron 45 has no postinstall: the binary is downloaded by `pnpm --filter @unimsg/desktop setup` (runs `install-electron`). `electron-vite`/`electron-builder` also fetch it on demand. No pnpm build-script approval is needed.
+- `pnpm-workspace.yaml` has `minimumReleaseAgeExclude: [electron@45.3.1]` (added by pnpm because the release is newer than the age gate).
+
+## Commands (from the repo root)
+```
+flock /tmp/pnpm.lock pnpm install
+pnpm --filter @unimsg/desktop setup          # download the Electron binary once
+pnpm --filter @unimsg/desktop dev            # electron-vite dev (HMR renderer)
+pnpm --filter @unimsg/desktop build          # -> apps/desktop/out/{main,preload,renderer}
+pnpm --filter @unimsg/desktop start          # run the built app (electron-vite preview)
+pnpm --filter @unimsg/desktop package:dir    # unpacked app in dist/linux-unpacked/unichat
+pnpm --filter @unimsg/desktop dist:linux     # AppImage + deb
+pnpm --filter @unimsg/desktop dist:win       # NSIS installer + portable exe (build on Windows, or Linux with wine)
+```
+Headless run with a throwaway profile:
+```
+UNIMSG_DATA=$(mktemp -d) xvfb-run -a apps/desktop/node_modules/electron/dist/electron apps/desktop/out/main/main.js --no-sandbox --remote-debugging-port=9333
+```
+(`--no-sandbox` only because this box has no setuid chrome-sandbox; `UNIMSG_NO_DIALOG=1` suppresses the keychain warning dialog.)
+
+## Design notes
+- `electron.vite.config.ts`: everything is bundled into `out/main/main.js` **except** `@signalapp/libsignal-client` (finds its `.node` prebuild relative to its own dir; bundling breaks it). It is a runtime `dependency` of this package and `asarUnpack`ed in `electron-builder.yml`.
+- `@unimsg/host` loads WhatsApp via `import(/* @vite-ignore */ name)`, which a bundler cannot follow (the provider silently disappeared). A small Vite plugin in the config rewrites it to a static import. Better fix upstream: import it statically in host.
+- Preload is built as CommonJS (`preload.cjs`): ESM preloads do not work with `sandbox: true`.
+- Security: contextIsolation + sandbox, CSP header injected for the packaged build (`default-src 'self'`, no remote scripts), window.open/navigation blocked (http(s) links go to the system browser), only `notifications` and `media` permissions granted, single-instance lock.
+- Key storage: `safeStorage` if a real keychain backend exists. On Linux Electron reports "available" even for the plaintext `basic_text` backend, which we treat as unavailable. Fallback is the host's 0600 `unimsg.key` file plus a warning dialog. If `unimsg.key.enc` exists but the keychain is gone, the app refuses to start instead of minting a new key. The `.deb` depends on `libsecret-1-0`.
+- Tray icon (Show / Quit); closing the window hides to tray when a tray exists. Web `Notification` is used by the UI (permission auto-granted).
+- Icon: `build/icon.png` (rendered from `apps/ui/public/favicon.svg`).
+
+## Verified (Linux, Xvfb, Electron 45.3.1)
+- `build`, `electron-builder --dir` (libsignal prebuilds present in `app.asar.unpacked`), and running both `out/main/main.js` and the packaged `dist/linux-unpacked/unichat`.
+- IPC: `window.unimsg` exists, `providers` returns signal, matrix, mattermost, instagram, discord, threema, whatsapp (+teams in later build); the UI shows the empty state and "Add account" lists the providers (`docs/screenshot-add-account.png`, `docs/screenshot-main.png`).
+- Encrypted DB created in the throwaway data dir; keychain path (safeStorage) and 0600 fallback (no D-Bus) both exercised.
+- CSP: remote `fetch` blocked; `Notification.requestPermission()` returns granted.
+
+## Not verified
+- AppImage/deb/NSIS/portable artifacts (only `--dir` built); Windows and macOS runs. wine exists here but no Windows installer was built.
+- Tray rendering and native notification popups (no tray/notification daemon under Xvfb; code paths run without errors).
+- Real provider logins (no network services contacted). `pnpm typecheck` currently fails only inside `packages/provider-matrix` (`methodFactory`/`setLevel` on logger).
+- `safeStorage.isEncryptionAvailable`/`encryptString` are deprecated in Electron 45 (still work); migrating needs an async KeyWrap in `@unimsg/host`.
+
+## Self-update
+Own implementation (no electron-updater: the Hub's `Updater` already does release lookup, token handling, download and SHA-256 verification, see docs/ARCHITECTURE.md "Updates"). `src/updater.ts`: `desktopAsset()` picks `desktop-linux-appimage` (running as AppImage, `$APPIMAGE` set; self-update) or `desktop-linux-deb` (manual); unpackaged runs and other OSes get no updates. `replaceAppImage()` copies the verified file next to the running one, renames the old one to `<name>.AppImage.bak`, renames the new one into place and `main.ts` relaunches. Package version: `0.0.0-dev` locally (shown as `dev`); CI builds with `UNICHAT_VERSION=0.1.N` (`dist:linux` passes it as `extraMetadata.version`). Release file names: `unichat-desktop-<version>.AppImage|deb`. Not tested on a real AppImage in this environment.

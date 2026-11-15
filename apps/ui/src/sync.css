@@ -1,0 +1,35 @@
+/* Settings > Sync devices. Phone width: stacked rows, bottom-sheet-like approval dialogs, 44px touch targets. */
+.bk.sync .btns > button, .bk.sync .row2 > button, .bk.sync button.secondary, .bk.sync select, .bk.sync input[type=text], .bk.sync input[type=number] { min-height: 44px; }
+.bk.sync label.opt { min-height: 44px; }
+.bk.sync .sas { font: 600 34px/1.1 ui-monospace, monospace; letter-spacing: 3px; margin: 10px 0; text-align: center; }
+.bk.sync .sheet { border: 1px solid var(--accent); background: var(--bg2); border-radius: 12px; padding: 14px 16px; margin: 12px 0; box-shadow: 0 -4px 18px rgba(0,0,0,.25); }
+.bk.sync .sheet h3 { margin: 0 0 6px; }
+.bk.sync .devrow { border-top: 1px solid var(--border); padding: 10px 0; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.bk.sync .devrow:first-child { border-top: 0; }
+.bk.sync .devrow .who { flex: 1 1 180px; min-width: 0; }
+.bk.sync .devrow .state { flex: 1 1 160px; }
+.bk.sync .addrs { flex: 1 1 100%; font-size: 12px; } .bk.sync .addrs li { display: flex; gap: 8px; align-items: center; min-height: 32px; list-style: none; }
+.bk.sync .addrs ul { margin: 4px 0; padding: 0; }
+.bk.sync .row2 { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .bk.sync .row2 > input { flex: 1 1 140px; min-width: 0; }
+.bk.sync .linkbtn { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 6px 0; min-height: 44px; }
+.bk.sync .bar.big { height: 10px; }
+@media (max-width: 640px) {
+  .bk.sync table { display: block; }
+  .bk.sync .btns > button { flex: 1 1 100%; }
+  .bk.sync .sas { font-size: 30px; }
+}
+
+.bk.sync .adv { margin-top: 18px; } .bk.sync .adv > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+.bk.sync .box.small h4 { margin: 0 0 6px; font-size: 14px; }
+.bk.sync button.big { min-height: 48px; font-size: 16px; padding: 0 24px; }
+.bk.sync .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: 0 0 10px; } .bk.sync .dot.on { background: #3ba55d; }
+.bk.sync .devrow { flex-wrap: nowrap; } .bk.sync .devrow .who small { display: block; }
+.bk.sync .paircard { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; } .bk.sync .qr { background: #fff; padding: 8px; border-radius: 6px; line-height: 0; }
+.bk.sync .code { font: 600 22px/1.2 ui-monospace, monospace; word-break: break-all; }
+.bk.sync .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: syncspin .8s linear infinite; vertical-align: -2px; margin-right: 4px; }
+@keyframes syncspin { to { transform: rotate(360deg); } }
+.bk.sync .syncdlg { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.bk.sync .syncdlg .sheet { width: min(420px, 100%); margin: 0; position: static; text-align: center; } .bk.sync .syncdlg .btns { justify-content: center; }
+.bk.sync .synctoast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 20px; z-index: 70; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; box-shadow: 0 4px 20px #0006; }
+.bk.sync .scanner video { width: 100%; max-height: 50vh; background: #000; border-radius: 8px; }
+.bk.sync .nearby { border-top: 1px solid var(--border); padding: 6px 0; }

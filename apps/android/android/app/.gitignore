@@ -1,0 +1,7 @@
+/build/*
+!/build/.npmkeep
+
+# UniChat: generated / downloaded
+app/libnode/
+app/src/main/assets/nodejs-project
+.cxx/

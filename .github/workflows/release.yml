@@ -1,0 +1,193 @@
+name: Release
+
+# Every push to main builds the artifacts and publishes them as a GitHub release (version 0.1.<run number>).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  VERSION: 0.1.${{ github.run_number }}
+  # injected into every build: the UI (Vite define), the desktop package.json version (electron-builder), the Android versionName and the Android backend bundle
+  UNICHAT_VERSION: 0.1.${{ github.run_number }}
+
+jobs:
+  web:
+    name: Web UI and server bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install -g pnpm@12.17.0
+      - run: pnpm install --frozen-lockfile
+      - name: Build the web UI
+        run: pnpm --filter @unimsg/ui build
+      - name: Package
+        run: |
+          mkdir -p artifacts
+          tar -czf artifacts/unichat-web-ui-${VERSION}.tar.gz -C apps/ui/dist .
+          # the backend as a self-contained source bundle (run with: pnpm install && pnpm --filter @unimsg/server dev)
+          git archive --format=tar.gz --prefix=unichat-${VERSION}/ -o artifacts/unichat-source-${VERSION}.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: artifacts/*
+
+  desktop:
+    name: Desktop app (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install -g pnpm@12.17.0
+      - run: pnpm install --frozen-lockfile
+      - name: Build the web UI (bundled into the app)
+        run: pnpm --filter @unimsg/ui build
+      - name: Package the desktop app (version = UNICHAT_VERSION)
+        run: pnpm --filter @unimsg/desktop dist:linux
+      - name: Collect
+        run: |
+          mkdir -p artifacts
+          cp apps/desktop/dist/*.AppImage artifacts/ 2>/dev/null || true
+          cp apps/desktop/dist/*.deb artifacts/ 2>/dev/null || true
+          ls -la artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: artifacts/*
+          if-no-files-found: warn
+
+  android:
+    name: Android app (debug APK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # The Android build cross-compiles libsignal (Rust) and fetches nodejs-mobile: long, and best effort in CI for now.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: Android SDK / NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler cmake clang patchelf unzip
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-linux-android x86_64-linux-android
+      - run: npm install -g pnpm@12.17.0
+      - run: pnpm install --frozen-lockfile
+      - name: nodejs-mobile
+        working-directory: apps/android
+        run: node scripts/fetch-nodejs-mobile.mjs
+      - name: libsignal for Android (Rust cross build)
+        working-directory: apps/android
+        run: bash scripts/build-libsignal-android.sh
+      - name: HyperDHT native add-ons for Android
+        working-directory: apps/android
+        run: bash scripts/build-hyperdht-android.sh
+      - name: Signing key (must be the key of the installed app, or Android refuses the update)
+        env:
+          KS_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS_B64" ]; then
+            echo "::error::Repository secret ANDROID_DEBUG_KEYSTORE_B64 is missing (base64 of the developer's ~/.android/debug.keystore). Without it the APK is signed with a random key and installed apps cannot update to it."
+            exit 1
+          fi
+          mkdir -p ~/.android
+          echo "$KS_B64" | base64 -d > ~/.android/debug.keystore
+          test -s ~/.android/debug.keystore
+      - name: Android version code
+        # versionCode must keep growing and stay above the local dev builds (package.json 0.1.0 -> 100)
+        run: echo "UNICHAT_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+      - name: Build the app
+        working-directory: apps/android
+        run: pnpm run debug
+      - name: Collect
+        run: |
+          mkdir -p artifacts
+          cp apps/android/android/app/build/outputs/apk/debug/app-debug.apk artifacts/unichat-android-${VERSION}-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: artifacts/*
+          if-no-files-found: warn
+
+  flatpak:
+    name: Desktop app (Flatpak)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Best effort until the first successful run: the release does not wait for / depend on it.
+    continue-on-error: true
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install -g pnpm@12.17.0
+      - run: pnpm install --frozen-lockfile
+      - name: Build the web UI (bundled into the app)
+        run: pnpm --filter @unimsg/ui build
+      - name: "Unpacked Linux app (apps/desktop/dist/linux-unpacked)"
+        run: pnpm --filter @unimsg/desktop exec electron-vite build && pnpm --filter @unimsg/desktop exec electron-builder --dir -c.extraMetadata.version=${UNICHAT_VERSION}
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: unichat-desktop-${{ env.VERSION }}.flatpak
+          manifest-path: apps/desktop/flatpak/org.unichat.desktop.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+          arch: x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: unichat-desktop-${{ env.VERSION }}.flatpak
+          if-no-files-found: warn
+
+  publish:
+    name: Publish release
+    needs: [web, desktop, android, flatpak]
+    if: ${{ always() && needs.web.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: "Release manifest (latest.json, read by the apps' updater: version, notes, name/size/sha256 per platform)"
+        env:
+          HEAD_MSG: ${{ github.event.head_commit.message }}
+        run: node scripts/release-manifest.mjs artifacts "${VERSION}" "${HEAD_MSG:-UniChat ${VERSION}}"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la artifacts
+          gh release create "v${VERSION}" artifacts/* \
+            --target "${GITHUB_SHA}" \
+            --title "UniChat ${VERSION}" \
+            --generate-notes \
+            --prerelease

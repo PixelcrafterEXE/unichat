@@ -1,0 +1,6 @@
+{ "name": "@unimsg/provider-matrix", "version": "0.1.0", "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@unimsg/core": "workspace:*", "fake-indexeddb": "6.2.8", "matrix-js-sdk": "45.0.0" },
+  "devDependencies": { "@types/node": "^22.0.0" },
+  "engines": { "node": ">=22" },
+  "scripts": { "test:synapse": "lab/run.sh", "typecheck": "tsc -p .", "test": "node --experimental-strip-types --import ./test-loader.mjs --test --test-force-exit src/*.test.ts" } }

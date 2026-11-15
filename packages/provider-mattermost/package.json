@@ -1,0 +1,24 @@
+{
+  "name": "@unimsg/provider-mattermost",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@unimsg/core": "workspace:*",
+    "gemoji": "8.1.0",
+    "ws": "8.22.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "8.18.2"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --experimental-strip-types --import ./test-loader.mjs --test --test-force-exit src/*.test.ts"
+  }
+}

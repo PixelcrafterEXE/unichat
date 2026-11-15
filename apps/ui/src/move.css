@@ -1,0 +1,54 @@
+/* Move to another device. Same look as Accounts / Sync devices: section cards (12px radius), list rows with icon + label + muted detail,
+   a clear selected state with a check, a sticky footer with the primary button, thin progress bars. Spacing scale 4/8/12/16. Works at 360px. */
+.mvp { display: flex; flex-direction: column; gap: 12px; margin: 8px 0 0; }
+.mvp button, .mvdlg button { min-height: 44px; }
+.mvcard { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.mvcard > header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.mvcard > header > div { flex: 1; min-width: 0; } .mvcard h4 { margin: 0; font-size: 15px; font-weight: 600; } .mvcard header small { display: block; color: var(--muted); margin-top: 4px; font-size: 13px; }
+.mvnum { flex: 0 0 24px; height: 24px; border-radius: 50%; background: var(--bg3); color: var(--muted); font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+.mvp .linkbtn { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0 4px; white-space: nowrap; }
+.mvlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mvp .mvrow, .mvdlg .mvrow { display: flex !important; text-align: left; font-size: 14px; text-transform: none; letter-spacing: 0; color: var(--fg); align-items: center; gap: 12px; min-height: 56px; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg3); min-width: 0; margin: 0 !important; }
+.mvrow.pick { cursor: pointer; } .mvrow.pick:hover { background: var(--hover); }
+.mvrow.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg3)); }
+.mvrow.off { opacity: .6; } .mvrow.pick.off { cursor: not-allowed; }
+.mvrow input[type=checkbox], .mvrow input[type=radio] { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.mvrow:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mvp .mvname, .mvdlg .mvname { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; } .mvp .mvname b, .mvdlg .mvname b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mvp .mvname small, .mvdlg .mvname small, .mvtxt small { margin: 0; text-transform: none; letter-spacing: 0; color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+.mvtick { flex: 0 0 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border); display: grid; place-items: center; color: transparent; box-sizing: border-box; }
+.mvrow.on .mvtick { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mvrow .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 8px; } .mvrow .dot.on { background: #3ba55d; }
+.mvadd { margin-top: 8px; }
+.mvp .sub { margin: 0; }
+.mvfoot { box-shadow: 0 64px 0 var(--bg); position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 12px 0; margin-top: 4px; background: var(--bg); border-top: 1px solid var(--border); }
+.mvsum { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mvfoot .primary { flex: 0 0 auto; padding: 0 20px; }
+/* progress */
+.mvp .mvtitle { margin: 0 0 12px !important; font-size: 15px; font-weight: 600; } .mvtitle.good { color: #3ba55d; } .mvtitle.mix { color: #d9a441; } .mvtitle.bad { color: var(--danger, #e5534b); }
+.mvrow.static { align-items: center; flex-wrap: wrap; } .mvstat { flex: 1 1 100%; display: flex; align-items: flex-start; gap: 8px; margin: -6px 0 2px 44px; min-width: 0; }
+.mvstat .mvtxt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; } .mvtxt small.bad { color: var(--danger, #e5534b); }
+.mvico { flex: 0 0 18px; height: 18px; display: grid; place-items: center; color: var(--muted); } .mvico.ok { color: #3ba55d; } .mvico.bad { color: var(--danger, #e5534b); }
+.mvbar { display: block; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; } .mvbar i { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+.mvp .btns, .mvdlg .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.mvp .spin, .mvdlg .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: syncspin .8s linear infinite; }
+.mvp .paircard { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; } .mvp .qr { background: #fff; padding: 8px; border-radius: 8px; line-height: 0; } .mvp .code { font: 600 20px/1.2 ui-monospace, monospace; word-break: break-all; }
+.mvp-add { margin-top: 12px; padding: 12px; border: 1px dashed var(--border); border-radius: 12px; } .mvp-add h3 { margin: 0 0 8px; font-size: 15px; }
+/* dialogs (confirm on both devices, receiving) */
+.mvdlg { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.mvdlg .sheet { width: min(420px, 100%); max-height: 90vh; overflow: auto; box-sizing: border-box; background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; overflow-wrap: anywhere; box-shadow: 0 8px 40px #0008; }
+.mvdlg .sheet h3 { margin: 0 0 12px; font-size: 16px; } .mvdlg .hint { margin: 12px 0 0; }
+.mvdlg .mvlist.dlg .mvrow { min-height: 48px; } .mvdlg .btns { justify-content: flex-end; }
+.mvdlg-err { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 61; }
+.mvtoast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 20px; z-index: 70; max-width: calc(100vw - 32px); box-sizing: border-box; background: var(--bg3); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; box-shadow: 0 4px 20px #0006; }
+.bk details.mvfile { margin-top: 20px; } .bk details.mvfile > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+/* the existing pairing dialog, when it is shown inside this page */
+.mvp .syncdlg { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.mvp .syncdlg .sheet { width: min(420px, 100%); box-sizing: border-box; background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; text-align: center; } .mvp .syncdlg .btns { justify-content: center; }
+.mvp .sas { font: 600 34px/1.1 ui-monospace, monospace; letter-spacing: 3px; margin: 12px 0; text-align: center; }
+@media (max-width: 640px) { .mvcard { padding: 12px; } .mvdlg .btns > button { flex: 1 1 100%; } .mvfoot .primary { flex: 0 1 auto; } }
+.mvopts { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; text-align: left; }
+.mvdlg .mvopt { display: flex !important; align-items: flex-start; gap: 12px; min-height: 44px; padding: 8px 0; text-align: left; font-size: 14px; text-transform: none; letter-spacing: 0; color: var(--fg); cursor: pointer; margin: 0 !important; }
+.mvdlg .mvopt input { flex: 0 0 22px; width: 22px; height: 22px; margin: 0; } .mvdlg .mvopt.sub { margin-left: 34px !important; }
+.mvdlg .mvopt span { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .mvdlg .mvopt small { color: var(--muted); font-size: 12px; }
+.mvstat button { flex: 0 0 auto; }

@@ -1,0 +1,47 @@
+# Flatpak manifest for UniChat. Built in CI (.github/workflows/release.yml, job "flatpak") from the unpacked Electron app:
+#   pnpm --filter @unimsg/ui build && pnpm --filter @unimsg/desktop package:dir   -> apps/desktop/dist/linux-unpacked
+# Local build (optional): ./build.sh
+app-id: org.unichat.desktop
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '25.08'
+command: unichat
+separate-locales: false
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio          # call/notification sounds
+  - --device=dri
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets   # Secret Service: seals the archive key (safeStorage); without it the app falls back to a 0600 key file
+  - --talk-name=org.kde.StatusNotifierWatcher   # tray icon
+  - --filesystem=xdg-download     # backups / saving attachments
+  - --env=TMPDIR=/var/tmp
+modules:
+  - name: unichat
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/unichat
+      - cp -a linux-unpacked/. /app/unichat/
+      - chmod -R go-w /app/unichat
+      - install -Dm755 unichat.sh /app/bin/unichat
+      - install -Dm644 org.unichat.desktop.desktop /app/share/applications/org.unichat.desktop.desktop
+      - install -Dm644 org.unichat.desktop.metainfo.xml /app/share/metainfo/org.unichat.desktop.metainfo.xml
+      - install -Dm644 icon.png /app/share/icons/hicolor/512x512/apps/org.unichat.desktop.png
+    sources:
+      - type: dir
+        path: ../dist/linux-unpacked
+        dest: linux-unpacked
+      - type: file
+        path: unichat.sh
+      - type: file
+        path: org.unichat.desktop.desktop
+      - type: file
+        path: org.unichat.desktop.metainfo.xml
+      - type: file
+        path: ../build/icon.png
+        dest-filename: icon.png

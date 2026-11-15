@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">UniChat</string>
+    <string name="title_activity_main">UniChat</string>
+    <string name="package_name">app.unimsg.android</string>
+    <string name="custom_url_scheme">app.unimsg.android</string>
+</resources>

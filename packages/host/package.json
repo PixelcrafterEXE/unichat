@@ -1,0 +1,26 @@
+{
+  "name": "@unimsg/host",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@unimsg/core": "workspace:*",
+    "@unimsg/store-sqlite": "workspace:*",
+    "@unimsg/sync": "workspace:*",
+    "@unimsg/provider-signal": "workspace:*",
+    "@unimsg/provider-matrix": "workspace:*",
+    "@unimsg/provider-mattermost": "workspace:*",
+    "@unimsg/provider-instagram": "workspace:*",
+    "@unimsg/provider-discord": "workspace:*",
+    "@unimsg/provider-threema": "workspace:*",
+    "@unimsg/provider-threema-md": "workspace:*",
+    "@unimsg/provider-teams": "workspace:*",
+    "@unimsg/provider-whatsapp": "workspace:*",
+    "@unimsg/provider-remote": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  }
+}

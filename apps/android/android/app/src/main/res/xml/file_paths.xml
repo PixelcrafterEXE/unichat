@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="my_images" path="." />
+    <!-- verified update APKs: <filesDir>/unimsg-data/updates (packages/core/src/updater.ts) -->
+    <files-path name="unimsg_updates" path="unimsg-data/updates/" />
+    <cache-path name="my_cache_images" path="." />
+</paths>

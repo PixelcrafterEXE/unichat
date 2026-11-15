@@ -1,0 +1,16 @@
+{
+  "name": "@unimsg/store-sqlite",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@unimsg/core": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "tsx --test src/store.test.ts src/signalimport.test.ts",
+    "perf:search": "tsx src/search.perf.ts"
+  }
+}

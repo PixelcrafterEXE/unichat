@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.unichat.desktop</id>
+  <name>UniChat</name>
+  <summary>Unified messenger</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>UniChat brings your chat accounts into one app, with an encrypted local message archive.</p>
+  </description>
+  <launchable type="desktop-id">org.unichat.desktop.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.0.0" date="2026-11-15"/>
+  </releases>
+</component>

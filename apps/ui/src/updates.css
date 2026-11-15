@@ -1,0 +1,12 @@
+.upd { margin-top: 24px; }
+.upd .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.upd .btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.upd .notes { white-space: pre-wrap; background: var(--bg2); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px; max-height: 160px; overflow: auto; margin: 8px 0; }
+.upd .confirm { background: var(--bg2); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+.upd .adv { margin-top: 12px; } .upd .adv summary { cursor: pointer; color: var(--muted); }
+.upd .field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; font-size: 13px; }
+.upd .field input { background: var(--input); border: 1px solid var(--border); border-radius: var(--r-input); padding: 8px 10px; width: 100%; max-width: 420px; }
+.upd .bar { margin: 8px 0; }
+.updbanner { position: fixed; z-index: 35; left: 80px; bottom: 16px; max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; box-shadow: 0 4px 20px #0006; font-size: 13px; }
+.updbanner button { border: 0; border-radius: 6px; padding: 5px 12px; background: var(--accent); color: #fff; } .updbanner button.secondary { background: var(--hover); color: var(--fg); }
+@media (max-width: 720px) { .updbanner { left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); } }

@@ -1,0 +1,13 @@
+packages:
+  - packages/*
+  - apps/*
+# Approved by the user: Baileys depends on a git-hosted libsignal-node fork, which pnpm 12 blocks by default.
+blockExoticSubdeps: false
+# Electron's postinstall downloads the Electron binary (needed by apps/desktop). esbuild ships its binary via optional deps but has a postinstall check.
+minimumReleaseAgeExclude:
+  - electron@45.3.1
+  - '@capacitor/android@8.6.2'
+  - '@capacitor/cli@8.6.2'
+  - '@capacitor/core@8.6.2'
+patchedDependencies:
+  '@whiskeysockets/baileys@6.7.24': patches/@whiskeysockets__baileys@6.7.24.patch
