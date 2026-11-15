@@ -11,3 +11,9 @@ minimumReleaseAgeExclude:
   - '@capacitor/core@8.6.2'
 patchedDependencies:
   '@whiskeysockets/baileys@6.7.24': patches/@whiskeysockets__baileys@6.7.24.patch
+# Dependency build scripts (pnpm 12 fails the install in CI when any is left undecided).
+allowBuilds:
+  esbuild: true        # postinstall only verifies the platform binary
+  protobufjs: true     # postinstall only records the version scheme
+  '@whiskeysockets/baileys': false  # git-hosted libsignal fork, patched; nothing to build
+  electron-winstaller: false        # Windows installer helper, not used on Linux
