@@ -26,5 +26,6 @@
     "test": "tsx --test src/dialogs.test.ts src/updater.test.ts"
   },
   "description": "UniChat desktop app (Electron)",
-  "author": "UniChat"
+  "author": "UniChat",
+  "homepage": "https://github.com/PixelcrafterEXE/unichat"
 }
