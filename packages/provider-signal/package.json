@@ -1,4 +1,4 @@
 { "name": "@unimsg/provider-signal", "version": "0.1.0", "type": "module",
   "exports": { ".": "./src/index.ts" },
   "dependencies": { "@unimsg/core": "workspace:*", "@signalapp/libsignal-client": "0.106.2", "protobufjs": "7.6.6" },
-  "scripts": { "typecheck": "tsc -p .", "test": "tsc -p . --noEmit false --outDir .test-build && node --test .test-build/test" } }
+  "scripts": { "typecheck": "tsc -p .", "test": "tsc -p . --noEmit false --outDir .test-build && node --test \".test-build/test/**/*.test.js\"" } }
