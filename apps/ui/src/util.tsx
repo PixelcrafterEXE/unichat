@@ -56,6 +56,11 @@ function loadAvatar(kind: "chat" | "space" | "contact" | "emoji", id: string): P
   }
   return p;
 }
+/** Picture for a desktop/web notification (the chat's avatar as a blob URL from the shared avatar cache), or undefined: no picture, still loading after `waitMs`, or `hidden` mode (a personal picture must not appear when the content is hidden). The app icon then stays. */
+export async function notificationIcon(chatId: string, mode: "full" | "sender" | "hidden" | undefined, waitMs = 700): Promise<string | undefined> {
+  if (mode === "hidden") return undefined;
+  try { return (await Promise.race([loadAvatar("chat", chatId), new Promise<null>((r) => setTimeout(() => r(null), waitMs))])) ?? undefined; } catch { return undefined; }
+}
 /** Real messenger logos (simple-icons, CC0 artwork; the marks belong to their owners). Matrix' mark is black, so it sits on white. */
 const BRAND: Record<string, { path: string; bg: string; fg: string; bold?: number }> = {
   whatsapp: { path: siWhatsapp.path, bg: "#25D366", fg: "#fff", bold: 1.5 }, // bold: the thin outline glyph is thickened with a round stroke

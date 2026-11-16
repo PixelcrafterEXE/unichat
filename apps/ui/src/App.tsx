@@ -7,7 +7,7 @@ import { CategoryModal, CategoryPickModal } from "./Categories";
 import { X } from "./icons";
 import { setToken } from "./api";
 import { UpdateBanner } from "./Updates";
-import { Avatar, ProviderIcon, ProviderStack, SpaceIcon, core, initials, isCoarse, loadSet, lpHandlers, type LPState, loadSettings, saveSet, saveSettings, useLongPress, presenceText, type Settings } from "./util";
+import { Avatar, notificationIcon, ProviderIcon, ProviderStack, SpaceIcon, core, initials, isCoarse, loadSet, lpHandlers, type LPState, loadSettings, saveSet, saveSettings, useLongPress, presenceText, type Settings } from "./util";
 import { ChatRow, type RowApi } from "./ChatRow";
 import { ChatFilterBar, activeCount, isOnline, matchesFilters, normFilters, type ChatFilters } from "./ChatFilters";
 import { VList } from "./VList";
@@ -237,7 +237,10 @@ export default function App() {
         const open = openRef.current === k && document.hasFocus();
         setChats((cs) => cs.map((c) => (c.id === d.chatId || c.id === d.mergeId ? { ...c, ...(stale ? {} : { preview: d.text || c.preview, lastMessageAt: d.time, unread: d.fromMe || open ? c.unread : (c.unread ?? 0) + 1 }) } : c)));
         if (!d.fromMe && !open && !stale && listReadyRef.current && chatsRef.current.some((c) => c.id === k || c.id === d.chatId) && settingsRef.current.notifications && !mutedRef.current.has(k) && "Notification" in window && Notification.permission === "granted")
-          { const mode = settingsRef.current.notifyContent; const nt = new Notification(mode === "hidden" ? "UniChat" : (d.mergeId && chatsRef.current.find((c) => c.id === d.mergeId)?.name) || d.sender || "New message", { body: mode === "full" ? d.text || "Attachment" : "New message", tag: mode === "hidden" ? "unichat" : k }); liveNotes.current.get(k)?.close(); liveNotes.current.set(k, nt); nt.onclose = () => { if (liveNotes.current.get(k) === nt) liveNotes.current.delete(k); }; nt.onclick = () => { try { window.focus(); } catch { /* ignore */ } openChatRef.current?.(d.mergeId ?? k); nt.close(); }; }
+          { const mode = settingsRef.current.notifyContent; const title = mode === "hidden" ? "UniChat" : (d.mergeId && chatsRef.current.find((c) => c.id === d.mergeId)?.name) || d.sender || "New message";
+            // The chat's avatar is the notification icon (not in "hidden" mode, and the app icon stays when there is none or it is slow to load).
+            void notificationIcon(d.mergeId ?? d.chatId, mode).then((icon) => {
+              const nt = new Notification(title, { body: mode === "full" ? d.text || "Attachment" : "New message", tag: mode === "hidden" ? "unichat" : k, ...(icon ? { icon } : {}) }); liveNotes.current.get(k)?.close(); liveNotes.current.set(k, nt); nt.onclose = () => { if (liveNotes.current.get(k) === nt) liveNotes.current.delete(k); }; nt.onclick = () => { try { window.focus(); } catch { /* ignore */ } openChatRef.current?.(d.mergeId ?? k); nt.close(); }; }); }
       }
       if (ev === "message-update") setMsgs((m) => ({ ...m, [k]: (m[k] ?? []).map((x) => (x.id === d.messageId && x.chatId === d.chatId ? { ...x, ...d.patch, ...(d.patch.deleted ? { reactions: [], attachments: undefined, card: undefined, cards: undefined, poll: undefined, location: undefined, contacts: undefined } : {}) } : x)) }));
       if (ev === "receipt") setMsgs((m) => ({ ...m, [k]: (m[k] ?? []).map((x) => (x.id === d.messageId && x.chatId === d.chatId && RANK.indexOf(d.status) >= RANK.indexOf(x.status ?? "sending") ? { ...x, status: d.status } : x)) }));

@@ -9,7 +9,15 @@ import androidx.core.app.RemoteInput;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.Rect;
 import android.os.Build;
+import android.util.Base64;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -44,19 +52,43 @@ final class Notifier {
             .setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_SECRET).build();
     }
 
-    static void showMessage(Context c, String chatId, String messageId, String title, String body, String mode) {
-        post(c, chatId, messageId, title, body, mode, null, true);
+    static void showMessage(Context c, String chatId, String messageId, String title, String body, String mode, String avatarB64) {
+        post(c, chatId, messageId, title, body, mode, null, true, avatarB64);
+    }
+
+    /** Decodes the chat picture sent by the backend (base64 PNG/JPEG/WebP, small) into a round bitmap for setLargeIcon. Returns null for anything unusable: the notification then simply has no picture. */
+    static Bitmap avatarBitmap(String b64) {
+        if (b64 == null || b64.isEmpty() || b64.length() > 200_000) return null;
+        try {
+            byte[] raw = Base64.decode(b64, Base64.DEFAULT);
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(raw, 0, raw.length, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outWidth > 4096 || bounds.outHeight > 4096) return null;
+            Bitmap src = BitmapFactory.decodeByteArray(raw, 0, raw.length);
+            if (src == null) return null;
+            int size = 128, side = Math.min(src.getWidth(), src.getHeight());
+            Bitmap out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas cv = new Canvas(out);
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+            cv.drawCircle(size / 2f, size / 2f, size / 2f, p);
+            p.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN)); // center-crop the picture into the circle
+            Rect from = new Rect((src.getWidth() - side) / 2, (src.getHeight() - side) / 2, (src.getWidth() + side) / 2, (src.getHeight() + side) / 2);
+            cv.drawBitmap(src, from, new Rect(0, 0, size, size), p);
+            if (src != out) src.recycle();
+            return out;
+        } catch (Throwable t) { return null; } // bad base64, bad image, out of memory: no picture
     }
 
     /** After a direct reply: replaces the notification (clears the inline-reply spinner), keeps the sent text as remote-input history. */
     static void showReplyResult(Context c, String chatId, String messageId, String sentText, boolean ok) {
         NativePrefs p = new NativePrefs(c);
         String mode = p.notifyContent();
-        if (ok && sentText != null) post(c, chatId, messageId, "UniChat", "Reply sent", mode, sentText, false);
-        else post(c, chatId, messageId, "UniChat", sentText == null ? "Nothing to send" : "Could not send your reply (backend not running or offline)", mode, null, false);
+        if (ok && sentText != null) post(c, chatId, messageId, "UniChat", "Reply sent", mode, sentText, false, null);
+        else post(c, chatId, messageId, "UniChat", sentText == null ? "Nothing to send" : "Could not send your reply (backend not running or offline)", mode, null, false, null);
     }
 
-    private static void post(Context c, String chatId, String messageId, String title, String body, String mode, String sentHistory, boolean alert) {
+    private static void post(Context c, String chatId, String messageId, String title, String body, String mode, String sentHistory, boolean alert, String avatarB64) {
         if (Build.VERSION.SDK_INT >= 33 && c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
         boolean hidden = "hidden".equals(mode);
         // hidden: ONE generic notification for everything, no chat identity, no actions (nothing to leak through count, tag or reply target)
@@ -68,6 +100,7 @@ final class Notifier {
             .setAutoCancel(true).setContentIntent(tap).setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(pub) // lock screen shows the generic version
             .setGroup("messages").setPriority(NotificationCompat.PRIORITY_HIGH).setOnlyAlertOnce(!alert);
+        if (!hidden) { Bitmap av = avatarBitmap(avatarB64); if (av != null) b.setLargeIcon(av); } // hidden: never a personal picture
         if (!hidden && sentHistory != null) b.setRemoteInputHistory(new CharSequence[]{sentHistory});
         if (!hidden) {
             int flagsMut = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0); // RemoteInput needs a mutable PI
