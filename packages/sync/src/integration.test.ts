@@ -108,21 +108,21 @@ test("revoke: the removed device no longer receives or sends; remaining devices 
   await until(() => !!C.store.getMessage("fake-x:c", "p1") && !!B.store.getMessage("fake-x:c", "p1"), "pre-revoke sync");
   // B goes offline (pause), A revokes C meanwhile
   await B.call("syncPause"); await until(() => !A.svc.status().devices.find((d: any) => d.name === "B")?.online, "B offline");
-  await A.call("syncRevoke", { deviceId: C.svc.status().deviceId });
+  const cId = C.svc.status().deviceId; await A.call("syncRevoke", { deviceId: cId });
   A.store.putMessages([msg("fake-x:c", "p2", "after revoke", "2026-02-01T11:00:00Z")]);
   await new Promise((r) => setTimeout(r, 1200));
   assert.equal(C.store.getMessage("fake-x:c", "p2"), undefined, "revoked device gets nothing new");
   C.store.putMessages([msg("fake-x:c", "p3", "from the revoked device", "2026-02-01T12:00:00Z")]);
   await new Promise((r) => setTimeout(r, 1200));
   assert.equal(A.store.getMessage("fake-x:c", "p3"), undefined, "and nothing it writes is accepted");
-  assert.ok(A.svc.status().devices.find((d: any) => d.id === C.svc.status().deviceId)?.revoked);
+  assert.ok(A.svc.status().devices.find((d: any) => d.id === cId)?.revoked);
   // B comes back, still with the OLD key: is upgraded and catches up
   await B.call("syncResume");
   await until(() => !!B.store.getMessage("fake-x:c", "p2"), "offline catch-up after resume", 15000);
   const keyOf = (n: Node) => (n.svc as any).group.keys.sort((a: any, b: any) => b.revoked.length - a.revoked.length)[0].tag;
   await until(() => keyOf(A) === keyOf(B), "B adopted the new group key");
   await until(() => B.svc.status().devices.find((d: any) => d.name === "C")?.revoked !== undefined, "B knows C is revoked");
-  assert.notEqual(keyOf(C), keyOf(A));
+  await until(async () => !(await C.call("syncStatus")).enabled, "the removed device unlinked itself");
   assert.equal(B.store.getMessage("fake-x:c", "p3"), undefined);
   // restart B from disk (sqlite store + sealed ledger): still paired, still syncs
   const bId = B.svc.status().deviceId; await B.stop();

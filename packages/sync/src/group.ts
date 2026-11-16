@@ -8,7 +8,7 @@ export interface Identity { id: string; name: string; pub: string; priv: string 
  * the rendezvous id is derived from the group key and both device ids, never stored. src: where we learned it (the peer itself on every session, mDNS, the pairing, or typed in by the user).
  */
 export interface Addr { kind: "tcp" | "relay" | "dht"; host?: string; port?: number; url?: string; src: "pairing" | "learned" | "mdns" | "manual"; good?: string; bad?: string; fails?: number; /** fingerprint of the network the owner announced this address from (service.ts netFingerprint) */ net?: string }
-export interface Dev { id: string; name: string; pub: string; addedAt: string; revoked?: string; addrs?: Addr[]; lastSeen?: string; /** HyperDHT public key (hex) of this device for this group, announced by the device itself (dht.ts); only meaningful when "Reach my devices from anywhere" is on */ dht?: string; /** phase-1 single address, migrated into addrs on load */ addr?: { host: string; port: number } }
+export interface Dev { id: string; name: string; pub: string; addedAt: string; revoked?: string; /** device id that removed it (tombstone, merged with `revoked`) */ revokedBy?: string; /** when the removed device confirmed that it unlinked itself (tombstone, merged) */ removedAck?: string; addrs?: Addr[]; lastSeen?: string; /** HyperDHT public key (hex) of this device for this group, announced by the device itself (dht.ts); only meaningful when "Reach my devices from anywhere" is on */ dht?: string; /** phase-1 single address, migrated into addrs on load */ addr?: { host: string; port: number } }
 export interface KeyEntry { tag: string; key: string; revoked: string[] }
 export interface Group { id: string; devices: Record<string, Dev>; keys: KeyEntry[] }
 
@@ -36,9 +36,9 @@ export function addKey(g: Group, k: KeyEntry): boolean {
   return true;
 }
 /** Revoke a device: it is marked, and a FRESH random key is generated that excludes it (old keys stay only so lagging members can still connect and be upgraded). */
-export function revoke(g: Group, id: string): KeyEntry {
+export function revoke(g: Group, id: string, by?: string): KeyEntry {
   const d = g.devices[id]; if (!d) throw new Error("unknown device");
-  d.revoked ??= new Date().toISOString();
+  d.revoked ??= new Date().toISOString(); if (by && !d.revokedBy) d.revokedBy = by;
   return rekey(g);
 }
 export function rekey(g: Group): KeyEntry {
@@ -55,8 +55,12 @@ export function mergeMembership(g: Group, devices: Record<string, Dev>, keys: Ke
     const dht = validDhtKey(d.dht);
     if (l && dht && !l.dht) l.dht = dht; // only fills a gap: the device's own report (session, see service.ts) replaces it
     if (l && !l.addrs?.length && hints.length) l.addrs = hints.slice(0, 4); // address hints from a member; only fill gaps, the peer's own report and our observations win
-    if (!l) { g.devices[d.id] = { id: d.id, name: String(d.name ?? "device").slice(0, 60), pub: d.pub, addedAt: String(d.addedAt ?? new Date().toISOString()), ...(d.revoked ? { revoked: String(d.revoked) } : {}), ...(dht ? { dht } : {}), ...(hints.length ? { addrs: hints.slice(0, 4) } : {}) }; added.push(d.id); if (d.revoked) revoked.push(d.id); }
+    if (!l) { g.devices[d.id] = { id: d.id, name: String(d.name ?? "device").slice(0, 60), pub: d.pub, addedAt: String(d.addedAt ?? new Date().toISOString()), ...(d.revoked ? { revoked: String(d.revoked), ...(typeof d.revokedBy === "string" ? { revokedBy: d.revokedBy.slice(0, 64) } : {}) } : {}),...(dht ? { dht } : {}), ...(hints.length ? { addrs: hints.slice(0, 4) } : {}) }; added.push(d.id); if (d.revoked) revoked.push(d.id); }
     else if (d.revoked && !l.revoked) { l.revoked = String(d.revoked); revoked.push(d.id); }
+    if (l && l.revoked) { // tombstone details only ever fill gaps
+      if (!l.revokedBy && typeof d.revokedBy === "string") l.revokedBy = d.revokedBy.slice(0, 64);
+      if (!l.removedAck && typeof d.removedAck === "string") l.removedAck = d.removedAck.slice(0, 40);
+    }
   }
   let keysAdded = 0;
   for (const k of keys ?? []) {

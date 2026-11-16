@@ -149,9 +149,40 @@ export default [
     await t.click('[data-dev="My laptop"] button', "Rename"); await t.setInput('[data-dev="My laptop"] input', "Work PC"); await t.click('[data-dev="My laptop"] button', "Save");
     await t.waitSel("#sync-devices .devrow", "Work PC");
     await t.ok("renamed in the list", `/Work PC/.test(document.querySelector('#sync-devices').textContent)`);
+    await t.ev(`window.__mockSyncAddDevice('Tablet')`); await t.waitSel('[data-dev="Tablet"]');
     await t.ev(`window.confirm = () => true`); await t.click('[data-dev="Pixel phone"] button', "Remove");
     await t.waitGone(`document.querySelector('[data-dev="Pixel phone"]')`);
-    await t.ok("removed device is gone from the list", `!/Pixel phone/.test(document.querySelector('#sync-devices').textContent)`);
+    await t.ok("removed device is gone from the list, the other two stay a group", `!/Pixel phone/.test(document.querySelector('#sync-devices').textContent) && /Tablet/.test(document.querySelector('#sync-devices').textContent)`);
+  }),
+
+  test("removing a device tells everybody: the confirmation says so, an offline device shows 'Removal pending' until it confirmed", async (t) => {
+    await pairedAsHost(t); await t.ev(`window.__mockSyncAddDevice('Tablet', false)`); await t.waitSel('[data-dev="Tablet"]');
+    await t.ev(`window.__cm = ''; window.confirm = (m) => { window.__cm = m; return true }`); await t.click('[data-dev="Tablet"] button', "Remove");
+    await t.waitSel("#sync-removal-pending", "Removal pending for Tablet (offline)");
+    await t.ok("confirmation explains the group-wide effect", `/tells all other devices; with only two devices both unlink/.test(window.__cm)`);
+    await t.ev(`window.__mockSyncRemovalAcked('Tablet')`); await t.waitGone(`document.querySelector('#sync-removal-pending')`);
+  }),
+
+  test("two devices: Remove unlinks both (the other is told first); offline it waits and says so, 'Unlink anyway' gives up waiting", async (t) => {
+    await pairedAsHost(t);
+    await t.ev(`window.__cm = ''; window.confirm = (m) => { window.__cm = m; return true }`); await t.click('[data-dev="Pixel phone"] button', "Remove");
+    await t.waitGone(`document.querySelector('#sync-devices')`);
+    await t.ok("two devices: the text says both unlink", `/only two devices are linked, so this device unlinks too/.test(window.__cm)`);
+    await t.ev(`window.__mockSyncAddDevice('Pixel phone', false)`); await t.waitSel('[data-dev="Pixel phone"]');
+    await t.click('[data-dev="Pixel phone"] button', "Remove");
+    await t.waitSel("#sync-unlinking", "Pixel phone will unlink when it comes online");
+    await t.ok("still linked, cannot add a device meanwhile", `!!document.querySelector('#sync-devices') && document.querySelector('#sync-start').disabled`);
+    await t.ev(`window.__mockSyncPeerOnline()`); await t.waitGone(`document.querySelector('#sync-unlinking')`);
+    await t.ok("both unlinked", `!document.querySelector('#sync-devices')`);
+    await t.ev(`window.__mockSyncAddDevice('Pixel phone', false)`); await t.click('[data-dev="Pixel phone"] button', "Remove"); await t.waitSel("#sync-unlinking");
+    await t.click("#sync-unlink-now"); await t.waitGone(`document.querySelector('#sync-unlinking')`);
+  }),
+
+  test("this device was removed by another one: the notice says by whom, keeps the data, and can be dismissed", async (t) => {
+    await pairedAsHost(t); await t.ev(`window.__mockSyncRemoved('Pixel phone')`);
+    await t.waitSel("#sync-removed-notice", "Removed from the sync group by Pixel phone");
+    await t.ok("no device list any more, 'Add a device' is available", `!document.querySelector('#sync-devices') && !document.querySelector('#sync-start').disabled`);
+    await t.click("#sync-removed-ok"); await t.waitGone(`document.querySelector('#sync-removed-notice')`);
   }),
 
   test("Advanced: network (off by default, scope, validated address), exposure text", async (t) => {

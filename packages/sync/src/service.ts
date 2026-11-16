@@ -53,6 +53,8 @@ export interface SyncOptions {
   maxPairingFailures?: number; maxPairingGlobal?: number;
   /** every refused inbound handshake takes at least this long (default 300 ms; see channel.ts accept) so refusals cannot be told apart by timing; tests set 0 */
   failFloorMs?: number;
+  /** unlinking a group of two: how long to wait for the other device to answer before the instruction is left pending (default 5 s) */
+  unlinkWaitMs?: number;
   /** dial attempts for known devices every this many ms (default 10 s) */
   retryMs?: number;
   now?: () => number;
@@ -78,7 +80,7 @@ export interface SyncOptions {
   move?: MoveOptions;
   net?: { interfaces?: () => Iface[]; connect?: Connector; probeConnectMs?: number; connectMs?: number; overallMs?: number; graceMs?: number; concurrency?: number };
 }
-export const METHODS = new Set(["syncNetworkChanged", "syncStatus", "syncStartPairing", "syncStopPairing", "syncJoin", "syncJoinNearby", "syncBrowse", "syncConfirmJoin", "syncCancelJoin", "syncApproveJoin", "syncDevices", "syncRevoke", "syncSetAccountMode", "syncPause", "syncResume", "syncNow",
+export const METHODS = new Set(["syncNetworkChanged", "syncStatus", "syncStartPairing", "syncStopPairing", "syncJoin", "syncJoinNearby", "syncBrowse", "syncConfirmJoin", "syncCancelJoin", "syncApproveJoin", "syncDevices", "syncRevoke", "syncDismissRemoved", "syncSetAccountMode", "syncPause", "syncResume", "syncNow",
   "syncLeave", "syncCredentials", "syncConfirmCredentials", "syncRenameDevice", "syncSetListen", "syncSetAddresses", "syncSetAdvertise", "syncSetRelays", "syncSetDht", "syncSetMediaPolicy", "syncSetMetered", "syncSetProxyShare", "syncUseProxy", "syncStopProxy", "syncRelaySet", "syncRelayAsk", "syncMoveStart", "syncMoveRespond", "syncMoveCancel", "syncMoveEstimate", "syncSendHistory"]);
 const errmsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** Size limits (mutable for tests): a shared login may be at most `credBytes` in total and `credFiles` files; bigger ones travel in pieces (bulk.ts), never inline. */
@@ -90,6 +92,7 @@ interface Rpc { ok(v: any): void; fail(e: Error): void; timer: ReturnType<typeof
 interface Session {
   peer: string; ch: Secure; initiator: string; startedAt: number; inflight: number[]; sentUpTo: number; peerHave?: { of: string; cursor: number; empty?: boolean }; peerLedger?: string;
   wake: () => void; closed: boolean; sent: number; received: number; applying: Promise<unknown>; via?: string;
+  /** set while we wait for the peer's "unlinked" answer to our "unlink" */ ackWait?: () => void;
   rid: number; pending: Map<number, Rpc>; big: BigAssembler; serving: number;
   snapTried: boolean; snapWait?: { kinds: string[]; ok(v: any): void; timer: ReturnType<typeof setTimeout> }; snapGoMsg?: any; snapAckMsg?: any; snapRx?: { id: string; got: number; size: number; sha: string; cursor: number; ledger: string; tag: string; file: string; fd?: number; lastSaved: number }; skipEcho: boolean;
 }
@@ -114,6 +117,10 @@ export class SyncService {
   private policy: MediaPolicy = { ...DEFAULT_POLICY }; private metered = false; private blobs?: Blobs; /** profile pictures (avatars.ts) */ avatars?: Avatars; private mediaActive: any = null; private pumping = false;
   private proxies!: Proxies; private moves!: MoveService; private sealKey!: Buffer;
   private progT = 0; private disposed = false;
+  /** we are leaving a group of two: the other device is told to unlink first; until it is (offline), this stays and is delivered on its next session */
+  private unlinkPending?: { peer: string; name: string; since: string; reason: "leave" | "remove" };
+  /** shown once on a device that was removed from / unlinked out of its group */
+  private removedNotice?: { by: string; at: string; reason: "removed" | "unlinked" | "alone" }; private leaving = false;
   readonly ready: Promise<void>; private isReady = false;
   constructor(private host: SyncHost, private store: SyncStore, ledger: Ledger, private o: SyncOptions = {}) {
     this.ledger = ledger; this.ready = this.init(); this.ready.then(() => { this.isReady = true; }, () => { this.isReady = true; });
@@ -157,7 +164,10 @@ export class SyncService {
       describe: (a) => { const x = this.store.listAccounts().find((y) => y.id === a); return x && { provider: x.provider, label: x.label }; },
       changed: () => this.changedDevices(), opts: this.o.move ?? {},
     });
+    this.removedNotice = L.kvGet("removedNotice") ?? undefined; this.unlinkPending = L.kvGet("unlinkPending") ?? undefined;
+    if (this.unlinkPending && !this.group?.devices[this.unlinkPending.peer]) { this.unlinkPending = undefined; L.kvDel("unlinkPending"); }
     this.selfRevoked = !!this.group?.devices[this.me.id]?.revoked;
+    if (this.selfRevoked) { const me = this.group!.devices[this.me.id]; await this.leaveLocal({ by: this.group!.devices[me.revokedBy ?? ""]?.name ?? "another device", at: me.revoked!, reason: "removed" }); } // told while we were not running: unlink now
     if (this.group && !this.selfRevoked) await this.activate();
   }
   private persist() { if (this.group) this.ledger.kvSet("group", this.group); this.ledger.kvSet("clock", this.clock.state()); }
@@ -279,7 +289,8 @@ export class SyncService {
       case "syncResume": this.paused = false; this.ledger.kvSet("paused", false); await this.activate(); this.changedDevices(); return {};
       case "syncNetworkChanged": return this.networkChanged(p?.interfaces);
       case "syncNow": { for (const id of Object.keys(this.group?.devices ?? {})) this.backoff.delete(id); this.tick(); for (const s of this.sessions.values()) s.wake(); return {}; }
-      case "syncLeave": return this.leave();
+      case "syncLeave": return this.leave(!!p?.force);
+      case "syncDismissRemoved": this.removedNotice = undefined; this.ledger.kvDel("removedNotice"); this.changedDevices(); return {};
       case "syncRenameDevice": { const n = String(p.name ?? "").trim().slice(0, 60); if (!n) throw new Error("Give this device a name."); this.me.name = n; this.ledger.kvSet("identity", this.me); if (this.group) { this.group.devices[this.me.id].name = n; this.persist(); } this.changedDevices(); return {}; }
       case "syncCredentials": return this.pendingCreds();
       case "syncConfirmCredentials": return this.confirmCreds(String(p.accountId), p.accept !== false);
@@ -313,13 +324,13 @@ export class SyncService {
     });
     const devices = Object.values(g?.devices ?? {}).map((d) => {
       const s = this.sessions.get(d.id), pr = this.progress.get(d.id);
-      return { id: d.id, name: d.name, self: d.id === this.me.id, online: d.id === this.me.id || !!s, revoked: d.revoked, lastSeen: d.id === this.me.id ? undefined : d.lastSeen, addedAt: d.addedAt, progress: pr, via: s?.via, viaKind: s ? (s.via === "dht" ? "dht" : s.via?.startsWith("relay") ? "relay" : "direct") : undefined, lastAddr: orderAddrs(d).find((a) => a.kind === "tcp" && a.good)?.host,
+      return { id: d.id, name: d.name, self: d.id === this.me.id, online: d.id === this.me.id || !!s, revoked: d.revoked, revokedBy: d.revokedBy ? g?.devices[d.revokedBy]?.name : undefined, removalPending: !!d.revoked && !d.removedAck && now - (Date.parse(d.revoked) || 0) < 30 * 86_400_000, lastSeen: d.id === this.me.id ? undefined : d.lastSeen, addedAt: d.addedAt, progress: pr, via: s?.via, viaKind: s ? (s.via === "dht" ? "dht" : s.via?.startsWith("relay") ? "relay" : "direct") : undefined, lastAddr: orderAddrs(d).find((a) => a.kind === "tcp" && a.good)?.host,
         addrs: d.id === this.me.id ? undefined : (d.addrs ?? []).map((a) => ({ kind: a.kind, host: a.host, port: a.port, url: a.url, src: a.src, good: a.good, bad: a.bad })), audit: this.proxies.audit[d.id] };
     });
     const self = "unichat-" + this.me.id.slice(0, 10) + "." + SERVICE;
     const discovered = this.mdns ? this.mdns.services().filter((s) => s.txt.m === "pair" && s.instance !== self).map((s) => ({ instance: s.instance, name: s.txt.n ?? s.instance, host: s.addrs[0] ?? s.host, port: s.port, nearby: s.txt.nb === "1" })) : [];
     const binds = this.boundHosts().map((h) => (h.includes(":") ? `[${h}]` : h) + ":" + this.port);
-    return { enabled: !!g, paused: this.paused, revoked: this.selfRevoked, deviceId: this.me.id, deviceName: this.me.name, groupId: g?.id, listening: this.servers.size > 0, port: this.port || undefined, binds,
+    return { enabled: !!g, paused: this.paused, revoked: this.selfRevoked, removedNotice: this.removedNotice, unlinking: this.unlinkPending && { peer: this.unlinkPending.peer, name: this.unlinkPending.name, since: this.unlinkPending.since, reason: this.unlinkPending.reason, online: this.sessions.has(this.unlinkPending.peer) }, deviceId: this.me.id, deviceName: this.me.name, groupId: g?.id, listening: this.servers.size > 0, port: this.port || undefined, binds,
       listen: { ...this.listen, error: this.listenErr || undefined, pairingOnly: this.servers.size > 0 && !this.listen.enabled, interfaces: interfaces().filter((i) => !i.internal && i.family === 4).map((i) => ({ name: i.name, address: i.address })) },
       discovery: this.o.mdns === false || this.o.mdns === undefined ? { available: false, reason: "Discovery is off." } : { available: this.mdns?.available ?? false, reason: this.mdns?.reason ?? (this.mdns ? undefined : "Not started (no listener open, or multicast is unavailable on this device).") },
       relays: this.relays, dht: { ...this.dhtSet, state: this.dhtSet.enabled ? this.dhtInfo.state : "off", reason: this.dhtSet.enabled ? this.dhtInfo.reason : undefined, publicKey: this.dht?.publicKey }, advertise: this.advertiseExtra, dialOnly: !!g && !this.servers.size,
@@ -473,6 +484,7 @@ export class SyncService {
   }
   private async startPairing(p: { deviceName?: string; keepListening?: boolean }) {
     if (this.selfRevoked) throw new Error("This device was removed from its group. Leave the group first.");
+    if (this.unlinkPending) throw new Error(`This device is unlinking from its group (waiting for ${this.unlinkPending.name}). Finish that first.`);
     if (p?.deviceName?.trim()) { this.me.name = p.deviceName.trim().slice(0, 60); this.ledger.kvSet("identity", this.me); }
     if (!this.group) { this.group = newGroup(this.me); this.persist(); }
     else if (this.group.devices[this.me.id].name !== this.me.name) { this.group.devices[this.me.id].name = this.me.name; this.persist(); }
@@ -615,9 +627,37 @@ export class SyncService {
     pj.hostOk = accept; pj.settle(); return {};
   }
   private finishJoin(_ok: boolean, _why: string) { const pj = this.pendingJoin; if (!pj) return; clearTimeout(pj.timer); this.pendingJoin = undefined; pj.hostOk ??= false; pj.settle(); }
-  private async leave() {
+  /**
+   * The user unlinks this device. Group of two: the other device is told first (see startUnlink), a group of one is meaningless. Group of three or more: this device
+   * writes its own removal tombstone and tells every connected member before it forgets the group (the others pass it on to members that were offline).
+   * `force` (the user gave up waiting) unlinks right away.
+   */
+  private async leave(force = false) {
+    const g = this.group;
+    if (g && !force && !this.selfRevoked) {
+      const live = Object.values(g.devices).filter((d) => d.id !== this.me.id && !d.revoked);
+      if (live.length === 1) return this.startUnlink(live[0].id, "leave");
+      if (live.length > 1) {
+        revoke(g, this.me.id, this.me.id); g.devices[this.me.id].removedAck = g.devices[this.me.id].revoked; this.persist();
+        const fr = { t: "keys", devices: g.devices, keys: g.keys };
+        await Promise.race([Promise.all([...this.sessions.values()].map((s) => s.ch.send(fr).catch(() => {}))), new Promise((r) => setTimeout(r, 1500))]);
+        await new Promise((r) => setTimeout(r, 100)); // let the frames leave the socket before it is closed
+      }
+    }
+    return this.leaveLocal();
+  }
+  /** Forget the group on this device (archive and account logins stay). With `notice` the UI shows why. */
+  private async leaveLocal(notice?: { by: string; at: string; reason: "removed" | "unlinked" | "alone" }) {
+    if (this.leaving) return {};
+    this.leaving = true;
+    try { return await this.leaveNow(notice); } finally { this.leaving = false; }
+  }
+  private async leaveNow(notice?: { by: string; at: string; reason: "removed" | "unlinked" | "alone" }) {
+    if (notice && !this.group) return {};
+    if (notice && !this.unlinkPending) { this.removedNotice = notice; this.ledger.kvSet("removedNotice", notice); }
+    this.unlinkPending = undefined; this.ledger.kvDel("unlinkPending");
     this.teardown(true);
-    for (const a of Object.keys(this.group?.devices ? this.proxies.usingList().map((u) => u.accountId) : [])) void a;
+    await this.proxies.releaseAll().catch(() => {});
     for (const u of this.proxies.usingList()) await this.proxies.stopUsing(u.accountId).catch(() => {});
     this.group = undefined; this.selfRevoked = false; this.store.ctx = undefined;
     this.ledger.kvDel("group"); this.ledger.kvDel("bootstrapped"); this.ledger.kvDel("cursors");
@@ -656,7 +696,7 @@ export class SyncService {
       checkRemote: (pub, hello, m) => {
         if (hello?.id !== deviceIdOf(pub)) throw new ChannelError("auth", "device id does not match its key");
         if ((m === "pair" || m === "nearby") && this.liveCount() > 1 && Number(hello?.grp) > 1) throw new ChannelError("protocol", "both devices already have a group", true);
-        if (m === "sync") { const d = this.group?.devices[hello.id]; if (!d || d.revoked || !sameKey(Buffer.from(d.pub, "base64"), pub)) throw new ChannelError("auth", "not a member", true); } // only paired, non-revoked devices get past the handshake
+        if (m === "sync") { const d = this.group?.devices[hello.id]; if (!d || !sameKey(Buffer.from(d.pub, "base64"), pub)) throw new ChannelError("auth", "not a member", true); } // only paired, non-revoked devices get past the handshake
       },
     }).then(async (ch) => {
       leave(); sock.setTimeout?.(0);
@@ -669,6 +709,7 @@ export class SyncService {
         return this.pairHost(ch, ip, pr, false, true);
       }
       if (ch.mode === "pair") return Number(ch.hello?.grp) > 1 && this.liveCount() <= 1 ? this.joinInbound(ch, ip) : this.pairHost(ch, ip, this.pairing);
+      if (this.group?.devices[deviceIdOf(ch.remoteStatic)]?.revoked) return this.refuseRemoved(ch, deviceIdOf(ch.remoteStatic)); // a removed device gets told, never synced
       return this.runSession(ch, deviceIdOf(ch.remoteStatic), false, viaRelay ? undefined : sock.remoteAddress, viaDht ? "dht" : viaRelay ? "relay" : undefined);
     }, (e) => {
       leave(); sock.destroy();
@@ -803,10 +844,12 @@ export class SyncService {
     try {
       await ch.send({ t: "members", devices: g.devices, keys: g.keys, ledger: this.ledger.id, port: this.listeningPort(), addrs: this.selfAddrs() });
       const m = await ch.recv(15_000);
+      if (m?.t === "bye" && m.why === "revoked") return this.removedByPeer(s, m.by); // the peer says we were removed
       if (m?.t !== "members") throw new Error("expected members");
       s.peerLedger = String(m.ledger);
       const r = mergeMembership(g, m.devices, m.keys, this.me.id);
-      if (g.devices[this.me.id].revoked) return this.gotRevoked();
+      if (g.devices[this.me.id].revoked) return this.removedByPeer(s);
+      if (r.revoked.length) this.applyRemoved(r.revoked);
       if (g.devices[peer].revoked) throw new Error("peer revoked");
       { const own = validDhtKey(m.devices?.[peer]?.dht); if (own && g.devices[peer].dht !== own) g.devices[peer].dht = own; } // the device's own report of its DHT key wins
       this.learnAnnounced(g.devices[peer], m.addrs, s); // what the peer says about itself, on every session
@@ -831,9 +874,17 @@ export class SyncService {
               if (!x.more) this.setProgress(peer, { lastSync: new Date().toISOString() });
               break;
             }
-            case "keys": { const rr = mergeMembership(g, x.devices, x.keys, this.me.id); if (g.devices[this.me.id].revoked) return this.gotRevoked(); this.persist(); if (rr.keysAdded || rr.revoked.length || rr.added.length) { this.advertise(); this.changedDevices(); } this.resolveRekey(s); if (g.devices[peer].revoked) throw new Error("peer revoked"); break; }
+            case "keys": { const rr = mergeMembership(g, x.devices, x.keys, this.me.id); if (g.devices[this.me.id].revoked) return this.removedByPeer(s); if (rr.revoked.length) this.applyRemoved(rr.revoked); this.persist(); if (rr.keysAdded || rr.revoked.length || rr.added.length) { this.advertise(); this.changedDevices(); } this.resolveRekey(s); if (g.devices[peer].revoked) throw new Error("peer revoked"); break; }
             case "ping": break;
-            case "bye": if (x.why === "revoked") void this.proxies.removedBy(s.peer); return; // that device removed this one: nothing is relayed through it any more
+            case "bye": if (x.why === "revoked") return this.removedByPeer(s, x.by); return; // that device removed this one: unlink
+            case "unlink": { // the other device of a group of two unlinks: so do we (a group of one is meaningless)
+              await ch.send({ t: "unlinked" }).catch(() => {});
+              void this.leaveLocal({ by: g.devices[peer]?.name ?? "another device", at: new Date().toISOString(), reason: x.removed ? "removed" : "unlinked" }); return;
+            }
+            case "unlinked": { // answer to our "unlink" (group of two), or the confirmation of a removed device
+              if (s.ackWait) { const f = s.ackWait; s.ackWait = undefined; f(); } else this.noteRemovedAck(peer);
+              break;
+            }
             default: if (!(await this.handleExtra(s, x, cursors))) throw new Error("unknown message");
           }
         }
@@ -869,6 +920,7 @@ export class SyncService {
           this.setProgress(peer, { sent: s.sent, pending: Math.max(0, this.ledger.maxSeq() - upTo), state: "syncing" });
         }
       })();
+      if (this.unlinkPending?.peer === peer) void this.sendUnlink(s, 5000); // the instruction waited for this device to come online
       await Promise.race([recvLoop, sendLoop]);
     } catch (e) {
       const ex = e as Error; if (!s.closed) this.setProgress(peer, { state: "error", error: ex.message });
@@ -882,8 +934,11 @@ export class SyncService {
     if (s.snapWait) { clearTimeout(s.snapWait.timer); s.snapWait.ok(undefined); }
     s.big.clear();
     if (s.snapRx?.fd !== undefined) { try { closeSync(s.snapRx.fd); } catch { /* closed */ } }
-    try { void s.ch.send(why === "revoked" ? { t: "bye", why } : { t: "bye" }).catch(() => {}); } catch { /* ignore */ }
-    setTimeout(() => s.ch.close(), 30);
+    try {
+      const gd = this.group?.devices[s.peer]; // a removed device is told by whom, and gets a moment to confirm that it unlinked
+      void s.ch.send(why === "revoked" ? { t: "bye", why, by: this.group?.devices[gd?.revokedBy ?? ""]?.name } : { t: "bye" }).catch(() => {});
+    } catch { /* ignore */ }
+    setTimeout(() => s.ch.close(), why === "revoked" ? 1500 : 30);
     const mine = this.sessions.get(s.peer) === s;
     if (mine) this.sessions.delete(s.peer);
     if (mine && !this.disposed) { this.proxies.presenceChanged(s.peer, false); this.moves.onDown(s.peer); }
@@ -1098,11 +1153,68 @@ export class SyncService {
     const g = this.group; if (!g) throw new Error("Sync is not set up.");
     if (id === this.me.id) throw new Error("Use \"Leave this group\" to remove this device.");
     if (!g.devices[id] || g.devices[id].revoked) throw new Error("That device is not in the group.");
-    revoke(g, id); this.persist();
-    const s = this.sessions.get(id); if (s) this.closeSession(s, "revoked");
-    this.proxies.forgetDevice(id);
-    for (const u of this.proxies.usingList()) if (u.home === id) await this.proxies.stopUsing(u.accountId, false).catch(() => {});
+    if (!Object.values(g.devices).some((d) => d.id !== id && d.id !== this.me.id && !d.revoked)) return this.startUnlink(id, "remove"); // group of two: both unlink
+    // group of three or more: a tombstone (who, when) + a fresh key without the device. Connected members get it now, the others on their next session (members / keys frames, over any path);
+    // the removed device is told by every member that sees it, or when it next connects to one.
+    revoke(g, id, this.me.id); this.persist();
+    this.applyRemoved([id]);
     this.advertise(); this.broadcastKeys(); this.changedDevices(); return {};
+  }
+  /** Everything that tied this device to the removed ones: sessions (they are told), relay permissions / offers, addresses. */
+  private applyRemoved(ids: string[]) {
+    const g = this.group; if (!g) return;
+    for (const id of ids) {
+      if (id === this.me.id) continue;
+      const s = this.sessions.get(id); if (s) this.closeSession(s, "revoked");
+      this.proxies.forgetDevice(id); void this.proxies.removedBy(id);
+      const d = g.devices[id]; if (d) { delete d.addrs; delete d.dht; }
+      this.backoff.delete(id); this.progress.delete(id);
+    }
+    this.persist(); this.changedDevices();
+    if (this.liveCount() <= 1 && !this.unlinkPending && !this.selfRevoked) { // everybody else is gone (two devices removed each other concurrently): nothing left to sync with
+      const last = g.devices[ids[ids.length - 1]];
+      void this.leaveLocal({ by: g.devices[last?.revokedBy ?? ""]?.name ?? "another device", at: new Date().toISOString(), reason: "alone" });
+    }
+  }
+  /** A removed device confirmed (over a closing session) that it unlinked itself. */
+  private noteRemovedAck(peer: string) {
+    const d = this.group?.devices[peer]; if (!d?.revoked || d.removedAck) return;
+    d.removedAck = new Date().toISOString(); this.persist(); this.changedDevices(); this.broadcastKeys();
+  }
+  /** A removed device connected to us (it still knows an older key): tell it who removed it, wait for its confirmation, drop the connection. */
+  private async refuseRemoved(ch: Secure, id: string) {
+    const g = this.group, d = g?.devices[id]; if (!g || !d) return ch.close();
+    try {
+      await ch.send({ t: "bye", why: "revoked", by: g.devices[d.revokedBy ?? ""]?.name });
+      for (let i = 0; i < 4; i++) { const a = await ch.recv(3000); if (a?.t === "unlinked") { this.noteRemovedAck(id); break; } }
+    } catch { /* gone */ }
+    ch.close();
+  }
+  /** The other device of a group of two (or, for a removal, the device to be removed) must unlink. Delivered now when it is online, otherwise as soon as it is. */
+  private async startUnlink(peer: string, reason: "leave" | "remove") {
+    const d = this.group!.devices[peer];
+    this.unlinkPending = { peer, name: d.name, since: new Date().toISOString(), reason }; this.ledger.kvSet("unlinkPending", this.unlinkPending);
+    this.changedDevices();
+    const t0 = Date.now(), wait = this.o.unlinkWaitMs ?? 5000;
+    if (!this.sessions.has(peer)) { for (const k of Object.keys(this.group!.devices)) this.backoff.delete(k); this.tick(); }
+    while (!this.sessions.get(peer) && Date.now() - t0 < wait) await new Promise((r) => setTimeout(r, 100));
+    const s = this.sessions.get(peer);
+    const done = !!s && (await this.sendUnlink(s, Math.max(1500, wait - (Date.now() - t0))));
+    return { pending: !done, deviceName: d.name };
+  }
+  private async sendUnlink(s: Session, ms: number): Promise<boolean> {
+    const p = this.unlinkPending; if (!p || p.peer !== s.peer || s.closed || s.ackWait) return false;
+    const ack = new Promise<boolean>((ok) => { const t = setTimeout(() => { s.ackWait = undefined; ok(false); }, ms); s.ackWait = () => { clearTimeout(t); ok(true); }; });
+    try { await s.ch.send({ t: "unlink", removed: p.reason === "remove" }); } catch { s.ackWait = undefined; return false; }
+    if (!(await ack)) return false;
+    await this.leaveLocal(); return true;
+  }
+  /** `s.peer` told us (or our own membership list says) that we were removed: confirm, then unlink (the archive stays, the group state goes). */
+  private async removedByPeer(s: Session, byName?: unknown) {
+    const me = this.group?.devices[this.me.id], g = this.group;
+    await s.ch.send({ t: "unlinked" }).catch(() => {});
+    const by = typeof byName === "string" && byName ? byName.slice(0, 60) : g?.devices[me?.revokedBy ?? ""]?.name ?? "another device";
+    await this.leaveLocal({ by, at: me?.revoked ?? new Date().toISOString(), reason: "removed" });
   }
   /** Tell every connected member the membership + keys (they adopt keys that exclude... never a revoked one: those sessions are closed). */
   private broadcastKeys() {
@@ -1113,10 +1225,6 @@ export class SyncService {
   private resolveRekey(s: Session) {
     const g = this.group; if (!g || !needsRekey(g)) return;
     if (this.me.id < s.peer) { rekey(g); this.persist(); this.advertise(); this.broadcastKeys(); }
-  }
-  private gotRevoked() {
-    this.selfRevoked = true; this.persist(); this.teardown(false); void this.proxies.releaseAll();
-    this.host.emit("sync-devices", { ...this.status(), revokedNotice: true });
   }
 
   // ============================================================ credentials (token-style accounts only)
