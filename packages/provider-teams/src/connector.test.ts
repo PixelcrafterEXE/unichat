@@ -134,7 +134,7 @@ test("live: new messages arrive through polling, not historical; edits, deletes,
     const m = s.fake.say(C.dm, ALICE, "<p>fresh</p>");
     await waitFor(() => s.of("message").some((x: any) => x.text === "fresh"));
     const got = s.of("message").find((x: any) => x.text === "fresh"); assert.ok(!got.historical); assert.equal(got.chatId, C.dm);
-    assert.ok(s.of("chats-changed").some((x: any) => x.chatId === C.dm));
+    await waitFor(() => s.of("chats-changed").some((x: any) => x.chatId === C.dm)); // emitted right after the message event: a slow runner can observe it a tick later
     m.body!.content = "<p>fresh2</p>"; m.lastEditedDateTime = s.fake.now(); s.fake.touch(m);
     await waitFor(() => s.of("message-update").some((x: any) => x.patch.text === "fresh2"));
     m.reactions = [{ reactionType: "heart", user: { user: { id: ALICE } } }]; s.fake.touch(m);
