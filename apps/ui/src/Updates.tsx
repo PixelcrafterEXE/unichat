@@ -27,7 +27,19 @@ export function useUpdate() {
   const run = async (m: string, p: object = {}) => { setMsg(""); try { const r = await core.call(m, p); setSt(r?.status ?? r); return r; } catch (e: any) { setMsg(e?.message ?? "Something went wrong."); void refresh(); } };
   return {
     st, msg, setMsg,
-    check: () => run("updateCheck"), download: () => run("updateDownload"), cancel: () => run("updateCancel"),
+    // "Check now" must never look like it did nothing: a check that finds nothing (or fails, e.g. a private repository
+    // without a token) says so right next to the button instead of only updating the status line.
+    check: async () => {
+      const r = await run("updateCheck");
+      if (!r) return r;                                   // run() already put the thrown message in `msg`
+      const s: UpdateStatus = r.status ?? r;
+      if (s.error) setMsg(s.error);
+      else if (s.available) setMsg(`Version ${s.latest?.version} is available.`);
+      else if (s.dev) setMsg("This is a development build; it does not update itself.");
+      else setMsg(s.latest ? `Checked just now: ${s.current} is the latest version.` : "Checked just now: no release published yet.");
+      return r;
+    },
+    download: () => run("updateDownload"), cancel: () => run("updateCancel"),
     save: (p: object) => run("updateSettings", p),
     /** desktop: replaces the app and restarts; Android: the verified file goes to the system installer */
     install: async () => {
@@ -55,7 +67,7 @@ export function UpdatesSection() {
   const busy = st?.state === "checking" || st?.state === "downloading" || st?.state === "installing";
   const v = st?.latest?.version;
   const canSelf = st && st.installMode !== "none" && st.available;
-  const line = !st ? "Loading…" : st.state === "checking" ? "Checking…" : st.state === "downloading" ? "Downloading…" : st.state === "ready" ? `Version ${v} is downloaded and checked.`
+  const line = !st ? "Loading…" : st.state === "checking" ? "Checking…" : st.state === "error" ? (st.error ?? "The last check failed.") : st.state === "downloading" ? "Downloading…" : st.state === "ready" ? `Version ${v} is downloaded and checked.`
     : st.available ? `Version ${v} is available.` : st.dev ? "This is a development build; it does not update itself." : st.latest ? "You have the latest version." : st.lastChecked ? "No release found." : "Not checked yet.";
   return (
     <section id="updates" className="upd">
