@@ -1,7 +1,7 @@
 // Vectors for every KDF step. The BLAKE2b ones come from Python hashlib (an independent implementation; "abc"/512 is also RFC 7693 Appendix A).
 // The composed Threema KDF vectors (DGK tree, rendezvous STK/RPH/transport keys, CSP vouch, MMK, directory response) are SELF-DERIVED: there are no
 // official test vectors for them in the public docs. They were computed once with an independent Python script (hashlib blake2b + cryptography X25519 + a
-// 20-line HSalsa20), following the formulas of PROTOCOL-NOTES.md, so they pin the implementation but cannot prove interoperability with Threema.
+// 20-line HSalsa20), following the formulas of Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes), so they pin the implementation but cannot prove interoperability with Threema.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chachaOpen, chachaSeal } from "./aead.js";

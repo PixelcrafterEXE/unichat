@@ -1,4 +1,4 @@
-// Hand-written message layouts (field numbers = wire facts from the public protocol docs, PROTOCOL-NOTES.md). Names are ours.
+// Hand-written message layouts (field numbers = wire facts from the public protocol docs, Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes)). Names are ours.
 import type { Schema } from "./proto.js";
 const u32 = (n: number, rep = false) => ({ n, t: "u32" as const, rep });
 const u64 = (n: number) => ({ n, t: "u64" as const });

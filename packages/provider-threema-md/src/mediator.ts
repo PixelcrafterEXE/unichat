@@ -1,4 +1,4 @@
-// D2M mediator client (PROTOCOL-NOTES.md section 5): handshake, reflect/reflected with acks, proxying of CSP bytes, transactions, device management.
+// D2M mediator client (Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes) section 5): handshake, reflect/reflected with acks, proxying of CSP bytes, transactions, device management.
 import WebSocket from "ws";
 import { EventEmitter } from "node:events";
 import { randomBytes } from "node:crypto";

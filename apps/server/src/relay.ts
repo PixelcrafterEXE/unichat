@@ -1,4 +1,4 @@
-// OPTIONAL dumb relay for UniChat device sync across networks (see docs/ARCHITECTURE.md > Device sync > Beyond the local network).
+// OPTIONAL dumb relay for UniChat device sync across networks (see https://github.com/PixelcrafterEXE/unichat/wiki/Architecture > Device sync > Beyond the local network).
 // Two paired devices that cannot reach each other directly (both behind NAT) each open a WebSocket to  wss://<relay>/relay/<rendezvous id>.
 // The relay pairs the first two connections that name the same room and then copies binary messages from one to the other. That is ALL it does:
 //   - no accounts, no passwords, no database, no files: rooms live in memory and vanish when the second device leaves;

@@ -1,5 +1,5 @@
 // Chat Server Protocol client session (login handshake + frames) running over the mediator's `proxy` byte stream, plus the message payload
-// structs. Written from csp.struct.yml (PROTOCOL-NOTES.md section 6).
+// structs. Written from csp.struct.yml (Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes) section 6).
 import { EventEmitter } from "node:events";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { cat, cspVouch, metadataKey } from "./keys.js";

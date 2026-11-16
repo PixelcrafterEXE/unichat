@@ -1,5 +1,5 @@
 // SyncService: pairing, device group, sessions and replication. Everything runs inside the Hub's process; the Hub only routes `sync*` RPCs here.
-// Protocol summary (see "Device sync" in docs/ARCHITECTURE.md):
+// Protocol summary (see "Device sync" in https://github.com/PixelcrafterEXE/unichat/wiki/Architecture):
 //   transport  TCP (or a WebSocket through an optional relay) -> prologue -> Noise_XXpsk0 (psk = scrypt(pairing code) for pairing, HKDF(group key) for sync)
 //              -> JSON messages in AEAD frames. Pairing additionally needs BOTH users to confirm a 6-digit code derived from the handshake.
 //   session    members{devices,keys,ledger,port,addrs} <-> members; have{of,cursor,empty} (= ack + resume point); batch{entries,upTo}; keys{...}; ping; bye

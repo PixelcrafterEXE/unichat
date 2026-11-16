@@ -6,7 +6,7 @@ like Threema Desktop 2.0: it sends and receives as you, needs no Gateway credits
 
 > **UNOFFICIAL and UNTESTED AGAINST THREEMA.** The protocol layers were re-implemented from public documentation and verified only against fake
 > servers written in this package (all on 127.0.0.1). No byte of this code has ever talked to a Threema server. Read "Risks" and the live test plan
-> before linking a real account. Research notes with sources and `[V]erified / [M]emory / [?]unknown` tags: `PROTOCOL-NOTES.md`.
+> before linking a real account. Research notes with sources and `[V]erified / [M]emory / [?]unknown` tags: `Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes)`.
 
 ## What it does
 

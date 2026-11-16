@@ -1,5 +1,5 @@
 // Threema "linked device" provider (multi-device protocol): UniChat becomes an additional device of the user's PERSONAL Threema ID.
-// UNOFFICIAL. See README.md (risks, gaps, live test plan) and PROTOCOL-NOTES.md (protocol facts and their sources).
+// UNOFFICIAL. See README.md (risks, gaps, live test plan) and Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes) (protocol facts and their sources).
 import { randomBytes } from "node:crypto";
 import type { AccountState, Attachment, Capabilities, Chat, Connector, Contact, CoreEvent, HistoryQuery, LoginPrompt, Message, OutgoingMessage, PrivacySetting, Profile, ProfilePatch, ProviderFactory } from "@unimsg/core";
 import { APP_VERSION, DEVICE_LABEL, JOIN_TTL_MS, MAX_RETRIES, RETRY_BASE_MS, cspServerKeys, dbg, mediatorBase } from "./config.js";

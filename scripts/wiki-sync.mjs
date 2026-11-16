@@ -39,7 +39,7 @@ const tracked = () => git(root, "ls-files").split("\n").filter(Boolean);
 function rewriteReferences(write) {
   const hits = [];
   for (const f of tracked()) {
-    if (f in PAGES || /\.(png|jpg|jpeg|ico|svg|webmanifest|zst|apk)$/.test(f)) continue;
+    if (f in PAGES || f === "scripts/wiki-sync.mjs" || /\.(png|jpg|jpeg|ico|svg|webmanifest|zst|apk)$/.test(f)) continue; // never rewrite this script's own page map
     let s; try { s = readFileSync(join(root, f), "utf8"); } catch { continue; }
     let out = s;
     for (const p of Object.keys(PAGES)) {
