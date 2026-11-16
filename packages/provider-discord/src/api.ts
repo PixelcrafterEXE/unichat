@@ -165,8 +165,10 @@ export class Api {
       }
       if (res.status >= 300 && res.status < 400) { await res.arrayBuffer().catch(() => {}); throw new DcError("Discord redirected the request unexpectedly.", "http", res.status); }
       if (res.ok) return res;
-      let code: number | undefined;
-      try { code = ((await res.json()) as { code?: number }).code; } catch { /* not json */ }
+      let code: number | undefined, captcha = false;
+      try { const b = (await res.json()) as { code?: number; captcha_key?: unknown }; code = b.code; captcha = Array.isArray(b.captcha_key); } catch { /* not json */ }
+      // A 400 WITHOUT a code and with `captcha_key`: Discord wants a captcha (typically when a user account opens a DM with someone new). UniChat cannot solve it.
+      if (res.status === 400 && captcha) throw new DcError("Discord asks for a captcha before this account may message a new person (an anti-spam check). Open Discord in the official app or browser, send that person one message there, then try again here.", "verify", 400, code);
       if (res.status === 401) { this.o.onUnauthorized?.(); throw new DcError("Discord: the token is no longer valid.", "auth", 401, code); }
       if (res.status === 403 && (code === 40002 || code === 40003)) throw new DcError("Discord asks this account to verify itself (or slow down) before it can be used. Do that in the official app, then try again.", "verify", 403, code);
       const kind = res.status === 403 ? "forbidden" : res.status === 404 ? "notfound" : "http";
