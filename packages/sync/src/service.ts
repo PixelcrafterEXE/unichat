@@ -90,7 +90,7 @@ const RPC_INLINE = 300_000;
 
 interface Rpc { ok(v: any): void; fail(e: Error): void; timer: ReturnType<typeof setTimeout> }
 interface Session {
-  peer: string; ch: Secure; initiator: string; startedAt: number; inflight: number[]; sentUpTo: number; peerHave?: { of: string; cursor: number; empty?: boolean }; peerLedger?: string;
+  peer: string; ch: Secure; initiator: string; startedAt: number; inflight: number[]; sentUpTo: number; sentG: number; inflightG: number[]; sg: number; sm: number; tot?: { g: number; m: number }; headDone: boolean; peerHave?: { of: string; cursor: number; g?: number; empty?: boolean }; peerLedger?: string;
   wake: () => void; closed: boolean; sent: number; received: number; applying: Promise<unknown>; via?: string;
   /** set while we wait for the peer's "unlinked" answer to our "unlink" */ ackWait?: () => void;
   rid: number; pending: Map<number, Rpc>; big: BigAssembler; serving: number;
@@ -99,7 +99,7 @@ interface Session {
 interface Pairing { psk: Buffer; code: string; expiresAt: number; failures: number; nearbyPrompts: number; keepListening: boolean; timer: ReturnType<typeof setTimeout> }
 interface PendingJoin { nearby?: boolean; direction: "outgoing" | "incoming"; ch: Secure; sas: string; name: string; id: string; ip: string; since: number; hostOk?: boolean; joinerOk?: boolean; timer: ReturnType<typeof setTimeout>; settle: () => void }
 interface Joining { nearby?: boolean; state: "confirm" | "waiting"; sas: string; hostName: string; ch: Secure; host: string; port: number; pin?: Buffer; direction: "outgoing" | "incoming"; timer: ReturnType<typeof setTimeout> }
-type Progress = { state: "offline" | "connecting" | "syncing" | "idle" | "error"; sent: number; received: number; pending: number; lastSync?: string; error?: string; phase?: "snapshot"; snapDone?: number; snapTotal?: number; snapDir?: "in" | "out" };
+type Progress = { state: "offline" | "connecting" | "syncing" | "idle" | "error"; sent: number; received: number; pending: number; lastSync?: string; error?: string; accts?: { done: number; total: number }; chats?: { done: number; total: number }; phase?: "snapshot"; snapDone?: number; snapTotal?: number; snapDir?: "in" | "out" };
 interface SrcState { n: number; until: number; strikes: number; last: number; conns: number[]; open: number }
 
 export class SyncService {
@@ -833,14 +833,14 @@ export class SyncService {
     const vr = (v?: string) => (v === "dht" ? 1 : 0); // a LAN / saved-address / relay session beats a DHT one on both ends; between equals the smaller initiator id wins
     if (prev) { if (vr(prev.via) < vr(via) || (vr(prev.via) === vr(via) && prev.initiator <= initiator)) return ch.close(); this.closeSession(prev, "superseded"); }
     let wakeFn = () => {};
-    const s: Session = { peer, ch, initiator, startedAt: this.now(), inflight: [], sentUpTo: 0, wake: () => wakeFn(), closed: false, sent: 0, received: 0, applying: Promise.resolve(), via, rid: 0, pending: new Map(), big: new BigAssembler(BIG_MAX_DEFAULT), serving: 0, snapTried: false, skipEcho: false };
+    const s: Session = { peer, ch, initiator, startedAt: this.now(), inflight: [], sentUpTo: 0, sentG: 0, inflightG: [], sg: 0, sm: 0, headDone: false, wake: () => wakeFn(), closed: false, sent: 0, received: 0, applying: Promise.resolve(), via, rid: 0, pending: new Map(), big: new BigAssembler(BIG_MAX_DEFAULT), serving: 0, snapTried: false, skipEcho: false };
     this.sessions.set(peer, s);
     const d = g.devices[peer]; d.lastSeen = new Date().toISOString();
     if (remoteHost && !outbound && Number(ch.hello?.port) > 0) noteAddr(d, { kind: "tcp", host: remoteHost.replace(/^::ffff:/, ""), port: Number(ch.hello.port), src: "learned" }, "learned");
     this.setProgress(peer, { state: "syncing" }); this.changedDevices();
     let signal: (() => void) | undefined; const waitSignal = (ms: number) => new Promise<void>((ok) => { const t = setTimeout(ok, ms); signal = () => { clearTimeout(t); ok(); }; });
     wakeFn = () => signal?.();
-    const cursors = () => this.ledger.kvGet<Record<string, { ledger: string; applied: number }>>("cursors") ?? {};
+    const cursors = () => this.ledger.kvGet<Record<string, { ledger: string; applied: number; g?: number }>>("cursors") ?? {};
     try {
       await ch.send({ t: "members", devices: g.devices, keys: g.keys, ledger: this.ledger.id, port: this.listeningPort(), addrs: this.selfAddrs() });
       const m = await ch.recv(15_000);
@@ -857,20 +857,25 @@ export class SyncService {
       if (r.added.length || r.revoked.length || r.keysAdded) { this.changedDevices(); if (r.keysAdded) this.advertise(); }
       this.resolveRekey(s);
       this.proxies.presenceChanged(peer, true); this.moves.onUp(peer);
-      const cur = cursors()[peer], applied = cur && cur.ledger === s.peerLedger ? cur.applied : 0;
-      await ch.send({ t: "have", of: s.peerLedger, cursor: applied, empty: this.ledger.count() === 0 });
+      const cur = cursors()[peer], applied = cur && cur.ledger === s.peerLedger ? cur.applied : 0, gApplied = cur && cur.ledger === s.peerLedger ? Math.max(cur.g ?? 0, applied) : 0;
+      await ch.send({ t: "have", of: s.peerLedger, cursor: applied, g: gApplied, empty: this.ledger.count() === 0 }); // `g`: cursor of the global-state class (see the priority classes in the sender loop)
       const recvLoop = (async () => {
         for (;;) {
           const x = await ch.recv(75_000);
           switch (x?.t) {
-            case "have": s.peerHave = { of: String(x.of), cursor: Number(x.cursor) || 0, empty: !!x.empty }; if (s.peerHave.of !== this.ledger.id) s.peerHave.cursor = 0; while (s.inflight.length && s.inflight[0] <= s.peerHave.cursor) s.inflight.shift(); signal?.(); break;
+            case "have": s.peerHave = { of: String(x.of), cursor: Number(x.cursor) || 0, g: x.g === undefined ? undefined : Number(x.g) || 0, empty: !!x.empty }; if (s.peerHave.of !== this.ledger.id) { s.peerHave.cursor = 0; if (s.peerHave.g !== undefined) s.peerHave.g = 0; } while (s.inflight.length && s.inflight[0] <= s.peerHave.cursor) s.inflight.shift(); while (s.inflightG.length && s.inflightG[0] <= (s.peerHave.g ?? 0)) s.inflightG.shift(); signal?.(); break;
             case "batch": {
               if (!Array.isArray(x.entries) || x.entries.length > 2000 || !Number.isFinite(x.upTo)) throw new Error("bad batch");
               const res = await this.store.applyRemote(x.entries as WireEntry[], peer);
               s.received += res.applied;
-              const cs = cursors(); cs[peer] = { ledger: s.peerLedger!, applied: Number(x.upTo) }; this.ledger.kvSet("cursors", cs);
-              await ch.send({ t: "have", of: s.peerLedger, cursor: Number(x.upTo) });
-              this.afterApply(res); this.setProgress(peer, { received: s.received, state: x.more ? "syncing" : undefined });
+              // cls "g": global state (accounts, settings, folders, ...) advances only the g cursor; "m": messages only the message cursor; "h": the newest messages ahead of the backlog (no cursor, idempotent); none: both (legacy peers, snapshot tail)
+              const cs = cursors(), pc = cs[peer]?.ledger === s.peerLedger ? cs[peer] : undefined, up = Number(x.upTo), cl = x.cls;
+              let ap = pc?.applied ?? 0, gg = Math.max(pc?.g ?? 0, ap);
+              if (cl === "g") gg = Math.max(gg, up); else if (cl === "m") ap = Math.max(ap, up); else if (cl !== "h") { ap = up; gg = Math.max(gg, up); }
+              if (cl !== "h") { cs[peer] = { ledger: s.peerLedger!, applied: ap, g: gg }; this.ledger.kvSet("cursors", cs); await ch.send({ t: "have", of: s.peerLedger, cursor: ap, g: gg }); }
+              this.afterApply(res);
+              const tot = x.tot && Number.isFinite(x.tot.g) && Number.isFinite(x.tot.m) ? x.tot : undefined;
+              this.setProgress(peer, { received: s.received, state: x.more ? "syncing" : undefined, ...(tot ? { accts: { done: x.more ? Math.min(Number(x.sg) || 0, tot.g) : tot.g, total: tot.g }, chats: { done: x.more ? Math.min(Number(x.sm) || 0, tot.m) : tot.m, total: tot.m } } : {}) });
               if (!x.more) this.setProgress(peer, { lastSync: new Date().toISOString() });
               break;
             }
@@ -893,9 +898,19 @@ export class SyncService {
         let lastPing = this.now();
         while (!s.closed) {
           const have = s.peerHave;
-          if (!have || s.inflight.length >= WINDOW) { await waitSignal(1000); if (this.now() - lastPing > 20_000) { lastPing = this.now(); await ch.send({ t: "ping" }); } continue; }
-          if (this.wantSnapshot(s)) { await this.sendSnapshot(s); continue; }
-          const from = Math.max(s.sentUpTo, have.cursor), rows = this.ledger.since(from, 400);
+          if (!have || s.inflight.length + s.inflightG.length >= WINDOW) { await waitSignal(1000); if (this.now() - lastPing > 20_000) { lastPing = this.now(); await ch.send({ t: "ping" }); } continue; }
+          // Priority classes (peers that report a `g` cursor): 1) global state (accounts, credentials, settings, folders, merges, flags, aliases, chat caches), 2) the newest messages, 3) the message backlog in ledger order, 4) files (blobs.ts, after this loop is idle). Each class has its own cursor, so resumption and idempotency work per class.
+          const classes = have.g !== undefined; let cls: "g" | "m" | undefined, from = Math.max(s.sentUpTo, have.cursor), rows: ReturnType<Ledger["since"]>;
+          if (classes) {
+            const fromG = Math.max(s.sentG, have.g!), gRows = this.ledger.sinceClass(fromG, 400, false);
+            if (gRows.length) { cls = "g"; from = fromG; rows = gRows; }
+            else {
+              if (this.wantSnapshot(s)) { await this.sendSnapshot(s); continue; }
+              if (!s.headDone && have.cursor === 0) { s.headDone = true; await this.sendHead(s); continue; }
+              cls = "m"; rows = this.ledger.sinceClass(from, 400, true);
+            }
+            if (!s.tot) s.tot = { g: this.ledger.countClass(Math.max(s.sentG, have.g!), false), m: this.ledger.countClass(from, true) };
+          } else { if (this.wantSnapshot(s)) { await this.sendSnapshot(s); continue; } rows = this.ledger.since(from, 400); }
           if (!rows.length) {
             this.setProgress(peer, { state: "idle", pending: 0 });
             await waitSignal(10_000); if (this.now() - lastPing > 20_000) { lastPing = this.now(); await ch.send({ t: "ping" }); } continue;
@@ -906,7 +921,7 @@ export class SyncService {
             let w: WireEntry | undefined;
             if (acct && this.modeOf(acct) === "none") w = undefined;
             else if (parseKey(e.key).kind === "cr") w = await this.credsEntry(e.key, e.hlc);
-            else if (e.src === peer && (have.cursor > 0 || s.skipEcho)) w = undefined; // the peer already has what it gave us
+            else if (e.src === peer && ((cls === "g" ? have.g! : have.cursor) > 0 || s.skipEcho)) w = undefined; // the peer already has what it gave us
             else w = this.store.entry(e, mp);
             const sz = w ? JSON.stringify(w).length : 0;
             if (w && sz > 400_000) w = undefined;
@@ -914,9 +929,11 @@ export class SyncService {
             if (w) { entries.push(w); bytes += sz; }
             upTo = e.seq;
           }
-          last = upTo >= this.ledger.maxSeq();
-          s.sentUpTo = upTo; s.inflight.push(upTo); s.sent += entries.length;
-          await ch.send({ t: "batch", entries, upTo, more: !last });
+          const scanned = rows.indexOf(rows.find((r) => r.seq === upTo)!) + 1;
+          if (cls === "g") { s.sentG = upTo; s.inflightG.push(upTo); s.sg += scanned; last = scanned === rows.length && rows.length < 400 && !this.ledger.sinceClass(Math.max(s.sentUpTo, have.cursor), 1, true).length; }
+          else { s.sentUpTo = upTo; s.inflight.push(upTo); if (cls === "m") s.sm += scanned; last = upTo >= this.ledger.maxSeq(); if (cls === "m") last = scanned === rows.length && rows.length < 400; }
+          s.sent += entries.length;
+          await ch.send({ t: "batch", entries, upTo, more: !last, ...(cls ? { cls, tot: s.tot, sg: s.sg, sm: s.sm } : {}) });
           this.setProgress(peer, { sent: s.sent, pending: Math.max(0, this.ledger.maxSeq() - upTo), state: "syncing" });
         }
       })();
@@ -949,7 +966,7 @@ export class SyncService {
     if (!res.chats.size && !res.accounts && !res.global) return;
     if (this.reloadT) return;
     // a backlog arrives as hundreds of batches: reload at most every ~1.5 s while they keep coming (each reload makes the UI rebuild its chat list), 250 ms for an isolated change
-    const since = Date.now() - this.lastReload, wait = since < 10_000 ? 1500 : 250;
+    const since = Date.now() - this.lastReload, wait = res.accounts ? 20 : since < 10_000 ? 1500 : 250; // accounts arrive first: show them at once
     this.reloadT = setTimeout(async () => {
       this.reloadT = undefined; const chats = [...this.chatsDirty]; this.chatsDirty.clear(); this.lastReload = Date.now();
       try { await this.host.reload({ search: false }); } catch { /* hub shutting down */ } // the search index is kept current message by message (SyncCtx.index)
@@ -999,7 +1016,7 @@ export class SyncService {
     };
   }
   /** Frames beyond the ledger protocol. Returns false for an unknown type. */
-  private async handleExtra(s: Session, x: any, cursors: () => Record<string, { ledger: string; applied: number }>): Promise<boolean> {
+  private async handleExtra(s: Session, x: any, cursors: () => Record<string, { ledger: string; applied: number; g?: number }>): Promise<boolean> {
     switch (x?.t) {
       case "big": { const r = s.big.push(x); if (r && r.kind === "msg") await this.handleExtra(s, r.payload, cursors); return true; }
       case "rpc": {
@@ -1034,6 +1051,17 @@ export class SyncService {
     const h = s.peerHave; if (!h || s.snapTried || this.group === undefined) return false;
     const max = this.ledger.maxSeq(), min = h.empty ? (this.o.snapshot?.minEntitiesEmpty ?? 50) : (this.o.snapshot?.minEntities ?? 800);
     return (h.cursor === 0 && max >= min) || max - h.cursor > 20_000;
+  }
+  /** The newest messages first (a fresh peer): the chat list is usable long before the backlog is through. They advance no cursor; the ordinary pass sends them again and the receiver skips them. */
+  private async sendHead(s: Session) {
+    const mp = this.store.maps(), entries: WireEntry[] = []; let bytes = 0;
+    const flush = async () => { if (!entries.length) return; const e = entries.splice(0); bytes = 0; s.sent += e.length; await s.ch.send({ t: "batch", entries: e, upTo: 0, more: true, cls: "h" }); };
+    for (const r of this.ledger.newestMessages(600)) {
+      const acct = accountOfKey(r.key); if (acct && this.modeOf(acct) === "none") continue;
+      const w = this.store.entry(r, mp); if (!w) continue; const sz = JSON.stringify(w).length; if (sz > 400_000) continue;
+      if (bytes + sz > BATCH_BYTES) await flush(); entries.push(w); bytes += sz;
+    }
+    await flush();
   }
   private waitSnap(s: Session, kinds: string[], ms: number): Promise<any> {
     return new Promise((ok) => { const timer = setTimeout(() => { s.snapWait = undefined; ok(undefined); }, ms); s.snapWait = { kinds, ok, timer }; });
@@ -1070,7 +1098,7 @@ export class SyncService {
       // the receiver now holds everything up to rec.cursor; credentials never ride in a snapshot, so send them (they still wait for the user's confirmation there)
       const crs: WireEntry[] = []; let from = 0;
       for (;;) { const rows = this.ledger.since(from, 500); if (!rows.length) break; for (const e of rows) { from = e.seq; if (e.seq <= rec.cursor && parseKey(e.key).kind === "cr" && this.modeOf(accountOfKey(e.key)) !== "none") { const w = await this.credsEntry(e.key, e.hlc); if (w) crs.push(w); } } if (from >= rec.cursor) break; }
-      s.sentUpTo = Math.max(s.sentUpTo, rec.cursor); s.inflight.push(rec.cursor);
+      s.sentUpTo = Math.max(s.sentUpTo, rec.cursor); s.sentG = Math.max(s.sentG, rec.cursor); s.inflight.push(rec.cursor);
       await s.ch.send({ t: "batch", entries: crs, upTo: rec.cursor, more: true });
       rmSync(rec.file, { force: true }); delete recs[peer]; this.ledger.kvSet("snapshots", recs);
       this.setProgress(peer, { phase: undefined, lastSync: new Date().toISOString() });
@@ -1096,7 +1124,7 @@ export class SyncService {
     if (r.got - r.lastSaved >= 1 << 20) { r.lastSaved = r.got; const all = this.ledger.kvGet<Record<string, any>>("snapIn") ?? {}; all[s.peer] = { id: r.id, got: r.got }; this.ledger.kvSet("snapIn", all); }
     this.setProgress(s.peer, { phase: "snapshot", snapDone: r.got, snapTotal: r.size, snapDir: "in" });
   }
-  private async onSnapEnd(s: Session, x: any, cursors: () => Record<string, { ledger: string; applied: number }>) {
+  private async onSnapEnd(s: Session, x: any, cursors: () => Record<string, { ledger: string; applied: number; g?: number }>) {
     const r = s.snapRx; if (!r || x.id !== r.id) throw new Error("unexpected snapshot end");
     const all = this.ledger.kvGet<Record<string, any>>("snapIn") ?? {}, fail = async (why: string, drop: boolean) => { if (drop) { rmSync(r.file, { force: true }); delete all[s.peer]; this.ledger.kvSet("snapIn", all); } s.snapRx = undefined; this.setProgress(s.peer, { phase: undefined }); await s.ch.send({ t: "snap-ack", id: r.id, ok: false, error: why }); };
     all[s.peer] = { id: r.id, got: r.got }; this.ledger.kvSet("snapIn", all);
@@ -1107,11 +1135,11 @@ export class SyncService {
       await applySnapshot(r.file, snapshotPassphrase(key.key, r.id), { expectLedger: s.peerLedger, batch: this.ledger.count() === 0 ? 2000 : 1000, apply: (e) => this.store.applyRemote(e, s.peer),
         onProgress: (n) => this.setProgress(s.peer, { phase: "snapshot", snapDone: r.size, snapTotal: r.size, received: s.received + n }) });
     } catch (e) { return fail(errmsg(e), true); }
-    const cs = cursors(); cs[s.peer] = { ledger: s.peerLedger!, applied: r.cursor }; this.ledger.kvSet("cursors", cs);
+    const cs = cursors(); cs[s.peer] = { ledger: s.peerLedger!, applied: r.cursor, g: r.cursor }; this.ledger.kvSet("cursors", cs);
     rmSync(r.file, { force: true }); delete all[s.peer]; this.ledger.kvSet("snapIn", all); s.snapRx = undefined; s.skipEcho = true;
     this.afterApply({ chats: new Set(), accounts: true, global: true });
     this.setProgress(s.peer, { phase: undefined, lastSync: new Date().toISOString() });
-    await s.ch.send({ t: "snap-ack", id: r.id, ok: true }); await s.ch.send({ t: "have", of: s.peerLedger, cursor: r.cursor });
+    await s.ch.send({ t: "snap-ack", id: r.id, ok: true }); await s.ch.send({ t: "have", of: s.peerLedger, cursor: r.cursor, g: r.cursor });
   }
 
   // ============================================================ media (lazy blob sync)
