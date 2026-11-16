@@ -1,0 +1,506 @@
+{
+ "results": {
+  "profile-pictures": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "5/6 chats returned a picture"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "6/6 chats returned a picture"
+   }
+  },
+  "profile": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "read name/about; update with the same name accepted"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "read name/about; update with the same name accepted"
+   }
+  },
+  "privacy": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "3 settings read: readReceipts, linkPreviews, typingIndicators"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "8 settings read: last_seen, online, profile_picture, about, read_receipts"
+   }
+  },
+  "spaces": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "unsupported by capability"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "8 communities listed"
+   }
+  },
+  "groups-receive": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "19 groups/channels listed, 19 with a name"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "124 groups/channels listed, 124 with a name"
+   }
+  },
+  "history-older": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "unsupported by capability"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "20 older messages paged in \"A 24\""
+   }
+  },
+  "search": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:17:41.118Z",
+    "note": "10169 hits"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "10169 hits"
+   }
+  },
+  "send-text": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "status sent, id <id>-"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "status sent, id <id>"
+   }
+  },
+  "live-updates": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "1 events (message)"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "1 events (message)"
+   }
+  },
+  "replies": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "quotes the right message"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "quotes the right message"
+   }
+  },
+  "reactions": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "added \ud83d\udc4d and removed it"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "added \ud83d\udc4d and removed it"
+   }
+  },
+  "edit": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "editedAt set"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "editedAt set"
+   }
+  },
+  "delete": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "deleted for everyone"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "deleted for everyone"
+   }
+  },
+  "pin": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "pinned, listed, unpinned"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "pinned, listed, unpinned"
+   }
+  },
+  "typing": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "start/stop accepted by the service (nobody else in the chat to see it)"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "start/stop accepted by the service (nobody else in the chat to see it)"
+   }
+  },
+  "mark-read": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "markChatRead -> {\"chatId\":\"<chat>"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "markChatRead -> {\"chatId\":\"<chat>"
+   }
+  },
+  "send-media": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400: Bad Request | x-signal-timestamp=<number> content-length=0). Try again later."
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "image image/jpeg, 9056 B up, 9056 B down (identical)"
+   }
+  },
+  "send-file": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:29:48.333Z",
+    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again later."
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:29:48.333Z",
+    "note": "file text/plain, 23 B up, 23 B down (identical)"
+   }
+  },
+  "send-video": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:29:48.333Z",
+    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again later."
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:29:48.333Z",
+    "note": "video video/mp4, 18455 B up, 18455 B down (identical)"
+   }
+  },
+  "send-voice": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:29:48.333Z",
+    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again later."
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:29:48.333Z",
+    "note": "voice audio/ogg; codecs=opus, 8119 B up, 8119 B down (identical)"
+   }
+  },
+  "gif": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:29:48.333Z",
+    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again later."
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:29:48.333Z",
+    "note": "image image/gif, 7050 B up, 7050 B down (identical)"
+   }
+  },
+  "polls": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "poll shown, vote on \"A\" reflected"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "poll shown, vote on \"A\" reflected"
+   }
+  },
+  "location": {
+   "signal": {
+    "status": "unsupported",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "capability location is off"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "location message round trip"
+   }
+  },
+  "contact-cards": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "contact card round trip"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "contact card round trip"
+   }
+  },
+  "events": {
+   "signal": {
+    "status": "unsupported",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "capability events is off"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "event card round trip"
+   }
+  },
+  "mentions": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "mention of <id> accepted"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "mention of You accepted"
+   }
+  },
+  "link-preview": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "preview card attached"
+   },
+   "whatsapp": {
+    "status": "failed",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "sent, but no preview card attached"
+   }
+  },
+  "forward": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "forwarded copy flagged as forwarded"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "forwarded copy flagged as forwarded"
+   }
+  },
+  "schedule": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "job {\"id\":\"<id> went out"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "job {\"id\":\"<id> went out"
+   }
+  },
+  "disappearing": {
+   "signal": {
+    "status": "verified",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "timer set to 30 s and switched off again"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "timer set to 86400 s and switched off again"
+   }
+  },
+  "refresh-chat": {
+   "signal": {
+    "status": "unsupported",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "capability refreshChat is off"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "refresh -> {\"message\":\"Nothing to ask for: all messages are here.\"}"
+   }
+  },
+  "fetch-history": {
+   "signal": {
+    "status": "unsupported",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "capability fetchHistory is off"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "{\"jobId\":\"history-mwjtu1a9-1\",\"accountId\":\"whatsapp-<id>\",\"provider\":\"whatsapp\",\"days\":2,\"state\""
+   }
+  },
+  "search-own": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:17:41.118Z",
+    "note": "no sent text"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "found by full-text search"
+   }
+  },
+  "rename-group": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "the target is not a group of our own"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "renamed and restored"
+   }
+  },
+  "group-description": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "the target is not a group of our own"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "description set and shown"
+   }
+  },
+  "group-picture": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "the target is not a group of our own"
+   },
+   "whatsapp": {
+    "status": "failed",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "Error: Could not change the group picture (only admins can, unless the group lets everyone): the server has no image library (install \"sharp\") to prepare the picture."
+   }
+  },
+  "create-group": {
+   "signal": {
+    "status": "failed",
+    "at": "2026-11-16T22:11:49.796Z",
+    "note": "needs another member: Error: Add at least one other person to the group.\n    at host.onmessage (<anonymous>:31:38)"
+   },
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "created \"UniChat live test (leave)\" and left it"
+   }
+  },
+  "members": {
+   "signal": {
+    "status": "skipped",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "adding / removing other people is not done by the live test"
+   },
+   "whatsapp": {
+    "status": "skipped",
+    "at": "2026-11-16T22:38:57.486Z",
+    "note": "adding / removing other people is not done by the live test"
+   }
+  },
+  "leave-group": {
+   "whatsapp": {
+    "status": "verified",
+    "at": "2026-11-16T22:19:56.286Z",
+    "note": "left the throwaway group"
+   }
+  }
+ },
+ "runs": [
+  {
+   "at": "2026-11-16T22:11:49.796Z",
+   "transport": "hooked",
+   "accounts": [
+    "signal"
+   ]
+  },
+  {
+   "at": "2026-11-16T22:17:41.118Z",
+   "transport": "android",
+   "accounts": [
+    "signal"
+   ]
+  },
+  {
+   "at": "2026-11-16T22:19:56.286Z",
+   "transport": "hooked",
+   "accounts": [
+    "whatsapp"
+   ]
+  },
+  {
+   "at": "2026-11-16T22:29:48.333Z",
+   "transport": "android",
+   "accounts": [
+    "signal",
+    "whatsapp"
+   ]
+  },
+  {
+   "at": "2026-11-16T22:38:57.486Z",
+   "transport": "hooked",
+   "accounts": [
+    "signal",
+    "whatsapp"
+   ]
+  }
+ ]
+}
