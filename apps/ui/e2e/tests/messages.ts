@@ -136,4 +136,50 @@ export default [
     await t.waitFor(`!document.querySelector('.tolatest')`);
     t.check("older pages stay loaded", (await t.ev<number>(`+document.querySelector('.messages').dataset.count`)) >= before);
   }, { timeout: 90000 }),
+
+  test("a sent message shows instantly (pending), then becomes the real one without a duplicate", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    await t.ev(`globalThis.__mockSlowSend=1200`);
+    const n = await t.ev<number>(`document.querySelectorAll('.messages .msg').length`);
+    await t.typeIn("instant hello"); await t.enter();
+    await t.ok("it is in the list at once, marked as sending", `(()=>{const m=__e2e.msg("instant hello"); return !!m && m.classList.contains('pend') && /^pend-/.test(m.dataset.mid)})()`, );
+    t.check("the backend has not answered yet", (await t.ev<number>(`(globalThis.__mockSendLog||[]).length`)) === 0);
+    await t.ok("the real message replaces it", `(()=>{const l=[...document.querySelectorAll('.messages .msg')].filter(m=>/instant hello/.test(m.textContent)); return l.length===1 && !l[0].classList.contains('pend') && !/^pend-/.test(l[0].dataset.mid)})()`);
+    await t.eq("exactly one message was added", `document.querySelectorAll('.messages .msg').length`, n + 1);
+    await t.ev(`globalThis.__mockSlowSend=0`);
+  }),
+
+  test("a pending message keeps its place before later ones, and a failed slow send turns into Retry", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    await t.ev(`globalThis.__mockSlowSend=800`);
+    await t.typeIn("/fail slow one"); await t.enter();
+    await t.ok("shown pending first", `(()=>{const m=__e2e.msg("/fail slow one"); return !!m && m.classList.contains('pend')})()`);
+    await t.waitSel(".msg button", "Retry");
+    await t.eq("one failed row, the placeholder is gone", `[...document.querySelectorAll('.messages .msg')].filter(m=>/slow one/.test(m.textContent)).length`, 1);
+    await t.ok("it is the last message", `(()=>{const l=[...document.querySelectorAll('.messages .msg')]; return /slow one/.test(l[l.length-1].textContent)})()`);
+    await t.ev(`globalThis.__mockSlowSend=0`);
+  }),
+
+  test("two quick pending sends stay in order and are not duplicated", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    const n = await t.ev<number>(`document.querySelectorAll('.messages .msg').length`);
+    await t.ev(`globalThis.__mockSlowSend=500`);
+    await t.typeIn("first"); await t.enter(); await t.typeIn("second"); await t.enter();
+    await t.ok("both pending, in order", `(()=>{const l=[...document.querySelectorAll('.messages .msg.pend')].map(m=>m.textContent); return l.length===2 && /first/.test(l[0]) && /second/.test(l[1])})()`);
+    await t.ok("both become real", `!document.querySelector('.msg.pend') && !!__e2e.msg("first") && !!__e2e.msg("second")`);
+    await t.ok("in order, one row each", `(()=>{const a=__e2e.msg("first"), b=__e2e.msg("second"); return !!(a.compareDocumentPosition(b)&4) && [...document.querySelectorAll('.messages .msg')].length===${n}+2})()`);
+    await t.ev(`globalThis.__mockSlowSend=0`);
+  }),
+
+  test("a pending reply shows its quote at once and is not duplicated", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    await t.waitSel(".messages .msg");
+    const target = "Are we still on for Saturday?"; await t.waitFor(`__e2e.msg(${JSON.stringify(target)})`);
+    await msgMenu(t, target); await t.click(".ctxmenu button", /Reply/);
+    await t.ev(`globalThis.__mockSlowSend=700`);
+    await t.typeIn("quoted answer"); await t.enter();
+    await t.ok("pending with a quote", `(()=>{const m=__e2e.msg("quoted answer"); return !!m && m.classList.contains('pend') && !!m.querySelector('.quote')})()`);
+    await t.ok("real one has the quote, once", `(()=>{const l=[...document.querySelectorAll('.messages .msg')].filter(m=>/quoted answer/.test(m.textContent)); return l.length===1 && !l[0].classList.contains('pend') && !!l[0].querySelector('.quote')})()`);
+    await t.ev(`globalThis.__mockSlowSend=0`);
+  }),
 ];

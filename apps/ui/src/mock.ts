@@ -500,6 +500,7 @@ export function mockTransport() {
           return membersOf(p.chatId); }
         case "attachment": { const f = files.get(`${p.messageId}|${p.attachmentId}`) ?? (BIG ? BIG_FILE : undefined); if (!f) throw new Error("attachment expired"); return { dataBase64: f.b64, mime: f.mime, name: f.name }; }
         case "send": {
+          { const slow = Number((globalThis as any).__mockSlowSend) || 0; if (slow) await new Promise((r) => setTimeout(r, slow)); } // e2e hook: a slow backend answer
           ((globalThis as any).__mockSendLog ??= []).push(JSON.parse(JSON.stringify({ chatId: p.chatId, text: p.text, clientId: p.clientId })));
           if (accounts.find((a) => String(p.chatId).startsWith(a.id + ":"))?.state === "signed-out") throw new Error("This account is signed out, so this chat is read-only. Sign in again from Settings to continue.");
           { const v = accounts.find((a) => String(p.chatId).startsWith(a.id + ":"))?.via; if (v?.kind === "offline") throw new Error(`${v.device} is offline, so you can't do that now: this account is read-only until it is back.`); }

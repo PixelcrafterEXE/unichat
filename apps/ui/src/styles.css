@@ -687,3 +687,4 @@ html:not(.bubbles) .mfoot time, html:not(.bubbles) .mfoot .netbadge { display: n
 .dtsec select:hover:not(:disabled) { border-color: var(--muted); } .dtsec select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dtsec .hint { font-size: 12px; margin: 6px 2px 0; }
 .sysmsg.info span { width: fit-content; border-radius: 999px; }
+.msg.pend{opacity:.7}

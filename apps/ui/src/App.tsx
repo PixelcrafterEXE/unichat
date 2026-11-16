@@ -42,7 +42,16 @@ function reuse<T extends { id: string }>(prev: T[], next: T[]): T[] {
   const out = next.map((n, i) => { const o = m.get(n.id); if (o && same(o, n)) { if (prev[i] !== o) all = false; return o; } all = false; return n; });
   return all ? prev : out;
 }
-const upsert = (list: Message[], m: Message) => (list.some((x) => x.id === m.id && x.chatId === m.chatId) ? list : [...list, m]); // (native ids may repeat across the members of a merged chat)
+const isPend = (x: Message) => x.id.startsWith("pend-"), isLocal = (x: Message) => isPend(x) || x.id.startsWith("local-");
+/** Add a message to a chat's list unless it is there (native ids may repeat across the members of a merged chat).
+ *  `replaces`: the id of the optimistic placeholder this message answers. A real message of mine that arrives (event or reply of `send`) also retires the
+ *  oldest placeholder of the same chat with the same text and attachment count, whichever of the two comes first. */
+const upsert = (list: Message[], m: Message, replaces?: string) => {
+  let l = replaces ? list.filter((x) => x.id !== replaces) : list;
+  if (l.some((x) => x.id === m.id && x.chatId === m.chatId)) return l;
+  if (m.fromMe && !isLocal(m)) { const i = l.findIndex((x) => isPend(x) && x.chatId === m.chatId && x.text === m.text && (x.attachments?.length ?? 0) === (m.attachments?.length ?? 0)); if (i >= 0) l = l.filter((_, j) => j !== i); }
+  return [...l, m];
+};
 const CHAT_DRAG = "application/x-unimsg-chat", SPACE_DRAG = "application/x-unimsg-space", CAT_DRAG = "application/x-unimsg-category";
 const PERSONAL_VIEW = "personal"; // the Hub's key of the Personal view (the UI calls it HOME)
 interface CatGroup { key: string; name?: string; id?: string; color?: string; chats: Chat[] }
@@ -767,7 +776,7 @@ export default function App() {
         {chat
           ? <Conversation onPerson={(senderId, name) => setPerson({ chat, senderId, name })} key={chat.id} chat={chat} messages={msgs[chat.id] ?? []} typing={typing[chat.id] ?? []} caps={chat.offline ? undefined : capsFor(chat)} settings={settings} members={memberChats(chat)} providers={providers} accounts={accounts} onSignIn={(aid) => { const a = accounts.find((x) => x.id === (aid ?? chat.accountId)); if (a) accountAction("signin", a); }}
               chats={listChats} jumpRef={jumpRef} unreadAtOpen={openedUnread[chat.id] ?? 0} loaded={msgs[chat.id] !== undefined} loadState={hist[chat.id]} loadSource={sourceFor(chat.id)} loadNote={loadNote[chat.id]} onRetry={() => loadChat(chat.id)} onInfo={() => setInfo(true)} onOpenChat={openChat} hasMore={!!more[chat.id]} onLoadOlder={(n) => loadOlder(chat.id, n)} onRemove={(id) => setMsgs((s) => ({ ...s, [chat.id]: (s[chat.id] ?? []).filter((x) => x.id !== id) }))}
-              onSent={(m) => setMsgs((s) => { const k = resolvedRef.current.get(chat.id) ?? chat.id; return { ...s, [k]: upsert(s[k] ?? [], m) }; })} onRequest={(accept) => requestAnswer(chat, accept)} />
+              onSent={(m, r) => setMsgs((s) => { const k = resolvedRef.current.get(chat.id) ?? chat.id; return { ...s, [k]: upsert(s[k] ?? [], m, r) }; })} onRequest={(accept) => requestAnswer(chat, accept)} />
           : <div className="placeholder" data-loading={!listReady ? "main" : undefined}>{!listReady ? <span className="hint"><span className="spin" /> {slowStart ? "Still starting…" : "Loading…"}</span> : hasAccount ? "Select a chat" : "Add an account to get started"}</div>}
       </main>
 
