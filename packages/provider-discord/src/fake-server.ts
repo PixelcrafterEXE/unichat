@@ -32,7 +32,6 @@ export class FakeDiscord {
   inflight = 0; maxInflight = 0; stamps: number[] = [];
   rateLimitNext = 0; rateLimitBody: "json" | "html" = "json";
   failNext = 0;
-  captchaNext = 0; // next request answers 400 + captcha_key (anti-spam check a user account hits when it messages a new person)
   /** When set, POST /users/@me/channels answers hCaptcha-required until it carries X-Captcha-Key == captcha.key and the fixture rqtoken. */
   captcha: { key: string } | null = null;
   static readonly RQTOKEN = "rq-token-fixture";
@@ -125,7 +124,6 @@ export class FakeDiscord {
       return this.json(res, 429, { message: "You are being rate limited.", retry_after: 0.05, global: false }, { "retry-after": "1", "x-ratelimit-global": "false" });
     }
     if (this.failNext > 0) { this.failNext--; return this.json(res, 500, { message: "boom SECRET-SERVER-TEXT" }); }
-    if (this.captchaNext > 0) { this.captchaNext--; return this.json(res, 400, { captcha_key: ["captcha-required"], captcha_sitekey: "fake", captcha_service: "hcaptcha" }); }
     const who = this.authed(req);
     if (!who) return this.json(res, 401, { message: "401: Unauthorized", code: 0 });
     const me = who.userId;

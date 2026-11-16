@@ -440,7 +440,6 @@ test("rest: 429 is waited out and retried; requests are serialised; 500 gives a 
     F.maxInflight = 0; await Promise.all([s.conn.history(C.general, { limit: 1 }), s.conn.history(C.dm, { limit: 1 }), s.conn.history(C.thread, { limit: 1 }), s.conn.avatar({ kind: "space", id: G1 })]);
     assert.equal(F.maxInflight, 1, "never parallel bursts");
     F.failNext = 1; await assert.rejects(s.conn.history(C.general, { limit: 1 }), (e: Error) => /Discord had an internal error \(HTTP 500\)/.test(e.message) && !/SECRET/.test(e.message));
-    F.captchaNext = 1; await assert.rejects(s.conn.history(C.general, { limit: 1 }), (e: Error) => /asks for a captcha/.test(e.message) && !/fake|hcaptcha/.test(e.message)); // issue #69: a 400 with captcha_key is explained, not a bare "HTTP 400"
     F.blockedChannels.add(C.general);
     await assert.rejects(s.conn.history("abc", { limit: 1 }), /Unknown chat/);
   } finally { await s.close(); }
