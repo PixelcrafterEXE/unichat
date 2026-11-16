@@ -109,7 +109,9 @@ async function fetchForm(chat: AuthChat, bytes: number): Promise<UploadForm> {
     const cls = ok ? "bad-form" : `http-${res.status}`;
     attachDebug("form", bytes, 0, `error:${cls}`);
     if (ok) throw new AttachmentUploadError("Signal didn't accept the attachment upload: its reply to the upload request was malformed or named an unsupported CDN. Try again later.", stage, cls);
-    throw new AttachmentUploadError(`Signal refused the attachment upload request (upload form, HTTP ${res.status}). Try again later.`, stage, cls, transientStatus(res.status));
+    const hdrs = ok ? "" : (res.headers ?? []).map((h: [string, string]) => h.join("=")).filter((h) => !/authorization|cookie/i.test(h)).join(" ").slice(0, 160);
+    const why = ok ? "" : [res.message, Buffer.from(res.body ?? new Uint8Array()).toString("utf8").replace(/\s+/g, " ").trim(), hdrs].filter(Boolean).join(" | ").slice(0, 240); // the server's reason (never the request: no secrets in it)
+    throw new AttachmentUploadError(`Signal refused the attachment upload request (upload form, HTTP ${res.status}${why ? ": " + why : ""}). Try again later.`, stage, cls, transientStatus(res.status));
   }
   attachDebug("form", bytes, form.cdn, "ok");
   return { cdn: form.cdn, key: form.key, headers: form.headers && typeof form.headers === "object" ? form.headers : {}, signedUploadLocation: form.signedUploadLocation };
