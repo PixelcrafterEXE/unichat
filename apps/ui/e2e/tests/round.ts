@@ -6,7 +6,7 @@ export default [
     await t.open("&settings");
     await t.waitSel(".settings nav");
     const names = await t.ev(`[...document.querySelectorAll('.settings nav button')].map(b=>b.textContent.trim())`);
-    t.expectEq("section names", names, ["Accounts", "Privacy & chats", "Appearance", "Notifications", "Scheduled messages", "Storage & downloads", "Backup & restore", "Sync devices", "Move to another device", "About"]);
+    t.expectEq("section names", names, ["Accounts", "Privacy & chats", "Appearance", "Notifications", "Scheduled messages", "Storage & downloads", "Backup & restore", "Sync devices", "Move to another device", "Updates"]);
     await t.ok("group headings explain the structure", `[...document.querySelectorAll('.settings nav h6')].map(h=>h.textContent).join('|') === 'Messengers|App|Your data|Other devices'`);
     await t.click(".settings nav button", "Move to another device");
     await t.waitSel("#bk-move");

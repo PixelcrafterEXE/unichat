@@ -1,4 +1,4 @@
-// Self-update UI: Settings > About > Updates, the banner, desktop/Android flow and phone width (mock backend, see src/mockUpdate.ts).
+// Self-update UI: Settings > Updates, the banner, desktop/Android flow and phone width (mock backend, see src/mockUpdate.ts).
 import { test } from "../lib/test.ts";
 import { settings } from "../lib/ui.ts";
 
@@ -6,8 +6,8 @@ const log = `(globalThis.__mockUpdateLog||[]).map(x=>x.method)`;
 const noOverflow = `(()=>{const W=innerWidth; return document.documentElement.scrollWidth<=W && [...document.querySelectorAll('.upd, .upd *, #upd-banner, #upd-banner *')].every(e=>{const r=e.getBoundingClientRect(); return r.width===0||r.right<=W+1})})()`;
 
 export default [
-  test("About shows the version and an up-to-date state; Check now works", async (t) => {
-    await t.open(); await settings(t, "About"); await t.waitSel("#updates");
+  test("Updates shows the version and an up-to-date state; Check now works", async (t) => {
+    await t.open(); await settings(t, "Updates"); await t.waitSel("#updates");
     await t.ok("version is shown (dev in a local build)", `document.querySelector('#upd-version').textContent==='dev'`);
     await t.ok("not checked yet", `/Not checked yet/.test(document.querySelector('#upd-status').textContent)`);
     await t.click("#upd-check");
@@ -17,7 +17,7 @@ export default [
   }),
 
   test("update available: banner, download with progress, confirm, install handoff", async (t) => {
-    await t.open("&update=avail"); await settings(t, "About");
+    await t.open("&update=avail"); await settings(t, "Updates");
     await t.click("#upd-check");
     await t.ok("status names the version", `/0\\.1\\.9 is available/.test(document.querySelector('#upd-status').textContent)`);
     await t.ok("release notes shown", `/Faster start-up/.test(document.querySelector('#upd-notes').textContent)`);
@@ -32,16 +32,16 @@ export default [
   }),
 
   test("Android: missing 'install unknown apps' permission is explained, second try installs", async (t) => {
-    await t.open("&update=needperm"); await settings(t, "About");
+    await t.open("&update=needperm"); await settings(t, "Updates");
     await t.click("#upd-check"); await t.click("#upd-download"); await t.ok("ready", `document.querySelector("#upd-install")`, { timeout: 8000 }); await t.click("#upd-install"); await t.click("#upd-confirm-go");
     await t.ok("explains the permission", `/needs your OK to install apps/.test(document.querySelector('#upd-msg')?.textContent||'')`);
     await t.click("#upd-install"); await t.click("#upd-confirm-go");
     await t.ok("then starts the installer", `/asking you to confirm/.test(document.querySelector('#upd-msg')?.textContent||'')`);
   }),
 
-  test("banner: Update opens About > Updates, Later hides it for that version", async (t) => {
+  test("banner: Update opens the Updates section, Later hides it for that version", async (t) => {
     await t.open("&update=avail");
-    await settings(t, "About"); await t.click("#upd-check"); await t.click(".settings .closex");
+    await settings(t, "Updates"); await t.click("#upd-check"); await t.click(".settings .closex");
     await t.ok("banner appears after a check found one", `/Update 0\\.1\\.9 available/.test(document.querySelector('#upd-banner')?.textContent||'')`);
     await t.click("#upd-banner-go");
     await t.ok("Update opens the Updates section", `document.querySelector('.settings #updates')`);
@@ -51,7 +51,7 @@ export default [
   }),
 
   test("web host: tells about the new version but offers no install, and shows no banner", async (t) => {
-    await t.open("&update=web"); await settings(t, "About"); await t.click("#upd-check");
+    await t.open("&update=web"); await settings(t, "Updates"); await t.click("#upd-check");
     await t.ok("status names the version", `/0\\.1\\.9 is available/.test(document.querySelector('#upd-status').textContent)`);
     await t.not("no download button", `document.querySelector('#upd-download')`);
     await t.ok("explains who updates it", `/whoever runs the server/.test(document.querySelector('#updates').textContent)`);
@@ -59,12 +59,12 @@ export default [
   }),
 
   test("offline check shows a plain error", async (t) => {
-    await t.open("&update=fail"); await settings(t, "About"); await t.click("#upd-check");
+    await t.open("&update=fail"); await settings(t, "Updates"); await t.click("#upd-check");
     await t.ok("error text", `/internet connection/.test(document.querySelector('#upd-error')?.textContent||'')`);
   }),
 
   test("Advanced: repo validation, token field is a password field and is never echoed", async (t) => {
-    await t.open(); await settings(t, "About");
+    await t.open(); await settings(t, "Updates");
     await t.click("#updates summary");
     await t.ok("token input is type=password", `document.querySelector('#upd-token').type==='password'`);
     await t.setInput("#upd-repo", "not a repo"); await t.click("#upd-save");
@@ -79,7 +79,7 @@ export default [
   }),
 
   test("phone: Updates section and banner fit the screen", async (t) => {
-    await t.device("phone"); await t.open("&update=avail"); await settings(t, "About");
+    await t.device("phone"); await t.open("&update=avail"); await settings(t, "Updates");
     await t.click("#upd-check"); await t.waitSel("#upd-download"); await t.click("#updates summary");
     await t.ok("no horizontal overflow in Updates", noOverflow);
     await t.click("#upd-download"); await t.ok("ready", `document.querySelector("#upd-install")`, { timeout: 8000 });
