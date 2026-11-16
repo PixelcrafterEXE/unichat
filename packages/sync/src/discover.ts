@@ -15,7 +15,7 @@ export function listenPorts(preferred: number | undefined, base = SYNC_PORT, spa
   const r = wellKnownPorts(base, span); return [...(preferred && r.includes(preferred) ? [preferred] : []), ...r.filter((p) => p !== preferred), 0];
 }
 
-export type CandSrc = "link" | "typed" | "hint" | "known" | "mdns" | "probe";
+export type CandSrc = "link" | "typed" | "hint" | "known" | "mdns" | "probe" | "dht";
 export interface Cand { host: string; ports: number[]; src: CandSrc }
 
 // ---- LAN probe targets (pure) ----

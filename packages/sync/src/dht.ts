@@ -29,6 +29,13 @@ export function dhtSeed(noisePriv: Uint8Array, groupId: string): Buffer {
   return Buffer.from(hkdfSync("sha256", noisePriv, salt, "unichat-sync-dht-identity-v1", 32));
 }
 
+/** Pairing over the DHT: the device that SHOWS a pairing code announces a DHT keypair derived from the code's scrypt key (`pairingPsk`), the device that ENTERS the code connects to that public key.
+ * Only the one-way derivation is public: finding the code from the key costs one scrypt per guess (like attacking the Noise handshake itself), and the Noise_XXpsk0 handshake with the code psk plus the
+ * 6-digit comparison stay the only authentication. The DHT only carries bytes. */
+export function pairingDhtSeed(psk: Uint8Array): Buffer {
+  return Buffer.from(hkdfSync("sha256", psk, "unichat-sync-pairing-dht-v1", "unichat-sync-pairing-dht-identity-v1", 32));
+}
+
 const HOST_RE = /^(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)$/;
 /** Validate the user's own bootstrap nodes ("host:port", IPv4, [IPv6] or DNS name). Throws a message fit for the UI. */
 export function cleanBootstrap(x: unknown): string[] {
@@ -63,6 +70,8 @@ export interface DhtOpts {
   onInbound(sock: Socket): void;
   /** hex DHT public keys of the current, non-revoked members (the firewall refuses everyone else before a single byte reaches us) */
   allow(): string[];
+  /** pairing rendezvous: accept every caller at the DHT level (the pairing handshake decides) and tag the sockets with this `unichatVia` value (default "dht") */
+  open?: boolean; via?: string;
   /** TESTS: replace the module loader (e.g. one that throws, or a different build) */
   loader?: () => Promise<any>;
   /** TESTS: refuse to start without bootstrap nodes, so nothing can ever touch the public network */
@@ -75,6 +84,10 @@ export class DhtTransport {
   private dht: any; private server: any; private kp: { publicKey: Buffer; secretKey: Buffer } | undefined; private streams = new Set<any>();
   private active = 0; private waiters: (() => void)[] = []; private stopped = false;
   constructor(private o: DhtOpts) {}
+  /** Hex DHT public key that belongs to a seed (needs the module; used to find the device that shows a pairing code). */
+  async keyOf(seed: Buffer): Promise<string> {
+    const DHT = await (this.o.loader ?? loadHyperdht)(); return hex(DHT.keyPair(seed).publicKey);
+  }
   /** This device's DHT public key (hex), once started. */
   get publicKey(): string | undefined { return this.kp ? hex(this.kp.publicKey) : undefined; }
   get dials() { return this.active; }
@@ -87,7 +100,7 @@ export class DhtTransport {
     try {
       this.dht = new DHT({ ...(this.o.bootstrap.length ? { bootstrap: this.o.bootstrap } : {}) }); // no bootstrap option = the public Holepunch nodes
       this.dht.on?.("error", () => { /* surfaced through the operations that fail */ });
-      this.server = this.dht.createServer({ firewall: (remotePk: Uint8Array) => !this.o.allow().includes(hex(remotePk)) }, (stream: any) => this.accepted(stream));
+      this.server = this.dht.createServer({ firewall: (remotePk: Uint8Array) => this.o.open ? false : !this.o.allow().includes(hex(remotePk)) }, (stream: any) => this.accepted(stream));
       this.server.on?.("error", () => { /* keep running */ });
       await withTimeout(this.server.listen(this.kp), this.o.startTimeoutMs ?? 30_000, "the DHT did not answer in time");
     } catch (e) { await this.stop(); throw e; }
@@ -100,7 +113,7 @@ export class DhtTransport {
   /** Make a HyperDHT stream usable where the channel code expects a net.Socket. No address: there is no per-source accounting on the DHT, only the firewall and the unauthenticated-session cap. */
   private decorate(s: any) {
     s.on("error", () => { /* the owner (Framed) listens as well; never let an unhandled stream error kill the process */ });
-    s.unichatVia = "dht"; s.remoteAddress = undefined; s.setNoDelay ??= () => s; s.setTimeout ??= () => s;
+    s.unichatVia = this.o.via ?? "dht"; s.remoteAddress = undefined; s.setNoDelay ??= () => s; s.setTimeout ??= () => s;
   }
   /** Connect to a peer's DHT public key (hex). At most `maxDials` run at once; later ones wait their turn (and give up with the signal). */
   async connect(remote: string, signal: AbortSignal, timeoutMs = 25_000): Promise<Socket> {
