@@ -91,10 +91,13 @@ function installSecurity() {
   }
 }
 
-if (!app.requestSingleInstanceLock()) app.quit();
+// app.quit() alone does NOT stop the code below: a second instance used to carry on, open the same data folder and log the same accounts in a second time (Signal: "Another client is using this linked device").
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.exit(0);
 app.on("second-instance", showWindow);
 
 app.whenReady().then(async () => {
+  if (!gotLock) return;
   installSecurity();
   const { keyWrap, warning } = await chooseKeyWrap();
   if (!keyWrap && existsSync(join(dataDir, "unimsg.key.enc"))) {
