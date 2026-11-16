@@ -7,6 +7,9 @@ import { appVersion, desktopAsset, replaceAppImage } from "./updater.js";
 test("asset selection: AppImage self-updates, other packaged Linux installs are manual, dev runs and other OS none", () => {
   assert.deepEqual(desktopAsset({ APPIMAGE: "/home/u/UniChat.AppImage" }, "linux", true), { key: "desktop-linux-appimage", mode: "self" });
   assert.deepEqual(desktopAsset({}, "linux", true), { key: "desktop-linux-deb", mode: "manual" });
+  assert.deepEqual(desktopAsset({}, "linux", true, "pacman\n"), { key: "desktop-linux-pacman", mode: "manual" });
+  assert.deepEqual(desktopAsset({}, "linux", true, "deb"), { key: "desktop-linux-deb", mode: "manual" });
+  assert.deepEqual(desktopAsset({ APPIMAGE: "/x" }, "linux", true, "pacman"), { key: "desktop-linux-appimage", mode: "self" });
   assert.equal(desktopAsset({ APPIMAGE: "/x" }, "linux", false), undefined);
   assert.equal(desktopAsset({}, "win32", true), undefined);
   assert.equal(desktopAsset({}, "darwin", true), undefined);

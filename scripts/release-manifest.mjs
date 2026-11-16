@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Writes latest.json, the release manifest the apps' updater reads (packages/core/src/updater.ts parseManifest), next to the release artifacts.
 //   node scripts/release-manifest.mjs <artifacts dir> <version, e.g. 0.1.37> [notes]
-// asset keys: android (*.apk), desktop-linux-appimage (*.AppImage), desktop-linux-deb (*.deb), desktop-linux-flatpak (*.flatpak). A platform whose build failed is simply absent.
+// asset keys: android (*.apk), desktop-linux-appimage (*.AppImage), desktop-linux-deb (*.deb), desktop-linux-pacman (*.pkg.tar.zst), desktop-linux-flatpak (*.flatpak). A platform whose build failed is simply absent.
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [dir, version, notesArg = ""] = process.argv.slice(2);
 if (!dir || !/^\d+\.\d+\.\d+$/.test(version ?? "")) { console.error("usage: release-manifest.mjs <artifacts dir> <version x.y.z> [notes]"); process.exit(2); }
-const KEYS = [["android", /\.apk$/], ["desktop-linux-appimage", /\.AppImage$/], ["desktop-linux-deb", /\.deb$/], ["desktop-linux-flatpak", /\.flatpak$/]];
+const KEYS = [["android", /\.apk$/], ["desktop-linux-appimage", /\.AppImage$/], ["desktop-linux-deb", /\.deb$/], ["desktop-linux-pacman", /\.pkg\.tar\.zst$/], ["desktop-linux-flatpak", /\.flatpak$/]];
 const files = readdirSync(dir).filter((n) => statSync(join(dir, n)).isFile()).sort();
 const assets = {};
 for (const [key, re] of KEYS) {

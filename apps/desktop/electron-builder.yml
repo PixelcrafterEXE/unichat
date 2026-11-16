@@ -11,7 +11,7 @@ asarUnpack:
   - "**/node_modules/@signalapp/libsignal-client/**"
 npmRebuild: false   # libsignal ships N-API prebuilds; do not recompile against Electron headers
 linux:
-  target: [AppImage, deb]
+  target: [AppImage, deb, pacman]
   category: Network
   maintainer: UniChat <noreply@unichat.invalid>
   icon: build/icon.png
@@ -20,6 +20,13 @@ linux:
 deb:
   depends: [libsecret-1-0]
   recommends: [gnome-keyring]
+# Arch Linux / Manjaro / EndeavourOS: `sudo pacman -U unichat-desktop-<version>.pkg.tar.zst`. Built by electron-builder's fpm
+# (needs zstd and bsdtar on the build machine). electron-builder would name it *.pacman; the explicit name keeps the
+# usual .pkg.tar.zst extension, which the release manifest (scripts/release-manifest.mjs) matches.
+pacman:
+  artifactName: unichat-desktop-${version}.pkg.tar.zst
+  compression: zstd
+  depends: [gtk3, nss, alsa-lib, libxss, libxtst, libnotify, libsecret, xdg-utils, at-spi2-core, libcups, libdrm, libxkbcommon, mesa, util-linux-libs]
 win:
   target: [nsis, portable]
   icon: build/icon.png

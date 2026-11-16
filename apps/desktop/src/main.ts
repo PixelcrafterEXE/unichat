@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { startBackend, DataKeyMismatchError, type KeyWrap } from "@unimsg/host";
 import { createDialogs } from "./dialogs.js";
-import { appVersion, desktopAsset, replaceAppImage } from "./updater.js";
+import { appVersion, desktopAsset, readPackageType, replaceAppImage } from "./updater.js";
 
 // Chromium flags; they must be set before `ready`.
 // Wayland vs X11: `ozone-platform-hint=auto` lets Chromium pick Wayland when WAYLAND_DISPLAY is set and X11 otherwise (the same
@@ -103,13 +103,13 @@ app.whenReady().then(async () => {
     app.exit(1); return;
   }
   // Self-update: the Hub downloads + verifies; this process swaps the AppImage (or points to the folder for a .deb) and restarts.
-  const asset = desktopAsset(process.env, process.platform, app.isPackaged);
+  const asset = desktopAsset(process.env, process.platform, app.isPackaged, readPackageType(process.resourcesPath));
   // A data folder sealed with another key (e.g. by the web server) is a handled condition: explain it, never touch the data.
   let hub: Awaited<ReturnType<typeof startBackend>>;
   for (;;) {
     try { hub = await startBackend(dataDir, { name: "desktop app", onProblem: (e) => { if (!process.env.UNIMSG_NO_DIALOG) void keyProblemDialog(e); }, keyWrap, backup: { paths: "any", dir: join(dataDir, "backups") }, appVersion: appVersion(app.getVersion()),
     update: asset && { platform: asset.key, installMode: asset.mode, install: async (c) => {
-      if (asset.key !== "desktop-linux-appimage") { shell.showItemInFolder(c.file); return { action: "manual", file: c.file, message: `Version ${c.version} is downloaded and checked. Install it with: sudo apt install ${c.file}` }; }
+      if (asset.key !== "desktop-linux-appimage") { shell.showItemInFolder(c.file); return { action: "manual", file: c.file, message: `Version ${c.version} is downloaded and checked. Install it with: ${asset.key === "desktop-linux-pacman" ? "sudo pacman -U" : "sudo apt install"} ${c.file}` }; }
       const current = process.env.APPIMAGE!;
       replaceAppImage(current, c.file);
       setTimeout(() => { quitting = true; app.relaunch({ execPath: current, args: process.argv.slice(1).filter((a) => a !== "--updated") }); app.quit(); }, 600);

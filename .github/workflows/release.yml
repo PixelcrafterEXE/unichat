@@ -58,6 +58,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build the web UI (bundled into the app)
         run: pnpm --filter @unimsg/ui build
+      - name: Tools for the pacman package (fpm needs zstd and bsdtar)
+        run: sudo apt-get update && sudo apt-get install -y zstd libarchive-tools
       - name: Package the desktop app (version = UNICHAT_VERSION)
         run: pnpm --filter @unimsg/desktop dist:linux
       - name: Collect
@@ -65,6 +67,7 @@ jobs:
           mkdir -p artifacts
           cp apps/desktop/dist/*.AppImage artifacts/ 2>/dev/null || true
           cp apps/desktop/dist/*.deb artifacts/ 2>/dev/null || true
+          cp apps/desktop/dist/*.pkg.tar.zst artifacts/ 2>/dev/null || true
           ls -la artifacts
       - uses: actions/upload-artifact@v4
         with:
