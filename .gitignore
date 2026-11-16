@@ -48,3 +48,4 @@ backups/
 *.log
 *.swp
 apps/ui/e2e/shots/
+.claude/

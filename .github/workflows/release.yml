@@ -84,6 +84,17 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - name: Signing key, checked FIRST so a missing secret fails in seconds, not after the long build (must be the key of the installed app, or Android refuses the update)
+        env:
+          KS_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS_B64" ]; then
+            echo "::error::Repository secret ANDROID_DEBUG_KEYSTORE_B64 is missing (base64 of the developer's ~/.android/debug.keystore). Without it the APK is signed with a random key and installed apps cannot update to it."
+            exit 1
+          fi
+          mkdir -p ~/.android
+          echo "$KS_B64" | base64 -d > ~/.android/debug.keystore
+          test -s ~/.android/debug.keystore
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -114,17 +125,6 @@ jobs:
       - name: HyperDHT native add-ons for Android
         working-directory: apps/android
         run: bash scripts/build-hyperdht-android.sh
-      - name: Signing key (must be the key of the installed app, or Android refuses the update)
-        env:
-          KS_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
-        run: |
-          if [ -z "$KS_B64" ]; then
-            echo "::error::Repository secret ANDROID_DEBUG_KEYSTORE_B64 is missing (base64 of the developer's ~/.android/debug.keystore). Without it the APK is signed with a random key and installed apps cannot update to it."
-            exit 1
-          fi
-          mkdir -p ~/.android
-          echo "$KS_B64" | base64 -d > ~/.android/debug.keystore
-          test -s ~/.android/debug.keystore
       - name: Android version code
         # versionCode must keep growing and stay above the local dev builds (package.json 0.1.0 -> 100)
         run: echo "UNICHAT_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
@@ -162,10 +162,15 @@ jobs:
         run: pnpm --filter @unimsg/ui build
       - name: "Unpacked Linux app (apps/desktop/dist/linux-unpacked)"
         run: pnpm --filter @unimsg/desktop exec electron-vite build && pnpm --filter @unimsg/desktop exec electron-builder --dir -c.extraMetadata.version=${UNICHAT_VERSION}
+      - name: Free disk space (the flatpak build ran out of it), only dist/linux-unpacked is needed from here on
+        run: |
+          rm -rf node_modules apps/*/node_modules packages/*/node_modules ~/.local/share/pnpm ~/.cache/pnpm ~/.cache/electron ~/.cache/electron-builder apps/desktop/out apps/ui/dist
+          df -h / | tail -1
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: unichat-desktop-${{ env.VERSION }}.flatpak
           manifest-path: apps/desktop/flatpak/org.unichat.desktop.yml
+          cache: false   # the builder cache of the whole app is hundreds of MB and filled the runner disk
           cache-key: flatpak-builder-${{ github.sha }}
           arch: x86_64
       - uses: actions/upload-artifact@v4
