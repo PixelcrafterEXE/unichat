@@ -14,6 +14,24 @@ Mock data (`?mock`), no real accounts.
   <img src="docs/screenshots/phone-chat.png" alt="UniChat on a phone: a conversation" width="160">
 </p>
 
+## Install on Arch Linux
+
+Every release carries a pacman package. Download `unichat-desktop-<version>.pkg.tar.zst` from the [latest release](https://github.com/PixelcrafterEXE/unichat/releases/latest) and install it:
+
+```
+sudo pacman -U unichat-desktop-<version>.pkg.tar.zst
+```
+
+Or build it the AUR way from the `PKGBUILD` attached to the same release (`unichat-bin`, pins the package's sha256):
+
+```
+mkdir unichat-bin && cd unichat-bin
+gh release download --repo PixelcrafterEXE/unichat --pattern PKGBUILD
+makepkg -si
+```
+
+Updates: the app's built-in updater notifies about new releases; install the new package the same way. A Flatpak (`unichat-desktop-<version>.flatpak`) is attached as well.
+
 ## Run it
 
 ```

@@ -194,6 +194,8 @@ jobs:
         env:
           HEAD_MSG: ${{ github.event.head_commit.message }}
         run: node scripts/release-manifest.mjs artifacts "${VERSION}" "${HEAD_MSG:-UniChat ${VERSION}}"
+      - name: PKGBUILD for Arch (AUR-style unichat-bin, pins the sha256 of the pacman package)
+        run: node scripts/arch-pkgbuild.mjs artifacts "${VERSION}"
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
