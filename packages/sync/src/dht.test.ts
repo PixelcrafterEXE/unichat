@@ -149,11 +149,12 @@ test("a device that is not a member cannot even open a stream: wrong group, unkn
   await pairThenIsolate(A, B, () => enable(t, A, B)); await pairThenIsolate(X, Y, () => enable(t, X, Y)); // X/Y: another group on the SAME testnet
   const pa = (await A.call("syncStatus")).dht.publicKey;
   // somebody who knows A's DHT key (worst case: it leaked) but is not in A's group: A's firewall refuses before any of our code runs
+  const onlyB = () => [...(A.svc as any).sessions.keys()].every((id: string) => id === B.svc.status().deviceId); // B may be back by itself (pairing now hands over the DHT keys): only the stranger must not get a session
   const raw = new DHT({ bootstrap: bs(t) }); const attempt = raw.connect(Buffer.from(pa, "hex"), { keyPair: DHT.keyPair(randomBytes(32)) });
   const outcome = await new Promise<string>((ok) => { attempt.once("open", () => ok("open")); attempt.once("error", (e: any) => ok("error " + (e.code ?? e.message))); attempt.once("close", () => ok("closed")); setTimeout(() => ok("timeout"), 15_000); });
   assert.notEqual(outcome, "open", "the DHT firewall refused an unknown public key: " + outcome);
   attempt.destroy(); await raw.destroy({ force: true });
-  assert.equal((A.svc as any).sessions.size, 0); assert.equal((A.svc as any).unauth, 0, "nothing reached the Noise handshake");
+  assert.ok(onlyB(), "the stranger got no session"); assert.equal((A.svc as any).unauth, 0, "nothing reached the Noise handshake");
   // a member that really is in the group but gets revoked: its key leaves A's allow list, the DHT refuses it before the Noise handshake could even run
   const bDht = (B.svc as any).dht; assert.ok(bDht);
   await A.call("syncRevoke", { deviceId: B.svc.status().deviceId });
@@ -207,4 +208,28 @@ test("an address announced over a live DHT session moves the session to the dire
   await until(() => sess(A, B)?.via === "dht" && sess(B, A)?.via === "dht", "fell back to the DHT", 30_000);
   assert.equal((A.svc as any).sessions.size, 1);
   for (const n of [A, B]) await n.stop();
+});
+
+test("pairing across networks: with no address at all, the code alone finds the other device through the DHT and the full ceremony (digits, approval, confirmation) works", async () => {
+  const t = await net(), A = await node("pdA", "memory"), B = await node("pdB", "memory");
+  await enable(t, A, B);
+  const p = await A.call("syncStartPairing", { deviceName: "pdA", keepListening: true });
+  await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "pairing DHT ready");
+  const j = await B.call("syncJoin", { code: p.code, deviceName: "pdB" }); // no host, no port, no link: nothing but the code
+  assert.equal(j.via, "the internet (DHT)");
+  await until(async () => !!(await A.call("syncStatus")).approval, "approval request shown on the showing device");
+  const ap = (await A.call("syncStatus")).approval;
+  assert.equal(ap.sas, j.sas, "both devices show the same digits"); assert.match(ap.sas, /^\d{3} \d{3}$/);
+  await Promise.all([B.call("syncConfirmJoin", { keepListening: true }), A.call("syncApproveJoin", { accept: true })]);
+  await until(() => B.svc.status().devices.length === 2 && A.svc.status().devices.length === 2, "both devices in the group");
+  await until(() => !!onlineVia(A, B)?.online && !!onlineVia(B, A)?.online, "the paired devices connect (settles every dial before the test ends)");
+});
+
+test("pairing over the DHT is refused when no pairing is open, and the group DHT key never accepts a pairing handshake", async () => {
+  const t = await net(), A = await node("prA", "memory"), B = await node("prB", "memory");
+  await enable(t, A, B);
+  const p = await A.call("syncStartPairing", { deviceName: "prA", keepListening: true });
+  await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "pairing DHT ready");
+  await A.call("syncStopPairing");
+  await assert.rejects(() => B.call("syncJoin", { code: p.code, deviceName: "prB" }), /reach|accepted/i);
 });

@@ -59,7 +59,8 @@ export class Framed {
     });
   }
   private drainWaiters: { ok: () => void; fail: (e: Error) => void }[] = []; private drainHooked = false;
-  close() { this.socket.destroy(); }
+  /** A DHT / relay stream drops what it has not sent yet when destroyed (the peer sees a reset instead of our last frame): finish writing first, destroy shortly after. TCP keeps the immediate destroy. */
+  close() { const s = this.socket as any; if (s.unichatVia && !s.destroyed) { try { s.end?.(); } catch { /* gone */ } const t = setTimeout(() => s.destroy(), 1500); t.unref?.(); s.once?.("close", () => clearTimeout(t)); } else this.socket.destroy(); }
 }
 
 export interface Secure { send(msg: object): Promise<void>; recv(timeoutMs?: number): Promise<any>; close(): void; remoteStatic: Buffer; hello: any; socket: Socket; transcript: Buffer }
