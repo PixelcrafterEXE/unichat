@@ -77,6 +77,8 @@ export class SignalClient {
   previewDeps: PreviewDeps = {};
   /** Smallest group (other members) that uses one sender-key multi-recipient request; smaller groups are cheaper pairwise. Tests lower it. */
   multiRecipientMin = 2;
+  /** Backoff before re-trying a failed (retryable) per-recipient delivery or sync transcript. Tests zero it. */
+  sendRetryDelaysMs = [500, 2000];
   private unauthConn?: UnauthChat;
   private unauthPending?: Promise<UnauthChat | undefined>;
   private editor?: GroupEditor;
@@ -503,19 +505,32 @@ export class SignalClient {
         });
       } catch (e) { lastError = e; multi = { mode: "sealed", delivered: 0, failed: members.length, fallback: 0 }; }
     }
-    if (multi) { delivered = multi.delivered; failed = multi.failed; fallback = multi.fallback; sealedCount = multi.delivered; anyResult = true; }
-    else {
-      for (const m of members) {
+    const failedMembers: string[] = [];
+    const perMember = async (m: string): Promise<boolean> => {
+      for (let i = 0; ; i++) {
         try {
           const r: DeliverResult | void = await this.sender.deliver(m, content, timestamp, "message", { groupId });
           delivered++;
           if (r) { anyResult = true; if (r.mode === "sealed") sealedCount++; else if (r.fallback) fallback++; }
-        } catch (e) { failed++; lastError = e; }
+          return true;
+        } catch (e) {
+          lastError = e;
+          const delay = this.sendRetryDelaysMs[i];
+          if (delay === undefined || !isRetryableSend(e)) return false;
+          await new Promise((r) => setTimeout(r, delay));
+        }
       }
+    };
+    if (multi) {
+      delivered = multi.delivered; failed = multi.failed; fallback = multi.fallback; sealedCount = multi.delivered; anyResult = true;
+      // members the single sealed request could not cover get an individual (authenticated-capable, retrying) delivery
+      for (const m of multi.retry ?? []) { if (await perMember(m)) failed--; else failedMembers.push(m); }
+    } else {
+      for (const m of members) { if (!(await perMember(m))) { failed++; failedMembers.push(m); } }
     }
     let sync = "none";
     if (members.length === 0 || delivered > 0) {
-      try { await this.sender.deliver(this.ours, { syncMessage: { sent: { timestamp, ...transcript } } }, timestamp, "sync"); sync = "ok"; }
+      try { await this.withSendRetry(() => this.sender.deliver(this.ours, { syncMessage: { sent: { timestamp, ...transcript } } }, timestamp, "sync")); sync = "ok"; }
       catch (e) {
         sync = "failed";
         if (members.length === 0) { groupsDebug(`send members=0 delivered=0 failed=0 sync=failed`); throw e; }
@@ -529,8 +544,9 @@ export class SignalClient {
       throw new Error(`The message could not be delivered to anyone in this group.${reason}`);
     }
     if (failed > 0) {
+      const names = failedMembers.map((m) => this.nameOf(m)).filter((n): n is string => !!n);
       this.emit({ type: "error", data: { id: this.opts.accountId, code: "group-partial-send",
-        message: `The message was not delivered to ${failed} ${failed === 1 ? "person" : "people"} in this group.` } });
+        message: `The message was not delivered to ${failed} ${failed === 1 ? "person" : "people"} in this group${names.length ? ` (${names.join(", ")})` : ""}.` } });
     }
   }
   private profileKey(): Uint8Array | undefined {
@@ -538,17 +554,28 @@ export class SignalClient {
     return k ? new Uint8Array(Buffer.from(k, "base64")) : undefined;
   }
 
+  private async withSendRetry<T>(fn: () => Promise<T>): Promise<T> {
+    for (let i = 0; ; i++) {
+      try { return await fn(); }
+      catch (e) {
+        const delay = this.sendRetryDelaysMs[i];
+        if (delay === undefined || !isRetryableSend(e)) throw e;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
   /** Send `content` to the peer, then mirror it to our other devices as a sent-transcript. */
   private async sendAndSync(peer: string, content: Content, timestamp: number, transcript: { message?: DataMessage; editMessage?: EditMessage }): Promise<void> {
     const self = peer.toLowerCase() === this.ours.toLowerCase();
     if (!self) {
       try {
-        const r: DeliverResult | void = await this.sender.deliver(peer, content, timestamp, "message");
+        const r: DeliverResult | void = await this.withSendRetry(() => this.sender.deliver(peer, content, timestamp, "message"));
         if (r) sendDebug(r.mode, 1, 1, 0, r.fallback ? 1 : 0);
       } catch (e) { if (this.sender.deps.sealed) sendDebug("authenticated", 1, 0, 1, 0); throw e; }
     }
     try {
-      await this.sender.deliver(this.ours, { syncMessage: { sent: { destinationServiceId: peer, timestamp, ...transcript } } }, timestamp, "sync");
+      await this.withSendRetry(() => this.sender.deliver(this.ours, { syncMessage: { sent: { destinationServiceId: peer, timestamp, ...transcript } } }, timestamp, "sync"));
     } catch (e) {
       if (self) throw e; // note-to-self depends on the sync copy
       this.emit({ type: "error", data: { id: this.opts.accountId, code: "sync-failed", message: `delivered, but syncing to other devices failed: ${describe(e)}` } });
@@ -1027,6 +1054,9 @@ export class SignalClient {
 }
 
 /** `[signal] send: mode=<sealed|authenticated> recipients=N delivered=N failed=N fallback=N` (counts only). */
+/** Errors worth another attempt: rate limits / 5xx / connection trouble; not "unregistered", captcha, or local bugs. */
+export const isRetryableSend = (e: unknown): boolean => e instanceof SendError ? e.retryable : e instanceof Error && /\b(IoError|Timeout|timeout|ECONN|ChatServiceInactive|ConnectionInvalidated|ConnectedElsewhere)\b/.test(`${e.name} ${e.message} ${(e as { code?: unknown }).code ?? ""}`);
+
 export const sendDebug = (mode: "sealed" | "authenticated", recipients: number, delivered: number, failed: number, fallback: number) => {
   if (process.env.UNIMSG_DEBUG === "1") console.debug(`[signal] send: mode=${mode} recipients=${recipients} delivered=${delivered} failed=${failed} fallback=${fallback}`);
 };
