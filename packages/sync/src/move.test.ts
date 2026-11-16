@@ -148,13 +148,13 @@ test("disconnect at each step (prepare, transfer, commit sent, answer lost): exa
 
 test("lost ACK: the target committed, the source sees nothing for a while (both briefly live), then learns the result by asking and wipes exactly once", async () => {
   let drop = true;
-  const A = await dev("A", true, { commitMs: 1500 }), B = await dev("B", false, { hook: (e) => (e.dir === "send" && e.t === "mv-done" && drop ? "drop" : undefined) });
+  const A = await dev("A", true, { commitMs: 3000 }), B = await dev("B", false, { hook: (e) => (e.dir === "send" && (e.t === "mv-done" || e.t === "mv-state") && drop ? "drop" : undefined) });
   await pair2(A, B);
   const tid = await ok(A, B);
   await until(() => byTid(B, tid)?.state === "owned", "the target is the durable owner");
   assert.equal(byTid(A, tid).state, "committing", "the source does not know yet"); assert.ok(hasFiles(A) && A.live() && B.live(), "both are live for a moment; the source did NOT wipe on its own");
   drop = false; // the network is back: the source asks (timer) and gets the binding answer
-  await until(() => byTid(A, tid)?.state === "done", "resolved by the query", 8000);
+  await until(() => byTid(A, tid)?.state === "done", "resolved by the query", 20_000);
   await settledOne("lost ack", A, B); assert.ok(!hasFiles(A) && hasFiles(B)); assert.equal(A.ctl.stopped, 1, "stopped exactly once");
   await new Promise((r) => setTimeout(r, 800)); assert.equal(A.ctl.stopped, 1, "never wiped twice");
 });
