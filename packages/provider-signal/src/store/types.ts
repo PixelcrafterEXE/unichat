@@ -120,6 +120,8 @@ export interface StoreShape {
   sentIndex: Record<string, string>;
   /** chatId -> ids of incoming messages not yet acknowledged as read (here or on another device), bounded. Absent in older stores. */
   unreadIds?: Record<string, string[]>;
+  /** id of an EDIT revision (author.editTimestamp) -> id of the original message, so a later edit that targets the latest revision finds the message. Bounded, absent in older stores. */
+  editAlias?: Record<string, string>;
   /** messageId -> reactions: emoji -> sender ids */
   reactions: Record<string, Record<string, string[]>>;
   /** peer ACI -> display name learned from nothing yet (profiles TODO); kept for forward compat */

@@ -147,3 +147,51 @@ test("SyncMessage.Read from another device clears those messages from the unread
   assert.equal(h.store.data.chats[A]!.unread, 1);
 });
 
+// ---------- #51 edits ----------
+test("incoming edit from a contact: update on the original id with the new text and editedAt", async () => {
+  const h = await inboundSetup();
+  await h.from(A, { dataMessage: { body: "hello", timestamp: T0 } });
+  await h.from(A, { editMessage: { targetSentTimestamp: T0, dataMessage: { body: "hello world", timestamp: T0 + 60_000 } } });
+  assert.deepEqual(h.updates().map((u) => [u.chatId, u.messageId, u.patch.text, u.patch.editedAt]), [[A, messageId(A, T0), "hello world", new Date(T0 + 60_000).toISOString()]]);
+});
+
+test("successive edits: a 2nd edit that targets the latest revision (or the original) hits the original message", async () => {
+  const h = await inboundSetup();
+  await h.from(A, { dataMessage: { body: "v1", timestamp: T0 } });
+  await h.from(A, { editMessage: { targetSentTimestamp: T0, dataMessage: { body: "v2", timestamp: T0 + 1000 } } });
+  await h.from(A, { editMessage: { targetSentTimestamp: T0 + 1000, dataMessage: { body: "v3", timestamp: T0 + 2000 } } }); // targets revision 2
+  await h.from(A, { editMessage: { targetSentTimestamp: T0, dataMessage: { body: "v4", timestamp: T0 + 3000 } } }); // targets the original
+  assert.deepEqual(h.updates().map((u) => [u.messageId, u.patch.text]), Array.from({ length: 3 }, (_, i) => [messageId(A, T0), `v${i + 2}`]));
+  assert.equal(h.updates()[2]!.patch.editedAt, new Date(T0 + 3000).toISOString());
+});
+
+test("edits from our own other device (sync transcript) patch our message in the right chat; groups use the group chat", async () => {
+  const h = await inboundSetup();
+  await h.from(ME, { syncMessage: { sent: { destinationServiceId: A, timestamp: T0 + 500, editMessage: { targetSentTimestamp: T0, dataMessage: { body: "fixed", timestamp: T0 + 500 } } } } });
+  assert.deepEqual(h.updates().map((u) => [u.chatId, u.messageId, u.patch.text]), [[A, messageId(ME, T0), "fixed"]]);
+  const masterKey = new Uint8Array(32).fill(9);
+  await h.from(ME, { syncMessage: { sent: { timestamp: T0 + 900, editMessage: { targetSentTimestamp: T0 + 100, dataMessage: { body: "g", timestamp: T0 + 900, groupV2: { masterKey, revision: 1 } } } } } });
+  assert.equal(h.updates()[1]!.chatId, groupChatId(groupIdFromMasterKey(masterKey)));
+  await h.from(ME, { syncMessage: { sent: { timestamp: T0 + 950, editMessage: { targetSentTimestamp: T0, dataMessage: { body: "no destination", timestamp: T0 + 950 } } } } });
+  assert.equal(h.updates().length, 2, "an edit that cannot be routed is ignored (no phantom chat)");
+  assert.ok(!("" in h.store.data.chats));
+});
+
+test("edit of an attachment caption and of mentions: the new text replaces the old one", async () => {
+  const h = await inboundSetup();
+  const mention = Aci.fromUuid(B).getRawUuidBytes();
+  await h.from(A, { editMessage: { targetSentTimestamp: T0, dataMessage: { body: "￼ look", timestamp: T0 + 10, bodyRanges: [{ start: 0, length: 1, mentionAciBinary: mention }], attachments: [{ contentType: "image/png", size: 3 }] } } } as Content);
+  const u = h.updates()[0]!;
+  assert.match(String(u.patch.text), / look$/); assert.ok(!String(u.patch.text).includes("￼"));
+  await h.from(A, { editMessage: { targetSentTimestamp: T0, dataMessage: { body: "", timestamp: T0 + 20 } } }); // caption removed
+  assert.equal(h.updates()[1]!.patch.text, "");
+});
+
+test("an edit that overtook its original is applied to the original when it arrives (and was also emitted at once)", async () => {
+  const h = await inboundSetup();
+  await h.from(A, { editMessage: { targetSentTimestamp: T0, dataMessage: { body: "edited", timestamp: T0 + 1000 } } });
+  assert.equal(h.updates().length, 1);
+  await h.from(A, { dataMessage: { body: "original", timestamp: T0 } });
+  const m = h.messages().find((x) => x.id === messageId(A, T0))!;
+  assert.equal(m.text, "edited"); assert.equal(m.editedAt, new Date(T0 + 1000).toISOString());
+});

@@ -346,6 +346,9 @@ export class Inbound {
     rec.lastMessageAt = m.time;
     if (!fromMe) { rec.unread = (rec.unread ?? 0) + 1; this.store.noteUnread(chatId, m.id); }
     this.store.touch();
+    // an edit that overtook its original is applied now
+    const early = this.pendingEdits.get(m.id);
+    if (early) { this.pendingEdits.delete(m.id); m.text = early.text; m.editedAt = early.editedAt; if (early.card) m.card = early.card; }
     this.emit({ type: "message", data: m });
     if (fromMe) this.replayReceipts(m.id); // a receipt that overtook the sync transcript
   }
@@ -365,13 +368,31 @@ export class Inbound {
     if (c.profileKey !== b64) { c.profileKey = b64; delete c.sealedRejectedAt; delete c.unrestricted; delete c.profileNameCheckedAt; this.store.touch(); this.hooks.onProfileKey?.(id); }
   }
 
+  /** Edits that arrived before their original message (kept briefly; also emitted at once because the Hub may already have the message). */
+  private pendingEdits = new Map<string, { text: string; editedAt: string; card?: Card; at: number }>();
+
   private edit(e: NonNullable<Content["editMessage"]>, author: string, peer: string, ts: number): void {
     if (e.targetSentTimestamp === undefined || !e.dataMessage) return;
+    if (!e.dataMessage.groupV2?.masterKey?.length && !peer) return; // own transcript without a destination: cannot route
     const chatId = this.chatFor(e.dataMessage, peer);
-    this.emit({ type: "message-update", data: {
-      chatId, messageId: messageId(author, e.targetSentTimestamp),
-      patch: { text: renderMentions(e.dataMessage.body ?? "", e.dataMessage.bodyRanges, (a) => this.displayName(a)), editedAt: new Date(e.dataMessage.timestamp ?? ts).toISOString() },
-    } });
+    // Clients differ in whether a 2nd edit targets the ORIGINAL timestamp or the latest revision's: resolve revisions to the original.
+    const aliases = (this.store.data.editAlias ??= {});
+    const target = aliases[messageId(author, e.targetSentTimestamp)] ?? messageId(author, e.targetSentTimestamp);
+    const editTs = e.dataMessage.timestamp ?? ts;
+    const editedAtMs = validTime(editTs) ? editTs : (validTime(ts) ? ts : Date.now());
+    if (messageId(author, editTs) !== target) {
+      aliases[messageId(author, editTs)] = target;
+      const keys = Object.keys(aliases); if (keys.length > 2000) for (const k of keys.slice(0, keys.length - 2000)) delete aliases[k];
+      this.store.touch();
+    }
+    const text = renderMentions(e.dataMessage.body ?? "", e.dataMessage.bodyRanges, (a) => this.displayName(a));
+    const card = e.dataMessage.preview?.length ? renderPreview(e.dataMessage) : undefined;
+    const editedAt = new Date(editedAtMs).toISOString();
+    this.emit({ type: "message-update", data: { chatId, messageId: target, patch: { text, editedAt, ...(card ? { card } : {}) } } });
+    // keep it for an original that has not been seen yet (out-of-order delivery); the newest edit wins
+    const prev = this.pendingEdits.get(target);
+    if (!prev || Date.parse(prev.editedAt) <= editedAtMs) this.pendingEdits.set(target, { text, editedAt, card, at: Date.now() });
+    for (const [k, v] of this.pendingEdits) if (Date.now() - v.at > 10 * 60_000 || this.pendingEdits.size > 200) this.pendingEdits.delete(k);
   }
 
   private pollUpdated(chatId: string, msgId: string): void {
