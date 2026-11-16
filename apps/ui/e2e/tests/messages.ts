@@ -123,4 +123,17 @@ export default [
     await t.click(".voice .vspeed");
     await t.ok("speed button cycles 1x -> 1.5x", `document.querySelector('.voice .vspeed').textContent.includes('1.5')`);
   }),
+
+  test("scroll-to-latest button jumps to the newest message from the top of a big, windowed chat", async (t) => {
+    await t.open("&big=1&chat=mx-1:big-grp0");
+    await t.waitSel(".messages .msg");
+    await t.ev(`(async()=>{ for(let i=0;i<6;i++){ const b=document.querySelector('.loadmore'); if(!b) break; b.click(); await new Promise(r=>setTimeout(r,150)); while(document.querySelector('.loadmore')?.disabled) await new Promise(r=>setTimeout(r,30)); } const box=document.querySelector('.messages'); box.scrollTop=0; })()`);
+    await t.waitSel(".tolatest");
+    const before = await t.ev<number>(`+document.querySelector('.messages').dataset.count`);
+    await t.click(".tolatest");
+    await t.ok("the list is at the bottom", `(()=>{const b=document.querySelector('.messages'); return b.scrollHeight-b.scrollTop-b.clientHeight<120})()`);
+    await t.ok("the newest message is rendered", `(()=>{const m=[...document.querySelectorAll('.messages .msg')].pop(), b=document.querySelector('.messages').getBoundingClientRect(); return m && m.getBoundingClientRect().bottom<=b.bottom+4 && m.getBoundingClientRect().bottom>b.top})()`);
+    await t.waitFor(`!document.querySelector('.tolatest')`);
+    t.check("older pages stay loaded", (await t.ev<number>(`+document.querySelector('.messages').dataset.count`)) >= before);
+  }, { timeout: 90000 }),
 ];

@@ -125,6 +125,14 @@ export default function Conversation(p: Props) {
     setTimeout(() => el!.classList.remove("hl"), 2200);
   };
 
+  /** Jump to the newest message. The windowed list only has estimated heights far from the viewport, so a smooth scroll to the end gets cancelled by
+   *  re-layout / history paging: pin to the bottom first (the window then renders the tail) and scroll there instantly, again after the re-render. */
+  const toLatest = () => {
+    const box = list.current; if (!box) return;
+    nearBottom.current = true; anchor.current = null; jumpUntil.current = 0; setAtBottom(true);
+    box.scrollTop = box.scrollHeight;
+    requestAnimationFrame(() => { nearBottom.current = true; box.scrollTop = box.scrollHeight; end.current?.scrollIntoView({ block: "end" }); });
+  };
   useEffect(() => { if (nearBottom.current) end.current?.scrollIntoView({ block: "end" }); }, [messages.length, p.typing.length]);
   const inner = useRef<HTMLDivElement>(null);
   useEffect(() => { nearBottom.current = true; end.current?.scrollIntoView({ block: "end" }); }, [chat.id]);
@@ -278,7 +286,7 @@ export default function Conversation(p: Props) {
         <div ref={end} />
         </div>
       </div>
-      {!atBottom && <button className="tolatest" title="Jump to latest" onClick={() => end.current?.scrollIntoView({ behavior: "smooth", block: "end" })}><ArrowDown size={18} /></button>}
+      {!atBottom && <button className="tolatest" title="Jump to latest" onClick={toLatest}><ArrowDown size={18} /></button>}
       {drag && <div className="dropzone">Drop files to send</div>}
 
       {via.request && !via.offline && (
