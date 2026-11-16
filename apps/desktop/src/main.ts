@@ -86,7 +86,7 @@ function installSecurity() {
   // Only web notifications are needed; everything else (camera, geolocation, ...) is denied. Microphone for voice notes is allowed.
   ses.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === "notifications" || permission === "media"));
   if (!dev) {
-    const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'";
+    const csp = "default-src 'self'; script-src 'self' https://js.hcaptcha.com https://*.hcaptcha.com; style-src 'self' 'unsafe-inline' https://*.hcaptcha.com; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' https://hcaptcha.com https://*.hcaptcha.com; object-src 'none'; base-uri 'none'; frame-src https://hcaptcha.com https://*.hcaptcha.com";
     ses.webRequest.onHeadersReceived((d, cb) => cb({ responseHeaders: { ...d.responseHeaders, "Content-Security-Policy": [csp] } }));
   }
 }

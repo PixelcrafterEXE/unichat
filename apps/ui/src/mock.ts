@@ -284,6 +284,7 @@ export function mockTransport() {
   // like the Hub: events of a chat that belongs to a merge also carry `mergeId` (chatId stays the real chat)
   const emit: L = (e, d) => { const mid = d && typeof d === "object" ? mergeOfChat(d.chatId) : undefined; ls.forEach((l) => l(e, mid ? { ...d, mergeId: mid } : d)); };
   const later = (f: () => void, ms: number) => void setTimeout(f, ms);
+  const captchaWait = new Map<string, (t: string) => void>();
   const find = (chatId: string, id: string) => store[chatId]?.find((x) => x.id === id);
   const touch = (chatId: string, msg: Message) => { const c = chats.find((x) => x.id === chatId); if (c) { c.lastMessageAt = msg.time; c.preview = msg.text || (msg.location ? "Location" : msg.contacts ? "Contact" : "Attachment"); } };
 
@@ -553,6 +554,11 @@ export function mockTransport() {
           if (a.provider === "instagram") { // Instagram creates the thread only with the first message: a provisional chat that the first send() resolves
             const h = String(p.handle).replace(/^@/, "").toLowerCase(); const ex = chats.find((c) => c.accountId === a.id && c.kind === "dm" && c.name.toLowerCase().includes(h)); if (ex) return ex;
             const pc = mk(`${a.id}:new:${h}`, a.provider, a.id, h.charAt(0).toUpperCase() + h.slice(1), "dm", { provisional: true }); if (!chats.find((x) => x.id === pc.id)) chats.push(pc); emit("chats-changed", { accountId: a.id }); return pc; }
+          if (a.provider === "discord" && (globalThis as any).__mockCaptcha) { // e2e: Discord asks for a captcha when you message someone new; the stub modal answers with a fake token
+            const pid = `captcha-${++seq}`;
+            const tok = await new Promise<string>((ok) => { captchaWait.set(pid, ok); emit("login", { accountId: a.id, promptId: pid, kind: "captcha", service: "hcaptcha", sitekey: "mock-sitekey", rqdata: "mock-rqdata", title: "Discord wants to check that you are human", hint: "Discord asks for this when you message someone new.", link: { href: "https://discord.com/channels/@me", label: "Open Discord instead" } }); });
+            (globalThis as any).__captchaToken = tok;
+            if (!tok) throw new Error("Discord wants you to solve a captcha before this (it does that when you message someone new). Solve it once in the official Discord app or website, then try again."); }
           const c = mk(`${a.id}:${p.handle}`, a.provider, a.id, /^[+\d\s-]+$/.test(p.handle) ? p.handle : name.charAt(0).toUpperCase() + name.slice(1), "dm"); original.set(c.id, c.name); if (!chats.find((x) => x.id === c.id)) chats.push(c); emit("chats-changed", { accountId: a.id }); return c; }
         case "createGroup": { const a = accounts.find((x) => x.id === p.accountId)!; const c = mk(`${a.id}:g${++seq}`, a.provider, a.id, p.name, "group"); chats.push(c); emit("chats-changed", { accountId: a.id }); return c; }
         case "meshCreate": { const c = mk("mesh:" + ++seq, "mesh", "", p.name, "group"); chats.push(c); emit("chats-changed", {}); return { id: c.id, name: c.name, members: p.members }; }
@@ -573,7 +579,8 @@ export function mockTransport() {
           else later(() => emit("login", { accountId: id, promptId: "form", kind: "form", title: "Sign in to Matrix", fields: [
             { name: "homeserver", label: "Homeserver", type: "text", placeholder: "https://matrix.org" }, { name: "user", label: "Username", type: "text" }, { name: "password", label: "Password", type: "password" }] }), 300);
           return accounts.at(-1); }
-        case "submitLogin": { const a = accounts.find((x) => x.id === p.accountId)!; (globalThis as any).__lastLogin = p.values;
+        case "submitLogin": { if (String(p.promptId).startsWith("captcha-")) { captchaWait.get(p.promptId)?.(p.values.token ?? ""); captchaWait.delete(p.promptId); return; }
+          const a = accounts.find((x) => x.id === p.accountId)!; (globalThis as any).__lastLogin = p.values;
           if (a.provider === "discord" && p.values.confirm !== "true") throw new Error("Please tick the box to confirm.");
           later(() => connect(a.id, a.provider, `@${p.values.user || "me"}:${(p.values.homeserver || "matrix.org").replace(/^https?:\/\//, "")}`), 600); return; }
         case "removeAccount": { if (p.accountId === "mx-1" && (globalThis as any).__failLogout) return { warning: "Couldn't reach Matrix to remove this session. Remove it in Element: Settings > Sessions." }; const i = accounts.findIndex((x) => x.id === p.accountId); if (i >= 0) accounts.splice(i, 1);

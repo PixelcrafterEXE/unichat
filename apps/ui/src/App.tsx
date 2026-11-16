@@ -27,6 +27,7 @@ import { GROUP_COLORS, addToGroup, changed, dropEdge, dropOnto, groupOf, nudgeIn
 import type { PlaceInfo } from "./Panels";
 import { DisappearBadge } from "./Disappearing";
 import { ChevronDown, ChevronRight, FolderInput, FolderPlus, ArrowUp, ArrowDown, Folder, GitMerge, Unlink, LogOut, Info as InfoIcon, Trash2, Archive, ArchiveRestore, MoreHorizontal, Pin, PinOff, MarkRead, CloudOff, Pencil, Bell, Hash, BellOff, ChevronLeft, Info, Lock, Menu, MessageCircle, Search, Settings as SettingsIcon, SquarePen, Plus, FolderMinus, Tag, Palette, ListPlus } from "./icons";
+import { CaptchaModal } from "./Captcha";
 import { ProfileModal, PersonModal, ArchivedSpacesModal, PopMenu, SpaceInfoModal, ConfirmModal, AddMembersModal, AddMenuModal, CommunityModal, AddAccount, LoginModal, NewChatModal, Lightbox, QuickSwitcher, RenameModal, MergeModal, FolderModal, MoveModal } from "./Modals";
 
 const RANK = ["failed", "sending", "sent", "delivered", "read"]; // delivery status only ever moves forward
@@ -794,7 +795,8 @@ export default function App() {
       <MarkReadToast prog={mr.prog} onCancel={mr.cancel} onDismiss={mr.dismiss} />
       <UpdateBanner onOpen={() => { setSettingsOpen(true); setTimeout(() => dispatchEvent(new Event("unichat-open-updates")), 0); }} />
       {watchers && <Suspense fallback={null}><Watchers /></Suspense>}
-      {login && <LoginModal prompt={login} onCancel={() => {
+      {login?.kind === "captcha" && <CaptchaModal key={login.promptId} prompt={login} onClose={() => setLogin(undefined)} />}
+      {login && login.kind !== "captcha" && <LoginModal prompt={login} onCancel={() => {
         const id = login.accountId; setLogin(undefined);
         // Closing the linking dialog of a brand-new account cancels it (no half-created account is left behind).
         if (fresh.current.delete(id)) core.call("removeAccount", { accountId: id }).then(refresh, () => refresh());
