@@ -1,6 +1,6 @@
 import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { initSyncLink, offerSyncLink } from "./syncLink";
-import { StatusDots, focusAccount } from "./StatusDots";
+import { StatusDots, focusAccount , settingsNav } from "./StatusDots";
 import { offlineLine, sourceOf, timeoutNote } from "./loadsource";
 import { capsOf, type Account, type Chat, type Contact, type LoginPrompt, type Message, type ProviderInfo, type RailGroup, type Space, type UserCategory } from "./types";
 import { CategoryModal, CategoryPickModal } from "./Categories";
@@ -736,7 +736,7 @@ export default function App() {
           renderItem={renderItem} focusKey={chatId} focusIndex={focusIndex}>
           {!listReady && !visible.length && <li className="empty loadingchats" data-loading="chats" role="status" aria-live="polite"><div className="skelrows" aria-hidden>{[0, 1, 2, 3, 4, 5, 6].map((i) => <div key={i} className="skelrow" style={{ opacity: 1 - i * 0.11 }}><span className="skelav" /><span className="skeltext"><i /><i /></span></div>)}</div><p className="hint"><span className="spin" /> {slowStart ? "Still starting…" : "Loading your chats…"}</p>{slowStart && <p className="hint" data-loading="slow">UniChat is opening a large archive. This can take a minute on first start; your chats and accounts are safe.</p>}</li>}
           {listReady && !visible.length && (!viewCats.length || (nFilters > 0 && !filter)) && (
-            <li className="empty">{nFilters > 0 && !filter && hasAccount ? <><p data-empty="filters">No chats match the filters</p><button className="secondary" data-act="clear-filters" onClick={() => setFilters(normFilters({}))}>Clear filters</button></> : !hasAccount ? <><p>No accounts yet</p><button className="primary inline" onClick={() => setDialog("add")}>Add your first account</button></>
+            <li className="empty">{nFilters > 0 && !filter && hasAccount ? <><p data-empty="filters">No chats match the filters</p><button className="secondary" data-act="clear-filters" onClick={() => setFilters(normFilters({}))}>Clear filters</button></> : !hasAccount ? <><p>No accounts yet</p><button className="primary inline" onClick={() => setDialog("add")}>Add your first account</button><button className="secondary inline" data-act="link-other-device" onClick={() => { settingsNav.section = "sync"; setSettingsOpen(true); }}>Link to another device</button></>
               : space === HOME ? <><p>No chats yet</p>
                 {accounts.some((a) => capsOf(a, providers)?.sync) && <p className="hint">Some accounts only show chats once your phone has shared them.</p>}
                 {accounts.filter((a) => capsOf(a, providers)?.sync).map((a) => <button key={a.id} className="secondary" onClick={() => act("syncAccount", { accountId: a.id })}>Sync contacts from {a.label}</button>)}

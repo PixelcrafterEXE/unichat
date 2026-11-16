@@ -4,7 +4,7 @@ import { Play, FolderInput, RotateCcw, GitMerge, Unlink, Star, Clock3, Info, Ref
 import { capsOf } from "./types";
 import { PinnedList, usePins } from "./Pins";
 import { acctStatus, viaNote } from "./relay";
-import { focusAccount } from "./StatusDots";
+import { focusAccount, settingsNav } from "./StatusDots";
 import { BackupPanel, ExportChatButton } from "./BackupPanel";
 import { hasSyncLink } from "./syncLink";
 import { SyncPanel } from "./SyncPanel"; // device sync
@@ -174,7 +174,7 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
   onLogin: (accountId: string) => void; onAccountAction: (kind: "signout" | "signin" | "remove" | "profile", a: Account) => void;
   accounts: Account[]; providers: ProviderInfo[]; settings: Settings; onChange: (s: Settings) => void; onAdd: () => void; onClose: () => void;
 }) {
-  const [sec, setSec] = useState<Section>(() => (updatesNav.pending ? "about" : hasSyncLink() && !focusAccount.id ? "sync" : "accounts"));
+  const [sec, setSec] = useState<Section>(() => { const w = settingsNav.section as Section | undefined; settingsNav.section = undefined; return w ?? (updatesNav.pending ? "about" : hasSyncLink() && !focusAccount.id ? "sync" : "accounts"); });
   useEffect(() => { updatesNav.pending = false; const f = () => { updatesNav.pending = false; setSec("about"); setTimeout(() => document.getElementById("updates")?.scrollIntoView({ block: "start" }), 50); }; addEventListener("unichat-open-updates", f); return () => removeEventListener("unichat-open-updates", f); }, []);
   useEffect(() => { // opened from a status ring in the chat list footer: show that account's card
     const id = focusAccount.id; if (!id) return; focusAccount.id = undefined;
