@@ -1051,6 +1051,9 @@ test("commonChats: a network that fails to list mutual servers still shows the c
   t.conns[0].emit({ type: "message", data: msg("m1", "hello", "2026-01-01T10:00:00Z") });
   const r = await t.call("commonChats", { chatId: `${id}:ann` });
   assert.deepEqual(r.communities.map((x: any) => x.id), [`${id}:s2`]);
+  t.done();
+});
+
 test("captcha login prompt: pending until answered, the answer reaches the connector and the prompt is dropped (also when it expires)", async () => {
   const t = setup(); const id = await linked(t);
   const answers: [string, Record<string, string>][] = [];
