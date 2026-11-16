@@ -96,7 +96,7 @@ try {
 
   const providers = await b.core.call("providers");
   const names = providers.map((p) => p.name);
-  for (const n of ["matrix", "mattermost", "discord", "instagram", "signal", "whatsapp"]) assert.ok(names.includes(n), "provider " + n + " listed, got " + names);
+  for (const n of ["matrix", "mattermost", "discord", "signal", "whatsapp"]) /* instagram is switched off in packages/host (issue #44) */ assert.ok(names.includes(n), "provider " + n + " listed, got " + names);
   ok("UI Core.call('providers') over the Android transport -> " + names.join(", "));
 
   { const t = Date.now(); while (!b.native.states.length && Date.now() - t < 5000) await new Promise((r) => setTimeout(r, 20));
