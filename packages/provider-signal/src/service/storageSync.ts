@@ -82,6 +82,10 @@ export interface StorageHooks {
   onProfileKey?(aci: string): void;
   /** a contact record names both the ACI and the PNI of a person */
   onPni?(pni: string, aci: string): void;
+  /** A record holds a PNI and a number but no ACI (number-only contact the phone messaged). */
+  onPniNumber?(pni: string, e164: string): void;
+  /** The phone says this ACI has this number. */
+  onNumber?(aci: string, e164: string): void;
   /** Group chats created from storage (master keys we never saw a message for): their state should be resolved. */
   onNewGroups?(chatIds: string[]): void;
 }
@@ -192,6 +196,7 @@ export class StorageSync {
           let pni: string | undefined; try { pni = StorageRecordPniProbe.decode(plain).contact?.pni; } catch { /* probe only */ }
           // the field number of the PNI was a guess: look at what the record really contains (it holds no other UUID than the ACI and the PNI)
           if (!pni || !isUuid(pni.toLowerCase().replace(/^pni:/, ""))) pni = scanContactPni(plain, rec.contact.aci);
+          else pni = pni.toLowerCase().replace(/^pni:/, "");
           if (pni) rec.contact.pni = pni;
         }
         return rec;
@@ -202,6 +207,7 @@ export class StorageSync {
 
   private applyContact(r: ContactRecordPb, ctx: Ctx): string | undefined {
     const aci = r.aci?.toLowerCase();
+    if ((!aci || !isUuid(aci)) && r.pni && r.e164) this.hooks.onPniNumber?.(r.pni, r.e164);
     if (!aci || !isUuid(aci) || aci === ctx.me) return undefined;
     const c = (this.store.data.contacts[aci] ??= { aci });
     const before = JSON.stringify(c);
@@ -211,6 +217,8 @@ export class StorageSync {
     }
     if (r.e164) c.number = r.e164;
     if (r.pni) this.hooks.onPni?.(r.pni, aci);
+    if (r.e164) this.hooks.onNumber?.(aci, r.e164);
+    if (r.pni && r.e164) this.hooks.onPniNumber?.(r.pni, r.e164);
     c.nickName = join(r.nickname?.given, r.nickname?.family);
     c.systemName = join(r.systemGivenName, r.systemFamilyName) ?? cleanName(r.systemNickname);
     c.profileName = join(r.givenName, r.familyName);

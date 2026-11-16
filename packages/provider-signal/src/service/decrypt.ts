@@ -22,6 +22,8 @@ export interface Decrypted {
   senderDevice: number;
   content: Content;
   sealed: boolean;
+  /** Phone number in the server-signed sealed-sender certificate (absent for unsealed / number-hidden senders). */
+  senderE164?: string;
 }
 
 /** Thrown for envelopes we cannot process; `code` is safe to surface (no content). */
@@ -57,13 +59,13 @@ export async function decryptEnvelope(store: SignalStore, rawEnv: Envelope): Pro
   const local = ProtocolAddress.new(localId, a.deviceId);
   const body = env.content ? toBytes(env.content) : undefined;
 
-  const finish = async (plain: Uint8Array, senderAci: string, senderDevice: number, sealed: boolean): Promise<Decrypted> => {
+  const finish = async (plain: Uint8Array, senderAci: string, senderDevice: number, sealed: boolean, senderE164?: string | null): Promise<Decrypted> => {
     const content = ContentCodec.decode(unpadContent(plain));
     if (content.senderKeyDistributionMessage && content.senderKeyDistributionMessage.length > 0) {
       const sender = ProtocolAddress.new(Aci.fromUuid(senderAci), senderDevice);
       await processSenderKeyDistributionMessage(sender, SenderKeyDistributionMessage.deserialize(toBytes(content.senderKeyDistributionMessage)), store.senderKeys);
     }
-    return { senderAci, senderDevice, content, sealed };
+    return { senderAci, senderDevice, content, sealed, ...(senderE164 ? { senderE164 } : {}) };
   };
 
   switch (env.type ?? EnvelopeType.UNKNOWN) {
@@ -88,11 +90,11 @@ export async function decryptEnvelope(store: SignalStore, rawEnv: Envelope): Pro
       if (usmc.msgType() === CiphertextMessageType.SenderKey) {
         const sender = ProtocolAddress.new(cert.senderUuid(), cert.senderDeviceId());
         const plain = await groupDecrypt(sender, store.senderKeys, usmc.contents());
-        return finish(plain, cert.senderUuid(), cert.senderDeviceId(), true);
+        return finish(plain, cert.senderUuid(), cert.senderDeviceId(), true, cert.senderE164());
       }
       const res = await sealedSenderDecryptMessage(body, root, now, null, kind === "pni" ? a.pni! : a.aci, a.deviceId,
         st.sessions, st.identities, st.preKeys, st.signedPreKeys, st.kyber);
-      return finish(res.message(), res.senderUuid(), res.deviceId(), true);
+      return finish(res.message(), res.senderUuid(), res.deviceId(), true, res.senderE164());
     }
     case EnvelopeType.PLAINTEXT_CONTENT:
     case EnvelopeType.SERVER_DELIVERY_RECEIPT:

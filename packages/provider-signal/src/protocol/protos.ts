@@ -1298,9 +1298,11 @@ message ContactRecord {
   optional Name nickname = 22;
 }
 
-// Read-only probe for the phone-number identity of a contact record (second, tolerant decode of the same bytes; the tag is NOT verified
-// against upstream, so a wrong tag can only yield "no PNI", never break the real decode). Anything that is not a UUID is ignored.
-message ContactPniProbe { optional string pni = 24; }
+// Read-only probe for the phone-number identity of a contact record (second, tolerant decode of the same bytes). From memory of upstream
+// Storage.proto: ... hidden = 19; pni = 20 (string, "PNI:<uuid>" or bare uuid); pniSignatureVerified = 21; nickname = 22; note = 23. NOT verified
+// against the real file, so a wrong tag can only yield "no PNI" (scanContactPni is the fallback), never break the real decode.
+// Newer clients also write binary service-id fields (aciBinary / pniBinary, 16 or 17 raw bytes): scanContactPni covers those.
+message ContactPniProbe { optional string pni = 20; }
 message StorageRecordPniProbe { optional ContactPniProbe contact = 1; }
 
 message GroupV2Record {

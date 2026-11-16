@@ -102,16 +102,43 @@ export class Inbound {
    * PniSignatureMessage whose signature verified. NEVER from a phone number alone (a number can belong to another account later).
    * Creates the (empty) ACI chat when only the PNI chat exists, so the Hub can merge the pair. Returns true when something changed.
    */
-  learnPni(pniIn: string, aciIn: string): boolean {
-    const pni = String(pniIn).toLowerCase(), aci = String(aciIn).toLowerCase(), ours = this.store.account;
+  learnPni(pniIn: string, aciIn: string, source = "unknown"): boolean {
+    const pni = String(pniIn).trim().toLowerCase().replace(/^pni:/, ""), aci = String(aciIn).toLowerCase(), ours = this.store.account;
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     if (!uuid.test(pni) || !uuid.test(aci) || pni === aci || (ours && (aci === ours.aci.toLowerCase() || pni === ours.aci.toLowerCase() || pni === ours.pni?.toLowerCase()))) return false;
     const map = (this.store.data.pnis ??= {});
     let changed = map[pni] !== aci;
     map[pni] = aci;
     if (this.store.data.chats[pni] && !this.store.data.chats[aci]) { this.store.upsertChat({ id: aci, kind: "dm" }); changed = true; }
-    if (changed) { this.store.touch(); this.emit({ type: "chats-changed", data: {} }); }
+    if (changed) {
+      this.store.touch(); this.emit({ type: "chats-changed", data: {} });
+      if (process.env.UNIMSG_DEBUG) console.debug(`[signal] pni link learned source=${source} links=${Object.keys(map).length} pniChat=${this.store.data.chats[pni] ? 1 : 0} aciChat=${this.store.data.chats[aci] ? 1 : 0}`); // counts only, never ids
+    }
     return changed;
+  }
+
+  private static readonly E164 = /^\+[1-9]\d{5,14}$/;
+
+  /**
+   * The phone told us that PNI `pniIn` is the person with number `e164` (our own sent-message transcript / a storage record that holds a PNI
+   * but no ACI yet). Remembered, and linked right away to a known contact (phone-supplied record) with that number.
+   */
+  notePniNumber(pniIn: string, e164: string, source: string): void {
+    const pni = String(pniIn).trim().toLowerCase().replace(/^pni:/, "");
+    if (!Inbound.E164.test(e164) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(pni)) return;
+    const ours = this.store.account; if (ours && (pni === ours.aci.toLowerCase() || pni === ours.pni?.toLowerCase())) return;
+    const map = (this.store.data.pniNumbers ??= {});
+    if (map[pni] !== e164) { map[pni] = e164; this.store.touch(); }
+    for (const c of Object.values(this.store.data.contacts)) if (c.number === e164 && c.aci.toLowerCase() !== pni) this.learnPni(pni, c.aci, `${source}+contact-number`);
+  }
+
+  /**
+   * A trusted source (server-signed sender certificate, phone's contact record / contact sync) says ACI `aci` has number `e164`. Links it to
+   * every PNI chat the phone created for that same number. A number with no phone-created PNI chat links nothing.
+   */
+  linkByNumber(aci: string, e164: string | undefined | null, source: string): void {
+    if (!e164) return;
+    for (const [pni, num] of Object.entries(this.store.data.pniNumbers ?? {})) if (num === e164) this.learnPni(pni, aci, `${source}+number`);
   }
 
   /** PniSignatureMessage from `senderAci`: trusted only if the PNI identity key we hold for that PNI signed the sender's ACI identity key. */
@@ -122,7 +149,7 @@ export class Inbound {
       const ids = this.store.data.identities, find = (id: string) => Object.entries(ids).find(([k]) => k.toLowerCase().startsWith(`${id.toLowerCase()}.`))?.[1];
       const pk = find(pni), ak = find(senderAci); if (!pk || !ak) return; // no identity key of that PNI known: nothing to verify against
       const ok = PublicKey.deserialize(Buffer.from(pk, "base64")).verifyAlternateIdentity(PublicKey.deserialize(Buffer.from(ak, "base64")), Buffer.from(m.signature));
-      if (ok) this.learnPni(pni, senderAci);
+      if (ok) this.learnPni(pni, senderAci, "pni-signature");
     } catch { /* malformed: ignore */ }
   }
 
@@ -158,6 +185,7 @@ export class Inbound {
     const c = d.content;
     const ours = this.ourAci;
     if (d.senderAci.toLowerCase() !== ours.toLowerCase() && (this.store.data.contacts[d.senderAci]?.blocked || this.store.data.contacts[d.senderAci]?.localBlocked)) return; // blocked on the phone / in UniChat
+    if (d.senderE164 && d.senderAci.toLowerCase() !== ours.toLowerCase()) this.linkByNumber(d.senderAci, d.senderE164, "sender-cert");
     if (c.pniSignatureMessage && d.senderAci.toLowerCase() !== ours.toLowerCase()) this.pniSignature(c.pniSignatureMessage, d.senderAci);
     if (c.dataMessage) this.data(c.dataMessage, d.senderAci, d.senderAci, false, envelopeTimestamp);
     if (c.callMessage) this.callMessage(c.callMessage, d.senderAci, envelopeTimestamp);
@@ -174,6 +202,8 @@ export class Inbound {
         const ts = sent.timestamp ?? envelopeTimestamp;
         if (sent.message) this.data(sent.message, ours, dest, true, ts);
         else if (sent.editMessage) this.edit(sent.editMessage, ours, dest, ts);
+        // after the chat exists, so a link to an already known ACI (same number) can create the ACI side and declare the pair
+        if (sent.destinationE164 && /^pni:/i.test(sent.destinationServiceId || serviceIdFromBinary(sent.destinationServiceIdBinary) || "")) this.notePniNumber(dest, sent.destinationE164, "sent-transcript");
       }
       const sm = c.syncMessage;
       if (sm.contacts?.blob) this.hooks.onContactsBlob?.(this.toRef(sm.contacts.blob), !!sm.contacts.complete);

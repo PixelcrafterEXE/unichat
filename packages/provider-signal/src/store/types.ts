@@ -103,6 +103,8 @@ export interface StoreShape {
   identities: Record<string, string>;
   /** PNI (phone-number identity UUID) -> ACI of the same person, from storage records or a verified PniSignatureMessage. Optional: absent in older stores. */
   pnis?: Record<string, string>;
+  /** PNI -> E.164 the phone itself told us belongs to that PNI (sent-message transcript, storage record without ACI). Used to link a PNI chat to the ACI that later shows up with the same number. */
+  pniNumbers?: Record<string, string>;
   senderKeys: Record<string, string>;
   preKeys: Record<string, string>;
   signedPreKeys: Record<string, string>;

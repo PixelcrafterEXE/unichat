@@ -259,7 +259,9 @@ export class SignalClient {
       {
         onChanged: () => this.emit({ type: "chats-changed", data: {} }),
         onProfileKey: (aci) => { this.peerProfiles?.enqueue(aci); this.peerAvatars?.keyChanged(aci); },
-        onPni: (pni, aci) => { this.inbound.learnPni(pni, aci); },
+        onPni: (pni, aci) => { this.inbound.learnPni(pni, aci, "storage-record"); },
+        onPniNumber: (pni, e164) => { this.inbound.notePniNumber(pni, e164, "storage-record"); },
+        onNumber: (aci, e164) => { this.inbound.linkByNumber(aci, e164, "storage-record"); },
         onNewGroups: (ids) => { for (const id of ids) void this.groups.request(id); },
       },
     );
@@ -285,7 +287,7 @@ export class SignalClient {
     const known = this.store.data.contacts; let added = 0, dirty = false;
     for (const it of list) {
       const id = String(it.aci ?? "").toLowerCase();
-      if (it.pni) { try { this.inbound.learnPni(it.pni, id); } catch { /* best effort */ } } // the backup names both identifiers of one person
+      if (it.pni) { try { this.inbound.learnPni(it.pni, id, "backup"); } catch { /* best effort */ } } // the backup names both identifiers of one person
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) || id === this.ours.toLowerCase()) continue;
       if (known[id]?.blocked || known[id]?.localBlocked) continue;
       const key = typeof it.profileKey === "string" && Buffer.from(it.profileKey, "base64").length === 32 ? Buffer.from(it.profileKey, "base64").toString("base64") : undefined;
@@ -327,6 +329,7 @@ export class SignalClient {
         resolveContactName(merged);
         known[c.aci] = merged;
         if (!this.store.data.chats[c.aci]) this.store.upsertChat({ id: c.aci, kind: "dm" });
+        this.inbound.linkByNumber(c.aci, c.number, "contact-sync"); // ContactDetails has no PNI field; the number ties it to a PNI chat our phone made
         if (expireTimer !== undefined) this.store.data.chats[c.aci]!.expireTimer = expireTimer;
       }
       this.store.touch();

@@ -21,3 +21,9 @@ test("no PNI when the record only holds the ACI; the ACI itself is never returne
   assert.equal(scanContactPni(Buffer.from([0xff, 0xff, 0xff]), ACI), undefined);
   assert.equal(scanContactPni(new Uint8Array(0), ACI), undefined);
 });
+
+test("probe field 20 (string pni, with or without the PNI: prefix) is read by the typed decode", async () => {
+  const { StorageRecordPniProbe } = await import("../protocol/codec.js");
+  const rec = record(ld(1, Buffer.from(ACI)), ld(20, Buffer.from(`PNI:${PNI}`)));
+  assert.equal(StorageRecordPniProbe.decode(rec).contact?.pni, `PNI:${PNI}`);
+});
