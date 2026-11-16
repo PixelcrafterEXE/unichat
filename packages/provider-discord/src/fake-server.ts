@@ -154,7 +154,7 @@ export class FakeDiscord {
     }
     if (method === "PATCH" && path === "/users/@me") { const u = this.users.get(me)!; for (const k of ["username", "global_name", "avatar"]) if (k in body) (u as any)[k] = body[k]; this.dispatch("USER_UPDATE", u); return this.json(res, 200, u); }
     if (method === "PATCH" && path === "/users/@me/profile") { if (who.mode !== "user") return this.json(res, 403, { message: "Missing Access", code: 50001 }); this.bios.set(me, body.bio ?? ""); return this.json(res, 200, { bio: body.bio ?? "" }); }
-    if (method === "GET" && (r = m(/^\/users\/(\d+)\/profile$/))) return who.mode === "user" ? this.json(res, 200, { user_profile: { bio: this.bios.get(r[1]) ?? "" } }) : this.json(res, 403, { message: "Missing Access", code: 50001 });
+    if (method === "GET" && (r = m(/^\/users\/(\d+)\/profile$/))) return who.mode === "user" ? this.json(res, 200, { user_profile: { bio: this.bios.get(r[1]) ?? "" }, mutual_guilds: this.guildsFor(me).filter((g) => g.owner_id === r![1] || g.members.some((x) => x.user.id === r![1])).map((g) => ({ id: g.id, nick: null })) }) : this.json(res, 403, { message: "Missing Access", code: 50001 });
     if ((r = m(/^\/users\/@me\/relationships\/(\d+)$/))) {
       if (who.mode !== "user") return this.json(res, 403, { message: "Missing Access", code: 50001 });
       if (method === "PUT") this.relationships.set(r[1], body.type); else this.relationships.delete(r[1]);

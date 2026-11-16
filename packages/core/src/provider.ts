@@ -258,6 +258,8 @@ export interface Connector {
   /** Messages the provider can supply for a chat, oldest->newest within the page. */
   history(chatId: string, q: HistoryQuery): Promise<Message[]>;
   members(chatId: string): Promise<Contact[]>;
+  /** Optional: the communities (native space ids) that you and this person are both members of, when the network can tell (Discord: the profile's mutual servers). Resolves to [] when it cannot. */
+  mutualSpaces?(contactId: string): Promise<string[]>;
   /** Fetch bytes of an attachment seen in a Message. */
   downloadAttachment(chatId: string, messageId: string, attachmentId: string): Promise<{ data: Uint8Array; mime: string; name?: string }>;
 

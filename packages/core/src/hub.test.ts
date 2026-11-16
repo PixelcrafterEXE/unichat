@@ -1025,3 +1025,31 @@ test("auto merge: nothing without sameAs (same name / number is not enough) and 
   const snap = await t.call("snapshot"); assert.equal(snap.chats.length, 2); assert.deepEqual(snap.merges, []);
   t.done();
 });
+
+test("commonChats: communities in common come from the network's mutual servers and from the shared groups", async () => {
+  const t = setup(); const id = await linked(t); const c = t.conns[0] as any;
+  const sp = (n: string) => ({ id: n, accountId: "x", provider: "fake", name: "Server " + n });
+  c.spaces = async () => [sp("s1"), sp("s2"), sp("s3")];
+  c.chatList = [{ id: "ann", accountId: "x", provider: "fake", kind: "dm", name: "Ann" }, { id: "g2", accountId: "x", provider: "fake", kind: "group", name: "Climbers", spaceId: "s2" }, { id: "g3", accountId: "x", provider: "fake", kind: "group", name: "Others", spaceId: "s3" }];
+  c.members = async (chat: string) => (chat === "g2" ? [{ id: "ann", name: "Ann" }, { id: "me", name: "Me" }] : chat === "g3" ? [{ id: "zed", name: "Zed" }] : [{ id: "ann", name: "Ann" }]);
+  const asked: string[] = []; c.mutualSpaces = async (who: string) => { asked.push(who); return who === "ann" ? ["s1", "s2"] : []; };
+  t.conns[0].emit({ type: "message", data: msg("m1", "hello", "2026-01-01T10:00:00Z") });
+  const r = await t.call("commonChats", { chatId: `${id}:ann` });
+  assert.deepEqual(r.groups.map((g: any) => g.name), ["Climbers"]);
+  assert.deepEqual(r.communities.map((x: any) => x.id).sort(), [`${id}:s1`, `${id}:s2`], "s1 only from the network, s2 from both, s3 is not shared");
+  assert.ok(asked.includes("ann"));
+  assert.equal(r.communities[0].provider, "fake"); assert.ok(r.communities[0].accountId);
+  t.done();
+});
+
+test("commonChats: a network that fails to list mutual servers still shows the communities of the shared groups", async () => {
+  const t = setup(); const id = await linked(t); const c = t.conns[0] as any;
+  c.spaces = async () => [{ id: "s2", accountId: "x", provider: "fake", name: "Server 2" }];
+  c.chatList = [{ id: "ann", accountId: "x", provider: "fake", kind: "dm", name: "Ann" }, { id: "g2", accountId: "x", provider: "fake", kind: "group", name: "Climbers", spaceId: "s2" }];
+  c.members = async (chat: string) => (chat === "g2" ? [{ id: "ann", name: "Ann" }] : []);
+  c.mutualSpaces = async () => { throw new Error("boom"); };
+  t.conns[0].emit({ type: "message", data: msg("m1", "hello", "2026-01-01T10:00:00Z") });
+  const r = await t.call("commonChats", { chatId: `${id}:ann` });
+  assert.deepEqual(r.communities.map((x: any) => x.id), [`${id}:s2`]);
+  t.done();
+});

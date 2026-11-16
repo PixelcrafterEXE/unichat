@@ -171,4 +171,18 @@ test("link previews: Discord unfurls links itself, the embed arrives as an updat
     assert.equal(s.of("message-update").find((u: any) => u.patch.cards)!.patch.cards[0].kind, "link");
   } finally { await s.close(); }
 });
+
+test("mutualSpaces: the servers you share with a person (user accounts only, from the profile's mutual servers)", async () => {
+  const g2 = "100000000000555", g3 = "100000000000556";
+  const prep2 = (f: any) => { f.guild(g2, "Only Bob", ME); f.member(g2, ME); f.member(g2, "1000000000000002"); f.guild(g3, "Alice and me", ALICE); f.member(g3, ALICE); f.member(g3, ME); };
+  const u = await setup(factory, { mode: "user", prep: prep2 }), b = await setup(factory, { prep: prep2 });
+  try {
+    await u.loaded(); await b.loaded();
+    assert.deepEqual((await u.conn.mutualSpaces(ALICE)).sort(), [G1, g3].sort());
+    assert.deepEqual((await u.conn.mutualSpaces("1000000000000002")).sort(), [G1, g2].sort());
+    assert.equal(u.fake.reqs(/GET \/users\/\d+\/profile/).length, 2, "one profile request per person; the bot made none");
+    assert.deepEqual(await b.conn.mutualSpaces(ALICE), [], "a bot cannot see profiles: nothing, no request");
+    assert.deepEqual(await u.conn.mutualSpaces("not-an-id"), []);
+  } finally { await u.close(); await b.close(); }
+});
 void G1;

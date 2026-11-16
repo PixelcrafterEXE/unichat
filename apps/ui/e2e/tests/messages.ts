@@ -189,8 +189,18 @@ export default [
     await t.waitSel("aside.info .hero h2");
     await t.eq("no provider chips in the hero", `document.querySelectorAll('aside.info .hero .tag.brand').length`, 0);
     await t.ev(`window.__mockCall('mergeChats',{chatIds:['wa-1:anna','mx-1:@anna:matrix.org']}).then(r=>window.dispatchEvent(new CustomEvent('unichat-open-chat',{detail:r.id})))`);
-    await t.waitSel("aside.info .netrow");
+    await t.waitSel("aside.info .mergesec .netrow");
     await t.eq("still no chips for a merged chat", `document.querySelectorAll('aside.info .hero .tag.brand').length`, 0);
-    await t.ok("the networks section lists both", `document.querySelectorAll('aside.info .netrow .pi').length>=2`);
+    await t.ok("the networks section lists both", `document.querySelectorAll('aside.info .mergesec .netrow .pi').length>=2`);
+  }),
+
+  test("contact info lists the communities in common (icon + name); a click opens that community", async (t) => {
+    await t.open("&chat=wa-1:anna&info=1");
+    await t.waitSel("[data-common-communities] .netrow");
+    await t.eq("two communities listed", `document.querySelectorAll('[data-common-communities] .netrow').length`, 2);
+    await t.ok("with name and community icon", `(()=>{const r=document.querySelector('[data-common-communities] [data-space="wa-1:hike"]'); return !!r && /Hiking Club/.test(r.textContent) && !!r.querySelector('.avatar')})()`);
+    await t.ok("the heading counts them", `/Communities in common · 2/.test(document.querySelector('[data-common-communities] h4').textContent)`);
+    await t.click('[data-common-communities] [data-space="wa-1:hike"]');
+    await t.ok("the community is open: its chats are listed, a personal chat is not", `!!document.querySelector('.chats li[data-chat="wa-1:hike-trips"]') && !document.querySelector('.chats li[data-chat="wa-1:anna"]')`);
   }),
 ];

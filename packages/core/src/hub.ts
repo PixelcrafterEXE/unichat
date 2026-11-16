@@ -1257,6 +1257,7 @@ export class Hub {
     const hit = this.commonCache.get(chatId); if (hit && Date.now() - hit.at < 5 * 60_000) return hit.v;
     const { chats, spaces } = await this.collect();
     const dms = isMergeId(chatId) ? (this.merges.get(chatId)?.members ?? []) : [chatId], groups: Chat[] = [];
+    const mutual = new Set<string>(); // communities the network itself reports as shared (Connector.mutualSpaces)
     for (const dm of dms) {
       const [a] = (() => { try { return this.resolve(dm); } catch { return [undefined] as const; } })(); if (!a) continue;
       const live = !!a.conn && !this.offlineKind(a), peers = new Set<string>([dm.slice(a.info.id.length + 1)]);
@@ -1266,6 +1267,9 @@ export class Hub {
       for (const t of theirs) peers.add(t);
       if (live && (own.size || theirs.size)) { try { for (const c of (await this.call("members", { chatId: dm })) as { id: string }[]) if (!own.has(c.id)) peers.add(c.id); } catch { /* the chat id alone then */ } }
       for (const o of own) peers.delete(o);
+      if (live && a.conn!.mutualSpaces) await Promise.all([...peers].slice(0, 3).map(async (peer) => {
+        try { for (const sid of await Promise.race([a.conn!.mutualSpaces!(peer), new Promise<never>((_, no) => setTimeout(() => no(new Error("slow")), 8000))])) mutual.add(`${a.info.id}:${sid}`); } catch { /* the shared groups' communities then */ }
+      }));
       const mine = chats.filter((c) => c.id.startsWith(a.info.id + ":") && (c.kind === "group" || c.kind === "channel") && !c.mergedInto);
       const inArchive = (g: Chat) => { try { return this.store.listMessages(g.id, { limit: 400 }).some((m) => !m.fromMe && peers.has(m.senderId)); } catch { return false; } }; // signed-out / relayed accounts: whoever wrote in the group
       let i = 0;
@@ -1278,8 +1282,9 @@ export class Hub {
         }
       }));
     }
-    const ids = new Set(groups.map((g) => g.spaceId).filter((x): x is string => !!x));
-    const v = { groups: groups.sort((x, y) => (y.lastMessageAt ?? "").localeCompare(x.lastMessageAt ?? "")), communities: spaces.filter((sp) => ids.has(sp.id)).map((sp) => ({ id: sp.id, name: sp.name })) };
+    // shared communities: the ones the network names, plus those of the shared groups (signed-out / relayed accounts: where the person wrote)
+    const ids = new Set([...groups.map((g) => g.spaceId).filter((x): x is string => !!x), ...mutual]);
+    const v = { groups: groups.sort((x, y) => (y.lastMessageAt ?? "").localeCompare(x.lastMessageAt ?? "")), communities: spaces.filter((sp) => ids.has(sp.id)).map((sp) => ({ id: sp.id, name: sp.name, accountId: sp.accountId, provider: sp.provider, ...(sp.iconUrl ? { iconUrl: sp.iconUrl } : {}), ...(sp.avatarRev ? { avatarRev: sp.avatarRev } : {}) })) };
     this.commonCache.set(chatId, { at: Date.now(), v }); return v;
   }
   noteRead(chatId: string): void {

@@ -546,6 +546,13 @@ class DiscordConnector implements Connector {
     return l.sort((a, b) => (snowflakeGt(a.id, b.id) ? 1 : -1)).map((m) => this.note(m));
   }
 
+  /** Servers you share with a person: only user accounts can ask (the profile lists the mutual servers); a bot has no such view. */
+  async mutualSpaces(contactId: string): Promise<string[]> {
+    const api = this.ready(); if (this.session?.mode !== "user" || !/^\d+$/.test(contactId)) return [];
+    const p = await api.get<{ mutual_guilds?: { id: string }[] }>(`/users/${contactId}/profile?with_mutual_guilds=true&with_mutual_friends_count=false`, 1);
+    return (p.mutual_guilds ?? []).map((g) => g.id).filter((id) => this.guilds.has(id));
+  }
+
   async members(chatId: string): Promise<Contact[]> {
     const api = this.ready(), me = this.me!.id;
     const ch = this.channels.get(chatId);

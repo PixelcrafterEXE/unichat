@@ -40,20 +40,29 @@ function AndroidNotifPermission() {
       <span>Android is blocking them, so you won't hear about new messages while the app is closed.</span>
       <button className="primary" onClick={() => void core.call("$requestNotifications", {}).then(() => setTimeout(check, 1500), () => {})}>Allow notifications</button></div>);
 }
-/** DM info: groups (and communities) you are both in. Asks the backend, which lists the members of your groups; shows nothing while there is nothing. */
+/** DM info: groups and communities you are both in. Asks the backend, which lists the members of your groups (and, where the network can tell, the servers you share); shows nothing while there is nothing. */
+type Common = { groups: Chat[]; communities: Space[] };
 function CommonChats({ chat }: { chat: Chat }) {
-  const [r, setR] = useState<{ groups: Chat[]; communities: { id: string; name: string }[] } | "loading" | "none">("loading");
-  useEffect(() => { let on = true; setR("loading"); core.call("commonChats", { chatId: chat.id }).then((x: { groups: Chat[]; communities: { id: string; name: string }[] }) => on && setR(x), () => on && setR("none")); return () => { on = false; }; }, [chat.id]);
+  const [r, setR] = useState<Common | "loading" | "none">("loading");
+  useEffect(() => { let on = true; setR("loading"); core.call("commonChats", { chatId: chat.id }).then((x: Common) => on && setR(x), () => on && setR("none")); return () => { on = false; }; }, [chat.id]);
   if (r === "none") return null;
   if (r === "loading") return <section className="commonsec"><h4>Groups in common</h4><p className="hint">Looking…</p></section>;
-  if (!r.groups.length) return <section className="commonsec"><h4>Groups in common</h4><p className="hint">None found.</p></section>;
   return (
-    <section className="commonsec"><h4>Groups in common · {r.groups.length}</h4>
-      {r.communities.length > 0 && <p className="hint">Communities: {r.communities.map((c) => c.name).join(", ")}</p>}
-      {r.groups.map((g) => (
-        <button key={g.id} type="button" className="netrow linklike" onClick={() => window.dispatchEvent(new CustomEvent("unichat-open-chat", { detail: g.id }))}>
-          <Avatar name={g.name} url={g.avatarUrl} of={{ kind: "chat", id: g.id }} size={30} /><span className="mtext"><b>{g.name}</b></span></button>))}
-    </section>);
+    <>
+      {r.groups.length > 0 || !r.communities.length ? (
+        <section className="commonsec" data-common-groups><h4>{r.groups.length ? `Groups in common · ${r.groups.length}` : "Groups in common"}</h4>
+          {!r.groups.length && <p className="hint">None found.</p>}
+          {r.groups.map((g) => (
+            <button key={g.id} type="button" className="netrow linklike" onClick={() => window.dispatchEvent(new CustomEvent("unichat-open-chat", { detail: g.id }))}>
+              <Avatar name={g.name} url={g.avatarUrl} of={{ kind: "chat", id: g.id }} size={30} /><span className="mtext"><b>{g.name}</b></span></button>))}
+        </section>) : null}
+      {r.communities.length > 0 && (
+        <section className="commonsec" data-common-communities><h4>Communities in common · {r.communities.length}</h4>
+          {r.communities.map((c) => (
+            <button key={c.id} type="button" className="netrow linklike" data-space={c.id} title="Show this community" onClick={() => window.dispatchEvent(new CustomEvent("unichat-open-space", { detail: c.id }))}>
+              <SpaceIcon space={c} size={30} /><span className="mtext"><b>{c.name}</b></span></button>))}
+        </section>)}
+    </>);
 }
 export function ContactPanel({ place, merge, onMerge, chat, caps, messages, muted, onMute, onSearch, onClose, onImage, onJump, onRename, providerName, reloadKey, onLeave, onBlock, onAddMembers, onRemoveMember, onRenameNetwork, onPerson }: {
   place?: PlaceInfo;

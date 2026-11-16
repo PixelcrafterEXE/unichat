@@ -493,7 +493,7 @@ export function mockTransport() {
         case "renameChat": { const c = chats.find((x) => x.id === p.chatId); if (c) { c.name = p.name; original.set(c.id, p.name); } emit("chats-changed", { chatId: p.chatId }); return; }
         case "blockChat": { const c = chats.find((x) => x.id === p.chatId); if (c) c.blocked = !!p.blocked; emit("chats-changed", { chatId: p.chatId }); return; }
         case "setAlias": { const n = (p.name ?? "").trim(); if (n) aliases[p.chatId] = n; else delete aliases[p.chatId]; emit("chats-changed", { chatId: p.chatId }); return; }
-        case "commonChats": { const gs = (await self.call("chats")).filter((c: Chat) => c.kind === "group" && !c.mergedInto).slice(0, 2); return { groups: gs, communities: [] }; }
+        case "commonChats": { const gs = chats.filter((c: Chat) => c.kind === "group" && !c.mergedInto).slice(0, 2); return { groups: gs, communities: spaces.filter((s) => s.id === "wa-1:hike" || s.id === "mx-1:!self") }; } // communities you share: from the network, not only from the shared groups
         case "members": { if (isMerge(p.chatId)) return (await Promise.all(merges.get(p.chatId)!.members.map(async (cid) => (await self.call("members", { chatId: cid })).map((x: Contact) => ({ ...x, chatId: cid }))))).flat();
           const c = chats.find((x) => x.id === p.chatId);
           if (c?.kind === "dm") return [{ id: c.id, name: c.name, handle: c.provider === "matrix" ? c.id.split(":").slice(1).join(":") : "+49 151 " + (1000 + (c.name.length * 137) % 9000), avatarUrl: undefined }];

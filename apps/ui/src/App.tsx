@@ -92,6 +92,7 @@ export default function App() {
   const info = panel === "info";
   const setInfo = (v: boolean) => setPanel(v ? "info" : undefined);
   const acctStateRef = useRef(new Map<string, string>()); // last announced state per account (see the 'account' event)
+  const pickRef = useRef<((id: string) => void) | undefined>();
   const openChatRef = useRef<((id: string) => void) | undefined>(); // set below; a clicked notification opens its chat
   const jumpRef = useRef<((messageId: string, chatId?: string) => void) | undefined>(); // set by the open conversation; used by the search sidebar
   const [conn, setConn] = useState<"up" | "down">("up"); // backend connection (web transport reconnects by itself)
@@ -398,8 +399,9 @@ export default function App() {
   const unreadIn = (id: string) => unreadAgg.exact.get(id) ?? 0;
   const pick = (id: string) => { setSel([]); setSpace(id); setChatId(undefined); setNavOpen(true); setPanel(undefined); };
   const openChat = (id0: string) => { const id = chats.find((x) => x.id === id0)?.mergedInto ?? id0; const c = chats.find((x) => x.id === id); if (c) { setSpace(c.spaceId ?? HOME); setOpenedUnread((o) => ({ ...o, [id]: c.unread ?? 0 })); if (c.unreadMark) setFlag(id, { unreadMark: false }); } setChatId(id); setNavOpen(false); };
-  openChatRef.current = openChat;
-  useEffect(() => { const h = (e: Event) => openChatRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-chat", h); return () => window.removeEventListener("unichat-open-chat", h); }, []); // e.g. a group listed in a contact's info
+  openChatRef.current = openChat; pickRef.current = pick;
+  useEffect(() => { const h = (e: Event) => openChatRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-chat", h); return () => window.removeEventListener("unichat-open-chat", h); }, []);
+  useEffect(() => { const h = (e: Event) => pickRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-space", h); return () => window.removeEventListener("unichat-open-space", h); }, []); // a community listed in a contact's info // e.g. a group listed in a contact's info
   openRef2.current = openChat;
   backRef.current = () => {
     const close = (el: Element | null) => { if (!el) return false; el.dispatchEvent(new MouseEvent(el.classList.contains("lightbox") ? "click" : "mousedown", { bubbles: true, cancelable: true })); return true; };
