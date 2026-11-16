@@ -38,7 +38,7 @@
   },
   "spaces": {
    "signal": {
-    "status": "verified",
+    "status": "unsupported",
     "at": "2026-11-16T22:11:49.796Z",
     "note": "unsupported by capability"
    },
@@ -62,7 +62,7 @@
   },
   "history-older": {
    "signal": {
-    "status": "verified",
+    "status": "unsupported",
     "at": "2026-11-16T22:11:49.796Z",
     "note": "unsupported by capability"
    },
@@ -247,9 +247,9 @@
     "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again later."
    },
    "whatsapp": {
-    "status": "verified",
+    "status": "failed",
     "at": "2026-11-16T22:29:48.333Z",
-    "note": "image image/gif, 7050 B up, 7050 B down (identical)"
+    "note": "uploads and comes back byte-identical, but WhatsApp shows it as a still image (needs MP4 + gifPlayback), see #84"
    }
   },
   "polls": {
@@ -385,11 +385,6 @@
    }
   },
   "search-own": {
-   "signal": {
-    "status": "failed",
-    "at": "2026-11-16T22:17:41.118Z",
-    "note": "no sent text"
-   },
    "whatsapp": {
     "status": "verified",
     "at": "2026-11-16T22:19:56.286Z",
@@ -398,9 +393,9 @@
   },
   "rename-group": {
    "signal": {
-    "status": "failed",
+    "status": "skipped",
     "at": "2026-11-16T22:11:49.796Z",
-    "note": "the target is not a group of our own"
+    "note": "not checked: this account has no test group it is alone in"
    },
    "whatsapp": {
     "status": "verified",
@@ -410,9 +405,9 @@
   },
   "group-description": {
    "signal": {
-    "status": "failed",
+    "status": "skipped",
     "at": "2026-11-16T22:11:49.796Z",
-    "note": "the target is not a group of our own"
+    "note": "not checked: this account has no test group it is alone in"
    },
    "whatsapp": {
     "status": "verified",
@@ -422,9 +417,9 @@
   },
   "group-picture": {
    "signal": {
-    "status": "failed",
+    "status": "skipped",
     "at": "2026-11-16T22:38:57.486Z",
-    "note": "the target is not a group of our own"
+    "note": "not checked: this account has no test group it is alone in"
    },
    "whatsapp": {
     "status": "failed",
@@ -434,9 +429,9 @@
   },
   "create-group": {
    "signal": {
-    "status": "failed",
+    "status": "skipped",
     "at": "2026-11-16T22:11:49.796Z",
-    "note": "needs another member: Error: Add at least one other person to the group.\n    at host.onmessage (<anonymous>:31:38)"
+    "note": "not checked: this account has no test group it is alone in"
    },
    "whatsapp": {
     "status": "verified",

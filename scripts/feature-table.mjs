@@ -39,9 +39,10 @@ for (let i = head2 + 2; i < lines.length && lines[i].startsWith("|"); i++) {
   const cells = lines[i].split("|").slice(1, -1).map((c) => c.trim());
   const row = cells[0]; const res = byRow.get(row); if (!res) continue;
   for (let c = 1; c < cols.length; c++) {
-    const prov = COLS[cols[c]]; const r = prov && res.get(prov); if (!r) continue;
+    const prov = COLS[cols[c]]; const r = prov && res.get(prov); if (!r || cells[c] === undefined) continue; // a row may be short of columns
     const date = (r.at ?? "").slice(0, 10);
-    const want = r.status === "verified" ? `✅ Verified (live ${date}${r.feature === "manual" ? ", by hand" : ""})` : `❌ Failing (live ${date}: ${(r.note ?? "").replace(/\|/g, "/").slice(0, 90)})`;
+    const note = (r.note ?? "").replace(/\s+/g, " ").replace(/\|/g, "/").trim(); // a newline or a pipe would break the table row
+    const want = r.status === "verified" ? `✅ Verified (live ${date}${r.feature === "manual" ? ", by hand" : ""})` : `❌ Failing (live ${date}: ${note.slice(0, 90)})`;
     if (cells[c] !== want) { changes.push(`${row} / ${cols[c]}: "${cells[c].slice(0, 50)}" -> "${want}"`); cells[c] = want; }
   }
   lines[i] = "| " + cells.join(" | ") + " |";

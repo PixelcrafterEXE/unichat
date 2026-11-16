@@ -205,7 +205,7 @@ for (const acct of accounts) {
   });
   if (sup("refresh-chat", "refreshChat")) await tryStep("refresh-chat", async () => { const r = await b.call("refreshChat", { chatId: target }, 120_000); return `refresh -> ${JSON.stringify(r).slice(0, 80)}`; });
   if (sup("fetch-history", "fetchHistory")) await tryStep("fetch-history", async () => { const r = await b.call("fetchHistory", { accountId: A, chatIds: [target], days: 2, wait: true }, 180_000); const res = r.result ?? r; if (res?.failed && !res?.fetched && !res?.messages) throw new Error(JSON.stringify(res).slice(0, 120)); return JSON.stringify(res).slice(0, 100); });
-  await tryStep("search-own", async () => { const q = sent.text?.text?.split(" ").pop(); if (!q) throw new Error("no sent text"); await until(async () => (await hits(q)) > 0, "the archive search to find the test message", 20_000); return "found by full-text search"; });
+  await tryStep("search-own", async () => { const q = sent.text?.text?.split(" ").pop(); if (!q) return UNSUPPORTED; // nothing was sent in this run (--feature): not a result await until(async () => (await hits(q)) > 0, "the archive search to find the test message", 20_000); return "found by full-text search"; });
 
   // ---- 4. group management on the test group (never on a chat with other people) ----
   const c0 = chat();
