@@ -99,7 +99,7 @@ interface Session {
 interface Pairing { psk: Buffer; code: string; expiresAt: number; failures: number; nearbyPrompts: number; keepListening: boolean; timer: ReturnType<typeof setTimeout> }
 interface PendingJoin { nearby?: boolean; direction: "outgoing" | "incoming"; ch: Secure; sas: string; name: string; id: string; ip: string; since: number; hostOk?: boolean; joinerOk?: boolean; timer: ReturnType<typeof setTimeout>; settle: () => void }
 interface Joining { nearby?: boolean; state: "confirm" | "waiting"; sas: string; hostName: string; ch: Secure; host: string; port: number; pin?: Buffer; direction: "outgoing" | "incoming"; timer: ReturnType<typeof setTimeout> }
-type Progress = { state: "offline" | "connecting" | "syncing" | "idle" | "error"; sent: number; received: number; pending: number; lastSync?: string; error?: string; accts?: { done: number; total: number }; chats?: { done: number; total: number }; phase?: "snapshot"; snapDone?: number; snapTotal?: number; snapDir?: "in" | "out" };
+type Progress = { state: "offline" | "connecting" | "syncing" | "idle" | "error"; sent: number; received: number; pending: number; lastSync?: string; error?: string; accts?: { done: number; total: number }; chats?: { done: number; total: number }; out?: { accts: { done: number; total: number }; chats: { done: number; total: number } }; phase?: "snapshot"; snapDone?: number; snapTotal?: number; snapDir?: "in" | "out" };
 interface SrcState { n: number; until: number; strikes: number; last: number; conns: number[]; open: number }
 
 export class SyncService {
@@ -934,7 +934,7 @@ export class SyncService {
           else { s.sentUpTo = upTo; s.inflight.push(upTo); if (cls === "m") s.sm += scanned; last = upTo >= this.ledger.maxSeq(); if (cls === "m") last = scanned === rows.length && rows.length < 400; }
           s.sent += entries.length;
           await ch.send({ t: "batch", entries, upTo, more: !last, ...(cls ? { cls, tot: s.tot, sg: s.sg, sm: s.sm } : {}) });
-          this.setProgress(peer, { sent: s.sent, pending: Math.max(0, this.ledger.maxSeq() - upTo), state: "syncing" });
+          this.setProgress(peer, { sent: s.sent, pending: Math.max(0, this.ledger.maxSeq() - upTo), state: "syncing", ...(cls && s.tot ? { out: { accts: { done: last ? s.tot.g : Math.min(s.sg, s.tot.g), total: s.tot.g }, chats: { done: last ? s.tot.m : Math.min(s.sm, s.tot.m), total: s.tot.m } } } : {}) }); // the sending side shows its progress too
         }
       })();
       if (this.unlinkPending?.peer === peer) void this.sendUnlink(s, 5000); // the instruction waited for this device to come online

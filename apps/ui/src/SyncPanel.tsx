@@ -131,11 +131,34 @@ export function Confirm({ st, busy, run }: { st: any; busy: boolean; run: Run })
     </div></div>);
 }
 
+/** Is a paired device still sending us its accounts (`accounts`) or its chats and messages (`history`)? Fed by sync-progress events, so Settings, the account list and the empty state can say "receiving" instead of "No accounts yet". */
+export function useSyncReceiving() {
+  const [r, set] = useState({ accounts: false, history: false });
+  useEffect(() => {
+    const by = new Map<string, any>(), calc = () => { let accounts = false, history = false; for (const p of by.values()) { if (p.state !== "syncing" || p.phase === "snapshot") continue; if (p.accts && p.accts.done < p.accts.total) accounts = true; if (p.chats && p.chats.done < p.chats.total) history = true; } set((o) => (o.accounts === accounts && o.history === history ? o : { accounts, history })); };
+    const feed = (devs: any[]) => { for (const d of devs ?? []) if (!d.self) by.set(d.id, d.progress ?? {}); calc(); };
+    core.call("syncStatus").then((st: any) => feed(st?.devices), () => {});
+    return core.on((ev: string, d: any) => { if (ev === "sync-progress" && d?.peer) { by.set(d.peer, d); calc(); } else if (ev === "sync-devices" && d?.devices) feed(d.devices); });
+  }, []);
+  return r;
+}
+
 function SyncProgress({ d, st }: { d: any; st: any }) {
   const p = d.progress ?? {}, snap = p.phase === "snapshot" && p.snapTotal > 0, pct = snap ? Math.min(100, (100 * p.snapDone) / p.snapTotal) : undefined;
-  const files = st.media?.wanted ?? 0;
-  return <div id="sync-progress"><p className="sub">Syncing with {d.name}{pct !== undefined ? ` · ${Math.round(pct)}%` : ""}{!snap && p.pending ? ` · ${p.pending} messages left` : ""}{files ? ` · ${files} files waiting` : ""}</p>
-    <div className="bar big"><i style={{ width: `${pct ?? 100}%`, opacity: pct === undefined ? 0.4 : 1 }} /></div></div>;
+  const files = st.media?.wanted ?? 0, fMB = Math.round((st.media?.fetchedBytes ?? 0) / 1048576);
+  const recv = !snap && p.accts && p.chats && (p.accts.done < p.accts.total || p.chats.done < p.chats.total), send = !snap && p.out && (p.out.accts.done < p.out.accts.total || p.out.chats.done < p.out.chats.total);
+  const phases = (id: string, ph: { accts: any; chats: any }, withFiles: boolean) => {
+    const aDone = ph.accts.done >= ph.accts.total, cDone = ph.chats.done >= ph.chats.total;
+    const row = (k: string, label: string, done: boolean, n: any) => <li data-phase={k} data-done={done ? "1" : undefined}>{done ? "✓ " : ""}{label}{!done ? ` · ${n.done} of ${n.total}` : ""}</li>;
+    return <ul className="phases" data-phases={id}>{row("accounts", "Accounts and settings", aDone, ph.accts)}{row("chats", "Chats and messages", cDone, ph.chats)}
+      {withFiles && <li data-phase="files" data-done={cDone && !files ? "1" : undefined}>{cDone && !files ? "✓ " : ""}Files{files ? ` · ${files} waiting${fMB ? `, ${fMB} MB received` : ""}` : cDone ? "" : " · after the messages"}</li>}</ul>;
+  };
+  const left = send ? p.out.chats.total - p.out.chats.done : 0;
+  return <div id="sync-progress">
+    <p className="sub">{recv || !send ? "Syncing with" : "Sending to"} {d.name}{pct !== undefined ? ` · ${Math.round(pct)}%` : ""}{!snap && !recv && !send && p.pending ? ` · ${p.pending} messages left` : ""}{!recv && !send && files ? ` · ${files} files waiting` : ""}</p>
+    {recv && phases("in", p, true)}
+    {send && <><p className="sub" data-sending>Sending to {d.name} · {left} messages left</p>{phases("out", p.out, false)}</>}
+    <div className="bar big"><i style={{ width: `${pct ?? (recv ? Math.min(100, (100 * (p.accts.done + p.chats.done)) / Math.max(1, p.accts.total + p.chats.total)) : 100)}%`, opacity: pct === undefined && !recv ? 0.4 : 1 }} /></div></div>;
 }
 
 function DeviceRow({ d, busy, run, rel = [], two = false }: { d: any; busy: boolean; run: Run; rel?: any[]; two?: boolean }) {
@@ -232,11 +255,12 @@ function HistoryPush({ a, others, busy, run }: { a: any; others: any[]; busy: bo
     <button className="secondary" disabled={busy || !dev} onClick={() => run(() => core.call("syncSendHistory", { accountId: a.id, deviceId: dev }))}>Send the full history of {a.label} now</button></div>;
 }
 function Accounts({ st, busy, run, others }: { st: any; busy: boolean; run: Run; others: any[] }) {
+  const recv = useSyncReceiving();
   return (
     <div className="box" id="sync-accounts"><h3 style={{ marginTop: 0 }}>What to share per account</h3><p className="hint">Logins stay on the device where you signed in, unless you choose "History and login".</p>
       {st.accounts.map((a: any) => (
         <div key={a.id} style={{ borderTop: "1px solid var(--border)", padding: "8px 0" }}>
-          <label className="opt" style={{ alignItems: "center" }}><span style={{ flex: 1 }}><b>{a.label}</b><small className="sub">{a.provider}{a.mode === "credentials" ? " · the login is sent encrypted to your other devices" : ""}</small></span>
+          <label className="opt" style={{ alignItems: "center" }}><span style={{ flex: 1 }}><b>{a.label}</b>{recv.history && a.mode !== "none" && <em className="badge" data-receiving={a.id}> receiving history…</em>}<small className="sub">{a.provider}{a.mode === "credentials" ? " · the login is sent encrypted to your other devices" : ""}</small></span>
             <select value={a.mode} disabled={busy} data-acc={a.id} onChange={(e) => {
               const m = e.target.value as Mode;
               if (m === "credentials" && !confirm(`Share the login of "${a.label}" with your other devices?\n\nThey will ask you before using it. Anyone who gets hold of one of your devices could then use this account.`)) return;

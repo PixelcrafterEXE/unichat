@@ -7,7 +7,7 @@ import { acctStatus, viaNote } from "./relay";
 import { focusAccount, settingsNav } from "./StatusDots";
 import { BackupPanel, ExportChatButton } from "./BackupPanel";
 import { hasSyncLink } from "./syncLink";
-import { SyncPanel } from "./SyncPanel"; // device sync
+import { SyncPanel, useSyncReceiving } from "./SyncPanel"; // device sync
 import { SignalBackupImport } from "./SignalBackupImport";
 import { WhatsAppBackupImport } from "./WhatsAppBackupImport";
 import { StoragePanel } from "./MediaUI";
@@ -182,6 +182,7 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
   onLogin: (accountId: string) => void; onAccountAction: (kind: "signout" | "signin" | "remove" | "profile", a: Account) => void;
   accounts: Account[]; providers: ProviderInfo[]; settings: Settings; onChange: (s: Settings) => void; onAdd: () => void; onClose: () => void;
 }) {
+  const recv = useSyncReceiving();
   const [sec, setSec] = useState<Section>(() => { const w = settingsNav.section as Section | undefined; settingsNav.section = undefined; return w ?? (updatesNav.pending ? "about" : hasSyncLink() && !focusAccount.id ? "sync" : "accounts"); });
   useEffect(() => { updatesNav.pending = false; const f = () => { updatesNav.pending = false; setSec("about"); setTimeout(() => document.getElementById("updates")?.scrollIntoView({ block: "start" }), 50); }; addEventListener("unichat-open-updates", f); return () => removeEventListener("unichat-open-updates", f); }, []);
   useEffect(() => { // opened from a status ring in the chat list footer: show that account's card
@@ -213,8 +214,9 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
         <button className="closex" onClick={onClose} title="Close (Esc)"><X size={18} /></button>
         {sec === "accounts" && <>
           <h2>Accounts</h2><p className="hint"><b>Sign out</b> keeps your chats as a read-only archive. <b>Remove</b> deletes the account and its data from this device.</p>
+          {recv.history && accounts.length > 0 && <p className="hint" data-receiving-history>Receiving chats and messages from your other device… the accounts below are already here.</p>}
           {accounts.map((a) => <AccountCard key={a.id} a={a} p={providers.find((x) => x.name === a.provider)} onLogin={() => onLogin(a.id)} onAction={(k) => onAccountAction(k, a)} />)}
-          {!accounts.length && <p className="hint" data-loading={loading ? "accounts" : undefined}>{loading ? "Still loading your accounts…" : "No accounts yet."}</p>}
+          {!accounts.length && <p className="hint" data-loading={loading ? "accounts" : undefined}>{recv.accounts ? "Receiving your accounts from your other device…" : loading ? "Still loading your accounts…" : "No accounts yet."}</p>}
           <button className="primary inline" onClick={onAdd}><Plus size={16} /> Add account</button></>}
         {sec === "appearance" && <>
           <h2>Appearance</h2>

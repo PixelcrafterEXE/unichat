@@ -144,6 +144,19 @@ export default [
     await t.ok("one bar, percentage", `document.querySelectorAll('#sync-devices .bar').length===1 && /40%/.test(document.querySelector('#sync-progress').textContent)`);
   }),
 
+  test("first sync shows phases: accounts and settings done, chats x of y, files; accounts carry a receiving badge until done", async (t) => {
+    await pairedAsHost(t); await t.ev(`window.__mockSyncPhases(1)`);
+    await t.waitSel("#sync-progress [data-phases]");
+    await t.ok("three phases in order", `[...document.querySelectorAll('#sync-progress [data-phases=in] [data-phase]')].map(e=>e.dataset.phase).join()==="accounts,chats,files"`);
+    await t.ok("accounts and settings done, chats 1200 of 5000", `document.querySelector('[data-phase=accounts]').dataset.done==="1" && /Chats and messages · 1200 of 5000/.test(document.querySelector('[data-phase=chats]').textContent) && !document.querySelector('[data-phase=chats]').dataset.done`);
+    await t.ok("the sending direction is shown too", `/Sending to Pixel phone · 800 messages left/.test(document.querySelector('[data-sending]').textContent)`);
+    await t.ok("files wait", `/Files · 14 waiting/.test(document.querySelector('[data-phase=files]').textContent)`);
+    await t.ev(`document.querySelector('#sync-advanced').open = true`);
+    await t.waitSel("[data-receiving]");
+    await t.ev(`window.__mockSyncPhases(2)`);
+    await t.waitGone(`document.querySelector('[data-receiving]')`);
+  }),
+
   test("rename this device in the list; remove another one", async (t) => {
     await pairedAsHost(t);
     await t.click('[data-dev="My laptop"] button', "Rename"); await t.setInput('[data-dev="My laptop"] input', "Work PC"); await t.click('[data-dev="My laptop"] button', "Save");

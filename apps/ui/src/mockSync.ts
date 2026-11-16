@@ -41,6 +41,10 @@ if (typeof window !== "undefined") {
     __mockSyncDrop: () => { const d = S.devices.find((x) => !x.self); if (d) { d.online = false; d.progress = { ...d.progress, state: "offline" }; } for (const u of S.proxy.using) u.online = false; for (const a of S.accounts) if (a.proxyVia) { a.proxyVia.online = false; a.proxyVia.note = "home device unreachable"; } changed(); },
     /** a paired device asks to send as an account of this device (the one-time question) */
     __mockRelayPrompt: (device = "Pixel phone", acct = "mm-1") => { const a = S.accounts.find((x) => x.id === acct); S.proxy.asks = [{ deviceId: S.devices.find((d) => d.name === device)?.id ?? "dev-b", deviceName: device, accountId: acct, label: a?.label ?? acct, since: Date.now() }]; changed(); },
+    /** phased first sync (priority order): step 1 = accounts done, chats 1200 of 5000, files waiting; step 2 = everything done */
+    __mockSyncPhases: (step = 1) => { const d = S.devices.find((x) => !x.self); if (!d) return; S.media.wanted = step === 1 ? 14 : 0;
+      d.progress = step === 1 ? { state: "syncing", pending: 3800, accts: { done: 3, total: 3 }, chats: { done: 1200, total: 5000 }, out: { accts: { done: 3, total: 3 }, chats: { done: 100, total: 900 } } } : { state: "idle", pending: 0, accts: { done: 3, total: 3 }, chats: { done: 5000, total: 5000 }, lastSync: new Date().toISOString() };
+      changed(); emitRef("sync-progress", { peer: d.id, ...d.progress }); },
     __mockSyncSnapshot: () => { const d = S.devices.find((x) => !x.self); if (d) d.progress = { state: "syncing", pending: 0, phase: "snapshot", snapDone: 4_000_000, snapTotal: 10_000_000, snapDir: "in" }; changed(); },
   });
 }
