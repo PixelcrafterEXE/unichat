@@ -102,8 +102,7 @@ export function ContactPanel({ place, merge, onMerge, chat, caps, messages, mute
           {chat.originalName && <div className="handle">{merge ? "Original" : providerName} name: {chat.originalName}</div>}
           {person?.handle && !merge && <div className="handle">{person.handle}</div>}
           {dm && !merge && (() => { const p = { online: chat.online ?? person?.online, lastSeen: chat.lastSeen ?? person?.lastSeen }, t = presenceText(p); return t ? <div className="handle presence" data-presence={p.online ? "online" : "seen"}>{t}</div> : null; })()}
-          <div className="tags">{merge ? merge.members.map((c) => <span key={c.id} className="tag brand"><ProviderIcon provider={c.provider} size={14} /> {merge.providers.find((x) => x.name === c.provider)?.displayName ?? c.provider}</span>)
-            : <span className="tag brand"><ProviderIcon provider={chat.provider} size={14} /> {providerName}</span>}{caps?.e2ee && <span className="tag"><Lock size={11} /> End-to-end encrypted</span>}</div></div>
+          {caps?.e2ee && <div className="tags"><span className="tag"><Lock size={11} /> End-to-end encrypted</span></div>}</div>
         {(chat.description || (!dm && chat.provider !== "mesh" && caps?.chatDescription && chat.canManage !== false)) && <ChatAbout chat={chat} editable={!dm && chat.provider !== "mesh" && !!caps?.chatDescription && chat.canManage !== false} />}
         <div className="infoactions">
           <button onClick={onSearch}><Search size={15} /> Search</button>

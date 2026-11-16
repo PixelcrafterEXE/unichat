@@ -182,4 +182,15 @@ export default [
     await t.ok("real one has the quote, once", `(()=>{const l=[...document.querySelectorAll('.messages .msg')].filter(m=>/quoted answer/.test(m.textContent)); return l.length===1 && !l[0].classList.contains('pend') && !!l[0].querySelector('.quote')})()`);
     await t.ev(`globalThis.__mockSlowSend=0`);
   }),
+
+  test("contact info: no messenger chips under the name; the networks of a merged chat are listed in their own section", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    await t.click("main header .titlebtn");
+    await t.waitSel("aside.info .hero h2");
+    await t.eq("no provider chips in the hero", `document.querySelectorAll('aside.info .hero .tag.brand').length`, 0);
+    await t.ev(`window.__mockCall('mergeChats',{chatIds:['wa-1:anna','mx-1:@anna:matrix.org']}).then(r=>window.dispatchEvent(new CustomEvent('unichat-open-chat',{detail:r.id})))`);
+    await t.waitSel("aside.info .netrow");
+    await t.eq("still no chips for a merged chat", `document.querySelectorAll('aside.info .hero .tag.brand').length`, 0);
+    await t.ok("the networks section lists both", `document.querySelectorAll('aside.info .netrow .pi').length>=2`);
+  }),
 ];
