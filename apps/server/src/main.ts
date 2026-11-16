@@ -34,7 +34,8 @@ const digest = (v: string) => createHash("sha256").update(v).digest();
 
 // Backups: archives are exchanged over streaming HTTP on the same port (see backup-http.ts), file paths only on loopback and only inside UNIMSG_BACKUP_DIR.
 const dataDir = process.env.UNIMSG_DATA ?? join(homedir(), ".config", "unimsg");
-const hub = await startBackend(dataDir, { backup: { paths: loopback ? "dir" : "none", dir: process.env.UNIMSG_BACKUP_DIR || join(dataDir, "backups"), maxUploadBytes: Number(process.env.UNIMSG_BACKUP_MAX_BYTES) || undefined } });
+const hub = await startBackend(dataDir, { name: "web server", backup: { paths: loopback ? "dir" : "none", dir: process.env.UNIMSG_BACKUP_DIR || join(dataDir, "backups"), maxUploadBytes: Number(process.env.UNIMSG_BACKUP_MAX_BYTES) || undefined } })
+  .catch((e) => { if ((e as { code?: string }).code !== "KEY_MISMATCH") throw e; console.error(`[unimsg] ${(e as Error).message}\nSet UNIMSG_DB_KEY to the key that sealed it, or point UNIMSG_DATA at another folder.`); process.exit(1); });
 const backupHttp = createBackupHandler(hub, { token, allowedOrigins, isLocalOrigin });
 const http = createServer((req, res) => { backupHttp(req, res).then((h) => { if (!h) { res.writeHead(404); res.end(); } }, () => { res.destroy(); }); });
 http.listen(port, host);

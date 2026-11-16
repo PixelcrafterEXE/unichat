@@ -70,6 +70,15 @@ export class SqliteStore implements Store {
     if (!(this.db.prepare("PRAGMA table_info(chat_flags)").all() as unknown as { name: string }[]).some((c) => c.name === "unread_mark")) this.db.exec("ALTER TABLE chat_flags ADD COLUMN unread_mark INTEGER NOT NULL DEFAULT 0");
     if (!(this.db.prepare("PRAGMA table_info(chat_flags)").all() as unknown as { name: string }[]).some((c) => c.name === "read_up_to")) this.db.exec("ALTER TABLE chat_flags ADD COLUMN read_up_to TEXT NOT NULL DEFAULT ''"); // migration: the persistent read mark
   }
+  /** False when sealed rows exist that the supplied key cannot open (the database was sealed with a different key). Reads only; changes nothing. */
+  keyMatches(): boolean {
+    try {
+      for (const sql of ["SELECT label v FROM accounts LIMIT 3", "SELECT json v FROM messages LIMIT 3", "SELECT json v FROM chat_cache LIMIT 3"])
+        for (const r of this.db.prepare(sql).all() as unknown as { v: string }[]) this.v.dec(r.v);
+      return true;
+    } catch { return false; }
+  }
+  close() { try { this.db.close(); } catch { /* closed */ } }
   private txDepth = 0; private txBad = false;
   private begin() { if (this.txDepth++ === 0) { this.db.exec("BEGIN"); this.txBad = false; } }
   private end(ok: boolean) {
