@@ -15,6 +15,18 @@ const mb = (n?: number) => (n ? (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + " 
 const addrText = (a: any) => (a.kind === "relay" ? `relay ${a.url}` : `${a.host}:${a.port}`);
 export type Run = (f: () => Promise<any>) => void;
 
+/** Android: unless UniChat is exempt from battery optimization, the phone stops answering other devices while the screen is off (Doze). */
+function BackgroundHint() {
+  const [ignoring, setIgnoring] = useState<boolean>();
+  const check = () => core.call("$batteryExemptionState", {}).then((r: any) => setIgnoring(!!(r?.ignoring ?? r?.exempt)), () => setIgnoring(undefined));
+  useEffect(() => { void check(); addEventListener("focus", check); return () => removeEventListener("focus", check); }, []);
+  if (ignoring !== false) return null;
+  return (
+    <div className="notifwarn" data-bg-hint role="note"><b>Your other devices can't reach this phone while it sleeps</b>
+      <span>Android pauses UniChat's connection when the screen is off. Allow it to run in the background so syncing and "send through this phone" keep working.</span>
+      <button className="primary" onClick={() => void core.call("$requestBatteryExemption", {}).then(() => setTimeout(check, 1500), () => {})}>Allow background activity</button></div>);
+}
+
 export function SyncPanel() {
   const [st, setSt] = useState<any>(null), [err, setErr] = useState(""), [pair, setPair] = useState<any>(null), [busy, setBusy] = useState(false), [scan, setScan] = useState(false);
   const [host, setHost] = useState(""), [port, setPort] = useState(""), [code, setCode] = useState(""), [toast, setToast] = useState(""), [copied, setCopied] = useState(false);
@@ -61,6 +73,7 @@ export function SyncPanel() {
   const nearby = (st.discovered ?? []).filter((d: any) => d.nearby);
   return (
     <div className="bk sync" id="sync-panel"><h2>Sync devices</h2>
+      {(window as any).UnimsgNative && <BackgroundHint />}
       <p className="hint">Keep UniChat on your phone and computer in step, directly between them and encrypted.</p>
       {toast && <div className="synctoast" id="sync-toast" role="status">{toast}</div>}
       {st.revoked && <div className="warn" id="sync-revoked"><b>This device was removed from the sync.</b> It keeps what it has but gets nothing new. <button className="secondary" onClick={() => run(() => core.call("syncLeave"))}>Start over</button></div>}
