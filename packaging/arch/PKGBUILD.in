@@ -1,0 +1,21 @@
+# Maintainer: UniChat <noreply@unichat.invalid>
+# Binary package: repackages the release's .pkg.tar.zst (electron-builder output) so it can be built with makepkg or an AUR helper.
+# Generated per release by scripts/arch-pkgbuild.mjs (version and sha256 filled in); the template is packaging/arch/PKGBUILD.in.
+pkgname=unichat-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Unified messenger: WhatsApp, Signal, Matrix, Mattermost, Discord and more in one app'
+arch=('x86_64')
+url='https://github.com/PixelcrafterEXE/unichat'
+license=('custom')
+provides=('unichat')
+conflicts=('unichat' 'unichat-desktop')
+depends=(gtk3 nss alsa-lib libxss libxtst libnotify libsecret xdg-utils at-spi2-core libcups libdrm libxkbcommon mesa util-linux-libs)
+options=(!strip !debug)
+source=("unichat-desktop-${pkgver}.pkg.tar.zst::https://github.com/PixelcrafterEXE/unichat/releases/download/v${pkgver}/unichat-desktop-${pkgver}.pkg.tar.zst")
+noextract=("unichat-desktop-${pkgver}.pkg.tar.zst")
+sha256sums=('@SHA256@')
+
+package() {
+  bsdtar -xf "${srcdir}/unichat-desktop-${pkgver}.pkg.tar.zst" -C "${pkgdir}" --exclude='.PKGINFO' --exclude='.MTREE' --exclude='.BUILDINFO' --exclude='.INSTALL' --exclude='.CHANGELOG'
+}
