@@ -20,6 +20,7 @@ import { padContent } from "../protocol/padding.js";
 import type { SignalStore } from "../store/signalStore.js";
 import type { AuthChat, UnauthChat } from "./chatTypes.js";
 import type { Access, SealedAccess } from "./sealed.js";
+import { KeyedQueue } from "./keyedQueue.js";
 
 interface KeysResponse {
   identityKey: string;
@@ -118,7 +119,12 @@ export class Sender {
    * Encrypt `content` for every device of `aci` and send it.
    * mode "message": normal 1:1 send. mode "sync": aci must be our own account (sync to linked devices).
    */
-  async deliver(aci: string, content: Content, timestamp: number, mode: "message" | "sync", opts: DeliverOptions = {}): Promise<DeliverResult> {
+  private readonly lanes = new KeyedQueue();
+  /** One send per recipient at a time (see KeyedQueue): concurrent sends to the same person corrupted the ratchet counter and one of them was never delivered. */
+  deliver(aci: string, content: Content, timestamp: number, mode: "message" | "sync", opts: DeliverOptions = {}): Promise<DeliverResult> {
+    return this.lanes.run(aci.toLowerCase(), () => this.deliverNow(aci, content, timestamp, mode, opts));
+  }
+  private async deliverNow(aci: string, content: Content, timestamp: number, mode: "message" | "sync", opts: DeliverOptions = {}): Promise<DeliverResult> {
     const plain = padContent(ContentCodec.encode(content));
     const self = aci.toLowerCase() === this.account.aci.toLowerCase();
     const st = this.store.stores("aci");
