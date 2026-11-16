@@ -29,7 +29,7 @@ import { getOwnProfile, updateOwnProfile } from "./ownProfile.js";
 import { applyVote, pollView, registerPoll } from "./polls.js";
 import { Aci } from "@signalapp/libsignal-client";
 import { downloadAttachment } from "./attachments.js";
-import { attachDebug, checkAttachments, pinnedHttp, uploadAttachment, type CdnHttp, type SignalOutgoingAttachment } from "./attachmentUpload.js";
+import { AttachmentUploadError, attachDebug, checkAttachments, pinnedHttp, uploadAttachment, type CdnHttp, type SignalOutgoingAttachment } from "./attachmentUpload.js";
 import { parseContactStream } from "./contacts.js";
 import { renderPreview } from "./richContent.js";
 import { LookupError, lookupE164, lookupUsername, parseHandle } from "./lookup.js";
@@ -754,25 +754,40 @@ export class SignalClient {
    * message without a preview. Off when OutgoingMessage.linkPreview === false or the account setting (synced from the phone) is off.
    */
   private async attachLinkPreview(dm: DataMessage, msg: OutgoingMessage, timestamp: number): Promise<{ data: Uint8Array; mime: string } | undefined> {
-    if ((msg as { linkPreview?: boolean }).linkPreview === false || this.store.requireAccount().linkPreviews === false) return undefined;
-    const found = firstUrl(msg.text);
-    if (!found || !/^https:/i.test(found.url)) return undefined;
+    // A link preview must NEVER make a text message fail or hang: everything below is isolated, its image upload does not retry,
+    // the whole attempt has a time budget, and nothing is written into `dm` unless the attempt finished in time.
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const p = await this.previewFetcher(found.url);
-      const preview: NonNullable<DataMessage["preview"]>[number] = { url: p.url, title: p.title || new URL(p.url).hostname, date: timestamp };
-      if (p.description) preview.description = p.description;
-      let uploaded = false;
-      if (p.image) {
-        try { preview.image = await uploadAttachment(this.requireChat(), this.cdnHttp, { kind: "image", mime: p.image.mime, data: p.image.data }, Date.now()); uploaded = true; }
-        catch { /* send the preview without its picture */ }
-      }
-      dm.preview = [preview];
-      previewDebug("ok", uploaded);
-      return uploaded ? p.image : undefined;
+      const result = await Promise.race([
+        this.buildLinkPreview(msg, timestamp),
+        new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), this.linkPreviewBudgetMs); }),
+      ]);
+      if (!result) return undefined;
+      dm.preview = [result.preview];
+      previewDebug("ok", !!result.image);
+      return result.image;
     } catch (e) {
       previewDebug(e instanceof PreviewError ? e.reason : "error", false);
       return undefined;
+    } finally { if (timer) clearTimeout(timer); }
+  }
+  /** Overall time budget of the preview attempt (page fetch + image upload). */
+  private linkPreviewBudgetMs = 20_000;
+
+  private async buildLinkPreview(msg: OutgoingMessage, timestamp: number): Promise<{ preview: NonNullable<DataMessage["preview"]>[number]; image?: { data: Uint8Array; mime: string } } | undefined> {
+    if ((msg as { linkPreview?: boolean }).linkPreview === false || this.store.requireAccount().linkPreviews === false) return undefined;
+    const found = firstUrl(msg.text);
+    if (!found || !/^https:/i.test(found.url)) return undefined;
+    const p = await this.previewFetcher(found.url);
+    const preview: NonNullable<DataMessage["preview"]>[number] = { url: p.url, title: p.title || new URL(p.url).hostname, date: timestamp };
+    if (p.description) preview.description = p.description;
+    let image: { data: Uint8Array; mime: string } | undefined;
+    if (p.image) {
+      // upload failure (form refused, CDN down, ...) only costs the picture; the text and the title/description card still go out
+      try { preview.image = await uploadAttachment(this.requireChat(), this.cdnHttp, { kind: "image", mime: p.image.mime, data: p.image.data }, Date.now(), { retries: 0 }); image = p.image; }
+      catch (e) { previewDebug(`image-upload-failed:${e instanceof AttachmentUploadError ? e.errClass : "error"}`, false); }
     }
+    return { preview, image };
   }
 
   // ---------- Groups v2 management ----------
