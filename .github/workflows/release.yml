@@ -44,6 +44,34 @@ jobs:
           name: web
           path: artifacts/*
 
+  demo:
+    if: github.ref == 'refs/heads/main'
+    name: Demo on GitHub Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The mock UI (apps/ui/src/mock.ts) published at https://pixelcrafterexe.github.io/unichat/ : no backend, no real data.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install -g pnpm@12.17.0
+      - run: pnpm install --frozen-lockfile
+      - name: Build the demo
+        run: node scripts/build-demo.mjs
+      - name: Publish it to the gh-pages branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd apps/ui/dist-demo
+          git init -q -b gh-pages
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add -A
+          git commit -q -m "UniChat demo ${VERSION} (mock data, no backend)"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+
   desktop:
     if: github.ref == 'refs/heads/main'
     name: Desktop app (Linux)

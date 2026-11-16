@@ -6,7 +6,7 @@ message archive, and read-only archives for accounts you signed out of.
 
 ## Screenshots
 
-Mock data (`?mock`), no real accounts.
+Mock data (`?mock`), no real accounts. **[Try the demo](https://pixelcrafterexe.github.io/unichat/)** — the same mock data, running in your browser with no backend and nothing to install.
 
 <p>
   <img src="docs/screenshots/desktop.png" alt="UniChat on the desktop: chat list, communities rail and a conversation" width="640">
