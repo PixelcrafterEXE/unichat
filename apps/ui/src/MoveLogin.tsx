@@ -4,7 +4,7 @@
 //   TARGET (this device receives it): choose file -> inspect -> import in merge mode -> confirm "start this account here" (confirmMovedAccount).
 // Backend: exportData({accountIds, parts:{data:false, sessions:true}}), importInspect/importData, movedAccounts/confirmMovedAccount (packages/core/src/backup.ts).
 import { useEffect, useRef, useState } from "react";
-import { ProviderIcon, core, fmtBytes } from "./util";
+import { ProviderIcon, core, fmtBytes, fmtDateTime } from "./util";
 import { Bar, chooseTarget, deliver, native, passphraseStrength, stamp, upload, useProgress } from "./backupShared";
 
 /** Sessions that are bound to an encryption state on the device: exactly ONE device may ever run them. */
@@ -150,7 +150,7 @@ function Target({ onClose }: { onClose: () => void }) {
           <div className="btns"><button className="secondary" id="mv-check" disabled={!pw || !!busy} onClick={check}>{busy || "Check file"}</button></div></>}
         {info && accs.length > 0 && <div id="mv-info">
           <table><tbody>
-            <tr><td>From</td><td>{m.source?.name ?? "another device"}, made {new Date(m.createdAt).toLocaleString()}</td></tr>
+            <tr><td>From</td><td>{m.source?.name ?? "another device"}, made {fmtDateTime(m.createdAt)}</td></tr>
             {accs.map((a: any) => <tr key={a.id ?? a.label}><td><ProviderIcon provider={a.provider} size={20} /></td><td><b>{a.label}</b> ({providerName(a.provider)}): {a.outcome === "matched" ? (a.adoptSession ? "exists here as a signed-out archive; its history stays and the session from the file is adopted." : "already signed in on this device; the session in the file would be ignored.") : "added as a new account that is stopped until you confirm."}</td></tr>)}
           </tbody></table>
           {provs.map((p) => <ProviderWarning key={p} provider={p} />)}

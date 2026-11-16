@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Chat, Contact, Message } from "./types";
 import type { MessageReceipt } from "../../../packages/core/src/model";
-import { Avatar } from "./util";
+import { Avatar, fmtDate } from "./util";
 import { Modal } from "./Modals";
 import { Check, CheckCheck } from "./icons";
 import { loadMembers, useNames } from "./Reactors";
@@ -15,7 +15,7 @@ export function fmtExact(iso?: string): string {
   const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const now = new Date();
   if (d.toDateString() === now.toDateString()) return t;
-  return d.toLocaleDateString([], { day: "numeric", month: "short", ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}) }) + ", " + t;
+  return fmtDate(d, { day: "numeric", month: "short", ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}) }) + ", " + t;
 }
 const ts = (s?: string) => (s ? Date.parse(s) || 0 : 0);
 const previewOf = (m: Message) => m.text || (m.attachments?.length ? ({ image: "Photo", video: "Video", audio: "Audio", voice: "Voice message", file: m.attachments[0].name ?? "File", sticker: "Sticker" }[m.attachments[0].kind]) : m.poll ? "Poll: " + m.poll.question : m.location ? "Location" : m.contacts?.length ? "Contact" : "Message");

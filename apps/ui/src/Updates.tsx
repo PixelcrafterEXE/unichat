@@ -1,6 +1,6 @@
 // Updates: Settings > About > Updates, and the small "Update 0.1.N available" banner. The backend (packages/core/src/updater.ts) does the work.
 import { useCallback, useEffect, useState } from "react";
-import { core, fmtBytes } from "./util";
+import { core, fmtBytes, fmtDateTime, fmtDate } from "./util";
 import "./updates.css";
 
 export const APP_VERSION: string = typeof __UNICHAT_VERSION__ === "string" ? __UNICHAT_VERSION__ : "dev";
@@ -45,7 +45,7 @@ export function useUpdate() {
   };
 }
 
-const when = (t?: number) => (t ? new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "never");
+const when = (t?: number) => (t ? fmtDateTime(t, { dateStyle: "medium", timeStyle: "short" } as any) : "never");
 
 export function UpdatesSection() {
   const u = useUpdate(); const st = u.st;

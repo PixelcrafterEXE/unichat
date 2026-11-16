@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Chat } from "./types";
 import { Download, Lock } from "./icons";
-import { core, fmtBytes } from "./util";
+import { core, fmtBytes, fmtDateTime, fmtDate } from "./util";
 import { Bar, chooseTarget, deliver, native, passphraseStrength, stamp, upload, useProgress } from "./backupShared";
 import { MoveLogin } from "./MoveLogin";
 import { MoveP2P } from "./MoveDevice";
@@ -83,7 +83,7 @@ function ImportBox() {
         {busy && pct > 0 && pct < 1 && <div className="bar"><i style={{ width: `${pct * 100}%` }} /></div>}</>}
       {info && <div id="bk-info">
         <table><tbody>
-          <tr><td>Made</td><td>{new Date(m.createdAt).toLocaleString()} by UniChat {m.appVersion} on {m.source?.name}</td></tr>
+          <tr><td>Made</td><td>{fmtDateTime(m.createdAt)} by UniChat {m.appVersion} on {m.source?.name}</td></tr>
           <tr><td>Contains</td><td>{m.parts.data === false ? `${m.counts.account === 1 ? "one account" : "accounts"}, sign-in session only (${m.sessionFiles} files), no messages` : <>{m.counts.message} messages, {m.counts.account} accounts</>}{m.parts.media ? ", media" : ""}{m.parts.data !== false && m.parts.sessions ? `, sign-in sessions (${m.sessionFiles} files)` : ""}</td></tr>
           <tr><td>Accounts</td><td>{info.accounts.map((a: any) => <div key={a.src}>{a.label} ({a.provider}): {a.outcome === "matched" ? "already here, messages are merged in" : a.hasSession ? "added, session included" : "added as read-only archive"}</div>)}</td></tr></tbody></table>
         <label className="opt"><input type="radio" name="bkmode" checked={mode === "new-install"} disabled={!info.targetEmpty} onChange={() => setMode("new-install")} /> <span><b>New install</b><small>Restore everything. Only possible while this install is empty.</small></span></label>

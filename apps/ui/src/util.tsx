@@ -123,17 +123,47 @@ export function presenceText(p: { online?: boolean; lastSeen?: string }): string
   if (m < 1) return "last seen just now"; if (m < 60) return `last seen ${m} min ago`;
   const d = new Date(t), today = new Date();
   if (m < 24 * 60 && d.toDateString() === today.toDateString()) return `last seen today at ${fmtTime(p.lastSeen!)}`;
-  return `last seen ${d.toLocaleDateString([], { day: "numeric", month: "short" })}`;
+  return `last seen ${fmtDate(d, { day: "numeric", month: "short" })}`;
 }
 export const fmtBytes = (n?: number) => (n == null ? "" : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 // toLocale*String builds a new formatter on every call (about 0.2 ms each, 1 s for a 2000-message chat on a phone): keep one Intl formatter.
 let timeFmt: Intl.DateTimeFormat | undefined, dayFmt: Intl.DateTimeFormat | undefined;
 export const fmtTime = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? "Invalid Date" : (timeFmt ??= new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" })).format(d); };
+/** How dates are written (Settings > Appearance > Date format). Times always follow the system locale. */
+export type DateFormat = "system" | "dmy" | "mdy" | "ymd" | "dmon";
+export const DATE_FORMATS: [DateFormat, string][] = [["system", "System default"], ["dmy", "DD.MM.YYYY"], ["mdy", "MM/DD/YYYY"], ["ymd", "YYYY-MM-DD"], ["dmon", "D MMM YYYY"]];
+let dateFormat: DateFormat = "system";
+/** Set from the app's settings on every render (a plain module value, so the formatters below stay usable anywhere). */
+export const setDateFormat = (f?: DateFormat) => { dateFormat = f && DATE_FORMATS.some(([k]) => k === f) ? f : "system"; };
+export const getDateFormat = () => dateFormat;
+const p2 = (n: number) => String(n).padStart(2, "0");
+let monFmt: Intl.DateTimeFormat | undefined;
+/** The ONE date formatter. `system` keeps the old locale-dependent look given by `sys` (default: "3 Nov 2026"); the explicit formats are fixed patterns with a four-digit year. */
+export function fmtDate(v: string | number | Date, sys: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" }, fmt: DateFormat = dateFormat): string {
+  const d = v instanceof Date ? v : new Date(v); if (isNaN(+d)) return "";
+  const D = d.getDate(), M = d.getMonth() + 1, Y = d.getFullYear();
+  switch (fmt) {
+    case "dmy": return `${p2(D)}.${p2(M)}.${Y}`;
+    case "mdy": return `${p2(M)}/${p2(D)}/${Y}`;
+    case "ymd": return `${Y}-${p2(M)}-${p2(D)}`;
+    case "dmon": return `${D} ${(monFmt ??= new Intl.DateTimeFormat([], { month: "short" })).format(d)} ${Y}`;
+    default: return d.toLocaleDateString([], sys);
+  }
+}
+/** Date and time together: the date through `fmtDate`, the time in the system locale (`seconds`: with seconds). */
+export function fmtDateTime(v: string | number | Date, sys?: Intl.DateTimeFormatOptions, seconds?: boolean): string {
+  const d = v instanceof Date ? v : new Date(v); if (isNaN(+d)) return "";
+  if (dateFormat === "system" && !seconds) return d.toLocaleString([], sys && !sys.dateStyle && !sys.timeStyle ? { ...sys, hour: "2-digit", minute: "2-digit" } : sys);
+  return fmtDate(d, sys) + ", " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...(seconds ? { second: "2-digit" as const } : {}) });
+}
 export function dayLabel(iso: string) {
   const d = new Date(iso), t = new Date(), y = new Date(Date.now() - 864e5);
   const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
-  return same(d, t) ? "Today" : same(d, y) ? "Yesterday" : (dayFmt ??= new Intl.DateTimeFormat([], { weekday: "long", day: "numeric", month: "long" })).format(d);
+  if (same(d, t)) return "Today"; if (same(d, y)) return "Yesterday";
+  if (dateFormat === "system") return (dayFmt ??= new Intl.DateTimeFormat([], { weekday: "long", day: "numeric", month: "long" })).format(d);
+  return (wdFmt ??= new Intl.DateTimeFormat([], { weekday: "long" })).format(d) + ", " + fmtDate(d);
 }
+let wdFmt: Intl.DateTimeFormat | undefined;
 export const toBase64 = (b: Blob) => new Promise<string>((ok, fail) => {
   const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] ?? ""); r.onerror = () => fail(r.error); r.readAsDataURL(b);
 });
@@ -314,10 +344,10 @@ export function useAttachment(chatId: string, messageId: string, a: Attachment, 
 }
 
 // ---- local settings ----
-export interface Settings { theme: "dark" | "light" | "system"; messageStyle: "bubbles" | "flat"; /** retired: ignored, kept so old saved settings still load */ compact?: boolean; enterToSend: boolean; notifications: boolean; sendReadReceipts: boolean; /** what notifications reveal: full text / only who wrote / nothing */ notifyContent: "full" | "sender" | "hidden"; sendTyping: boolean; autoDownloadMedia: boolean; mapPreviews: boolean; /** Android: keep the background service running and restart it after a reboot */ keepAlive: boolean; /** emoji picker skin tone, 0 = default .. 5 = dark */ skinTone?: number; /** chat list filters (see ChatFilters.tsx) */ chatFilters?: import("./ChatFilters").ChatFilters }
+export interface Settings { theme: "dark" | "light" | "system"; messageStyle: "bubbles" | "flat"; /** retired: ignored, kept so old saved settings still load */ compact?: boolean; enterToSend: boolean; notifications: boolean; sendReadReceipts: boolean; /** what notifications reveal: full text / only who wrote / nothing */ notifyContent: "full" | "sender" | "hidden"; sendTyping: boolean; autoDownloadMedia: boolean; mapPreviews: boolean; /** Android: keep the background service running and restart it after a reboot */ keepAlive: boolean; /** how dates are written (times follow the system locale); unset = system default */ dateFormat?: DateFormat; /** emoji picker skin tone, 0 = default .. 5 = dark */ skinTone?: number; /** chat list filters (see ChatFilters.tsx) */ chatFilters?: import("./ChatFilters").ChatFilters }
 export const DEFAULTS: Settings = { theme: "dark", messageStyle: "bubbles", compact: false, enterToSend: true, notifications: false, sendReadReceipts: true, notifyContent: "full", sendTyping: true, autoDownloadMedia: true, mapPreviews: true, keepAlive: true };
 export function loadSettings(): Settings {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("unimsg.settings") ?? "{}") }; } catch { return DEFAULTS; }
+  try { const s = { ...DEFAULTS, ...JSON.parse(localStorage.getItem("unimsg.settings") ?? "{}") }; setDateFormat(s.dateFormat); return s; } catch { return DEFAULTS; }
 }
 export function saveSettings(s: Settings) { try { localStorage.setItem("unimsg.settings", JSON.stringify(s)); } catch { /* private mode */ } }
 export function loadSet(key: string): Set<string> { try { return new Set(JSON.parse(localStorage.getItem(key) ?? "[]")); } catch { return new Set(); } }

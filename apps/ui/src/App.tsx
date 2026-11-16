@@ -7,7 +7,7 @@ import { CategoryModal, CategoryPickModal } from "./Categories";
 import { X } from "./icons";
 import { setToken } from "./api";
 import { UpdateBanner } from "./Updates";
-import { Avatar, notificationIcon, ProviderIcon, ProviderStack, SpaceIcon, core, initials, isCoarse, loadSet, lpHandlers, type LPState, loadSettings, saveSet, saveSettings, useLongPress, presenceText, type Settings } from "./util";
+import { Avatar, notificationIcon, ProviderIcon, ProviderStack, SpaceIcon, core, initials, isCoarse, loadSet, lpHandlers, type LPState, loadSettings, saveSet, saveSettings, useLongPress, presenceText, setDateFormat, type Settings } from "./util";
 import { ChatRow, type RowApi } from "./ChatRow";
 import { ChatFilterBar, activeCount, isOnline, matchesFilters, normFilters, type ChatFilters } from "./ChatFilters";
 import { VList } from "./VList";
@@ -87,6 +87,7 @@ export default function App() {
   const [dialog, setDialog] = useState<"archived" | "addmenu" | "add" | "createspace" | "joinspace" | "newchat">();
   const [settingsOpen, setSettingsOpen] = useState(() => q.has("settings") || initSyncLink());
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  setDateFormat(settings.dateFormat); // every date the render below writes goes through the one formatter in util.tsx
   const [panel, setPanel] = useState<"info" | "search" | undefined>(q.has("search") ? "search" : q.has("info") ? "info" : undefined); // right sidebar
   const info = panel === "info";
   const setInfo = (v: boolean) => setPanel(v ? "info" : undefined);

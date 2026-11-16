@@ -2,7 +2,7 @@
 // Main view = your devices, ONE "Add a device" flow, a small "Connect to another device" for the other side. Everything technical lives under "Advanced" (closed).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { core } from "./util";
+import { core, fmtDateTime } from "./util";
 import { viaNote } from "./relay";
 import { isSyncLink, takeSyncLink } from "./syncLink";
 import "./backup.css";
@@ -253,7 +253,7 @@ function Accounts({ st, busy, run, others }: { st: any; busy: boolean; run: Run;
           }} /><span>Let my other devices send as this account<small className="sub">{a.proxyShared ? "On: all your devices may send through this one while it is on." : "Off: a device asks first, and you answer once. The login always stays here."}</small></span></label>}
           {a.via && <p className="hint" data-account-via={a.id}>{viaNote(a.via)}</p>}
           {st.devices.filter((d: any) => d.audit?.[a.id]?.recent?.length).map((d: any) => <details key={d.id} className="relaylog" data-relay-log={d.name}><summary>Sent from {d.name}: {d.audit[a.id].byOp.send ?? 0} messages, {d.audit[a.id].calls} requests</summary>
-            <ul>{d.audit[a.id].recent.slice().reverse().map((r: any, i: number) => <li key={i}><code>{r.op}</code> <small className="sub">{new Date(r.at).toLocaleString()}{r.err ? " · failed" : ""}</small></li>)}</ul></details>)}
+            <ul>{d.audit[a.id].recent.slice().reverse().map((r: any, i: number) => <li key={i}><code>{r.op}</code> <small className="sub">{fmtDateTime(r.at)}{r.err ? " · failed" : ""}</small></li>)}</ul></details>)}
           {a.proxyVia && <p className="hint" data-proxy-via={a.id}>Sending through <b>{a.proxyVia.deviceName ?? "another device"}</b>{a.proxyVia.auto ? " (automatic)" : ""}: {a.proxyVia.online ? "connected" : "that device is offline, showing your archive"}. <button className="linkbtn" onClick={() => run(() => core.call("syncStopProxy", { accountId: a.id }))}>Stop using it through that device</button></p>}
         </div>))}
       {!st.accounts.length && <p className="hint">No accounts yet.</p>}

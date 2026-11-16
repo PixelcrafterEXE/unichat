@@ -4,7 +4,7 @@ import { viaNote } from "./relay";
 import { capsOf, cardsOf, type Account, type Attachment, type Capabilities, type Card, type Chat, type Contact, type Location, type Message, type ProviderInfo, type SharedContact } from "./types";
 import { measureMedia, isGif } from "./measure";
 import { placeholderOf } from "../../../packages/core/src/placeholder";
-import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, type Settings } from "./util";
+import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, type Settings } from "./util";
 import { MoreHorizontal, Check, ChevronDown, Calendar, Clock3, Phone, ShoppingBag, List as ListIcon, CreditCard, ExternalLink, Users as UsersIcon, MousePointerClick, FileQuestion, BarChart3, CheckCircle2, Circle, CheckSquare, Square, Info, LogOut, MessageSquareWarning, RotateCcw, ArrowDown, AlertCircle, Ban, Copy, Download, FileText, Forward, ImageIcon, MapPin, Mic, Paperclip, Pencil, Play, Plus, Reply, SendHorizontal, Smile, SmilePlus, Trash2, User, X } from "./icons";
 import { ReactorsModal, loadMembers, useNames } from "./Reactors";
 import type { VoiceClip } from "./Voice";
@@ -667,7 +667,7 @@ function CardView({ c, m, chat, auto, onImage, canEdit }: { c: Card; m: Message;
   const [editing, setEditing] = useState(false);
   const ics = () => { try { downloadText(`${c.title.replace(/[^\w\- ]+/g, "").trim() || "event"}.ics`, "text/calendar", icsOf(c, m.id)); } catch (e: any) { alert(e.message); } };
   const Icon = { event: Calendar, invite: UsersIcon, call: Phone, product: ShoppingBag, order: ShoppingBag, list: ListIcon, buttons: MousePointerClick, template: ListIcon, link: ExternalLink, payment: CreditCard, other: FileQuestion }[c.kind] ?? FileQuestion;
-  const when = c.when ? new Date(c.when).toLocaleString([], { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : undefined;
+  const when = c.when ? fmtDateTime(c.when, { weekday: "short", day: "numeric", month: "short", year: "numeric" }) : undefined;
   const until = c.until ? new Date(c.until).toLocaleString([], { hour: "2-digit", minute: "2-digit" }) : undefined;
   return (
     <div className={"cardmsg k-" + c.kind + (c.image ? " withimg " + (c.image.layout === "thumb" ? "thumbimg" : "bannerimg") : "")}>
@@ -789,7 +789,7 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; x: number;
         {m.fromMe && caps?.edits && m.text && <Item icon={<Pencil size={15} />} label="Edit" onClick={p.onEdit} />}
         {m.fromMe && caps?.deletes && <Item icon={<Trash2 size={15} />} label="Delete for everyone" onClick={p.onDelete} danger />}
       </>}
-      <div className="ctxinfo">{new Date(m.time).toLocaleString()}{m.fromMe && m.status ? ` · ${m.status}` : ""}{m.editedAt ? " · edited" : ""}</div>
+      <div className="ctxinfo">{fmtDateTime(m.time, undefined, true)}{m.fromMe && m.status ? ` · ${m.status}` : ""}{m.editedAt ? " · edited" : ""}</div>
     </div>
   );
 }

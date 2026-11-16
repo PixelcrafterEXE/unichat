@@ -16,7 +16,7 @@ import { MediaGallery, VideoCover, type MediaTab } from "./MediaGallery";
 import { Marked } from "./GlobalSearch";
 import { DisappearingSetting } from "./Disappearing";
 import { UpdatesSection, updatesNav } from "./Updates";
-import { Avatar, ProviderIcon, SpaceIcon, core, fmtBytes, fmtTime, forgetAvatar, presenceText, squareImage, useAttachment, type Settings } from "./util";
+import { Avatar, ProviderIcon, SpaceIcon, core, fmtBytes, fmtTime, forgetAvatar, fmtDate, DATE_FORMATS, type DateFormat, fmtDateTime, presenceText, squareImage, useAttachment, type Settings } from "./util";
 
 function Thumb({ chat, m, a, onJump }: { chat: Chat; m: Message; a: Attachment; onJump: (m: Message) => void }) {
   const video = a.kind === "video";
@@ -211,6 +211,7 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
           <h2>Appearance</h2>
           <label className="row"><span><b>Theme</b></span><select value={settings.theme} onChange={(e) => set("theme", e.target.value as Settings["theme"])}><option value="dark">Dark</option><option value="light">Light</option><option value="system">Follow system</option></select></label>
           <label className="row"><span><b>Message style</b><small className="rowhint">Bubbles show your messages on the right, like WhatsApp; Flat lists everything on the left, like Discord.</small></span><select value={settings.messageStyle} onChange={(e) => set("messageStyle", e.target.value as Settings["messageStyle"])}><option value="bubbles">Bubbles</option><option value="flat">Flat</option></select></label>
+          <label className="row"><span><b>Date format</b><small className="rowhint">How dates are written in the chat, search and info panels. Times always follow your system.</small></span><select id="dateFormat" value={settings.dateFormat ?? "system"} onChange={(e) => set("dateFormat", e.target.value as DateFormat)}>{DATE_FORMATS.map(([k, l]) => <option key={k} value={k}>{l}{k === "system" ? "" : ` (${fmtDate(new Date(2026, 10, 16), {}, k)})`}</option>)}</select></label>
           <label className="toggle"><span><b>Show communities with only one chat as a normal chat</b><small>A community that holds just one chat gets no entry in the left bar; its chat is listed under Personal. Chats you moved into a folder count too.</small></span>
             <input type="checkbox" id="collapseSingle" checked={collapse} onChange={(e) => { setCollapse(e.target.checked); core.call("setSetting", { key: "collapseSingleChatCommunities", value: e.target.checked }).catch(() => setCollapse(!e.target.checked)); }} /><i /></label></>}
         {sec === "notifications" && <>
@@ -258,7 +259,7 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
 
 function AccountCard({ a, p, onLogin, onAction }: { a: Account; p?: ProviderInfo; onLogin: () => void; onAction: (k: "signout" | "signin" | "remove" | "profile") => void }) {
   const signedOut = a.state === "signed-out" || (a.state === "needs-login" && !!a.everLinked);
-  const stateText = a.state === "signed-out" ? `signed out${a.signedOutAt ? " " + new Date(a.signedOutAt).toLocaleDateString() : ""}` : a.state === "needs-login" && a.everLinked ? "unlinked, sign in again" : a.state.replace("-", " ");
+  const stateText = a.state === "signed-out" ? `signed out${a.signedOutAt ? " " + fmtDate(a.signedOutAt, {}) : ""}` : a.state === "needs-login" && a.everLinked ? "unlinked, sign in again" : a.state.replace("-", " ");
   const [label, setLabel] = useState(a.label); const [editing, setEditing] = useState(false);
   const caps = capsOf(a, p ? [p] : [], a.provider);
   const feats = caps ? Object.entries({ Reactions: caps.reactions, Edits: caps.edits, Voice: caps.voiceNotes, Location: caps.location, Contacts: caps.contactCards, Communities: caps.spaces, "E2EE": caps.e2ee, Mentions: caps.mentions }).filter(([, v]) => v).map(([k]) => k) : [];
@@ -271,7 +272,7 @@ function AccountCard({ a, p, onLogin, onAction }: { a: Account; p?: ProviderInfo
   const [asked, setAsked] = useState("");
   const askHome = async () => { try { const r = await core.call("syncRelayAsk", { accountId: a.id }); setAsked(r.state === "pending" ? `Asked ${a.via?.device}. It shows a question there.` : r.state === "denied" ? `${a.via?.device} doesn't allow sending.` : ""); } catch (err: any) { setAsked(err.message); } };
   if (a.via) notices.push(viaNote(a.via));
-  else if (signedOut) notices.push(`Read-only archive${a.signedOutAt ? ` since ${new Date(a.signedOutAt).toLocaleDateString()}` : ""}: your chats and messages stay here, but messages sent to you while signed out won't arrive.`);
+  else if (signedOut) notices.push(`Read-only archive${a.signedOutAt ? ` since ${fmtDate(a.signedOutAt, {})}` : ""}: your chats and messages stay here, but messages sent to you while signed out won't arrive.`);
   if (!signedOut && caps?.sync) notices.push("Contacts only arrive when your phone shares them. That happens automatically after linking; use Sync contacts if people you added later are missing.");
   return (
     <div className={"acard" + (signedOut ? " dim" : "")} data-account={a.id}>
@@ -337,7 +338,7 @@ export function SearchPanel({ chat, members, providers, accounts, onJump, onClos
     return () => { live = false; clearTimeout(t); };
   }, [q, chat.id]);
   const term = q.trim();
-  const day = (iso: string) => new Date(iso).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+  const day = (iso: string) => fmtDate(iso);
   return (
     <aside className="info sidesearch">
       <header><span>Search in {chat.kind === "channel" ? "#" : ""}{chat.name}</span><button className="icon" onClick={onClose} aria-label="Close search"><X size={18} /></button></header>
@@ -368,7 +369,7 @@ function ScheduledList({ chats }: { chats: Chat[] }) {
   const load = () => core.call("jobs").then((j: JobRow[]) => setJobs((j ?? []).filter((x) => x.kind === "send" && ((x.status === "pending" && (x.payload.waiting || x.runAt > Date.now() - 60_000)) || (x.status === "failed" && (x.payload.late || x.payload.aborted))))), (e) => setErr(e.message));
   useEffect(() => { load(); const i = setInterval(load, 5000); const off = core.on((ev: string) => { if (ev === "job") load(); }); return () => { clearInterval(i); off(); }; }, []);
   const name = (id?: string) => chats.find((c) => c.id === id)?.name ?? "a chat";
-  const when = (j: JobRow) => new Date(j.payload.due ?? j.runAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const when = (j: JobRow) => fmtDateTime(j.payload.due ?? j.runAt, { dateStyle: "medium", timeStyle: "short" } as any);
   const act = (m: string, id: string) => core.call(m, { id }).then(load, (e) => { alert(e.message); load(); });
   return (
     <>

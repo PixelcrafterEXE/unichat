@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Account, Chat, ProviderInfo } from "./types";
 import { Search, X, LogOut } from "./icons";
-import { Avatar, ProviderIcon, ProviderStack, core, fmtTime } from "./util";
+import { Avatar, ProviderIcon, ProviderStack, core, fmtDate, fmtTime } from "./util";
 
 export interface GHit { chatId: string; messageId: string; accountId: string; time: string; sender: string; fromMe: boolean; snippet: string; ranges: [number, number][]; offline?: string }
 export interface GGroup { chatId: string; name: string; kind?: string; provider: string; providers: string[]; accountId: string; offline?: string; total: number; hits: GHit[] }
@@ -20,7 +20,7 @@ export function Marked({ text, ranges }: { text: string; ranges: [number, number
   ranges.forEach(([a, b], i) => { out.push(text.slice(at, a), <mark key={i}>{text.slice(a, b)}</mark>); at = b; });
   out.push(text.slice(at)); return <>{out}</>;
 }
-const day = (iso: string) => new Date(iso).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+const day = (iso: string) => fmtDate(iso);
 
 export default function GlobalSearch({ initial, providers, accounts, chats, current, onOpen, onOpenChat, onClose }: { initial?: string; providers: ProviderInfo[]; accounts: Account[]; chats: Chat[]; current?: { id: string; name: string }; onOpen: (g: GGroup, h: GHit) => void; onOpenChat?: (chatId: string) => void; onClose: () => void }) {
   const [q, setQ] = useState(initial ?? "");
