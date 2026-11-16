@@ -179,7 +179,17 @@ for (const acct of accounts) {
   });
   if (sup("send-media", "attachments")) { await media("send-media", "photo.jpg", "image", "image/jpeg", { width: 320, height: 240 }); await media("send-file", "note.txt", "file", "text/plain"); await media("send-video", "video.mp4", "video", "video/mp4", { width: 160, height: 120, durationMs: 2000 }); }
   if (sup("send-voice", "voiceNotes")) await media("send-voice", "voice.ogg", "voice", "audio/ogg; codecs=opus", { durationMs: 2000, waveform: Array.from({ length: 64 }, (_, i) => 20 + (i % 7) * 10) });
-  if (sup("gif", "attachments")) await media("gif", "anim.gif", "image", "image/gif", { width: 120, height: 90 });
+  // A GIF has to arrive as an ANIMATION, so the round trip is not enough: the stored attachment must carry `gif`, which is what
+  // the UI plays inline. WhatsApp only animates a video with gifPlayback, so a plain .gif shows up there as a still (issue #84).
+  if (sup("gif", "attachments")) await tryStep("gif", async () => {
+    const data = fixtures("anim.gif");
+    const m = await send({ text: "", attachments: [{ kind: "image", mime: "image/gif", name: "anim.gif", dataBase64: data.toString("base64"), width: 120, height: 90 }] }, "anim.gif");
+    const got = await waitMsg(target, m.id, (x) => x.attachments?.length && (settled(x) || !x.status), "the GIF message", 60_000);
+    const a = got.attachments[0];
+    if (!a.gif && !/gif/i.test(a.mime)) throw new Error(`arrived as ${a.kind} ${a.mime}, which is not shown as a GIF`);
+    if (!a.gif) throw new Error(`uploaded and came back as ${a.mime}, but not marked as an animation, so it is shown as a still image`);
+    return `${a.kind} ${a.mime}, animated`;
+  });
   if (sup("polls", "polls")) await tryStep("polls", async () => {
     const m = await send({ text: "", poll: { question: `${TAG} poll`, options: ["A", "B"], multiple: false } }, "poll");
     const got = await waitMsg(target, m.id, (x) => x.poll?.options?.length === 2, "the poll");
