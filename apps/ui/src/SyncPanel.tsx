@@ -2,7 +2,7 @@
 // Main view = your devices, ONE "Add a device" flow, a small "Connect to another device" for the other side. Everything technical lives under "Advanced" (closed).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { core } from "./util";
+import { core, fmtDateTime } from "./util";
 import { viaNote } from "./relay";
 import { isSyncLink, takeSyncLink } from "./syncLink";
 import "./backup.css";
@@ -14,6 +14,18 @@ const ago = (iso?: string) => { if (!iso) return "never"; const s = Math.max(0, 
 const mb = (n?: number) => (n ? (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + " MB" : "0 MB");
 const addrText = (a: any) => (a.kind === "relay" ? `relay ${a.url}` : `${a.host}:${a.port}`);
 export type Run = (f: () => Promise<any>) => void;
+
+/** Android: unless UniChat is exempt from battery optimization, the phone stops answering other devices while the screen is off (Doze). */
+function BackgroundHint() {
+  const [ignoring, setIgnoring] = useState<boolean>();
+  const check = () => core.call("$batteryExemptionState", {}).then((r: any) => setIgnoring(!!(r?.ignoring ?? r?.exempt)), () => setIgnoring(undefined));
+  useEffect(() => { void check(); addEventListener("focus", check); return () => removeEventListener("focus", check); }, []);
+  if (ignoring !== false) return null;
+  return (
+    <div className="notifwarn" data-bg-hint role="note"><b>Your other devices can't reach this phone while it sleeps</b>
+      <span>Android pauses UniChat's connection when the screen is off. Allow it to run in the background so syncing and "send through this phone" keep working.</span>
+      <button className="primary" onClick={() => void core.call("$requestBatteryExemption", {}).then(() => setTimeout(check, 1500), () => {})}>Allow background activity</button></div>);
+}
 
 export function SyncPanel() {
   const [st, setSt] = useState<any>(null), [err, setErr] = useState(""), [pair, setPair] = useState<any>(null), [busy, setBusy] = useState(false), [scan, setScan] = useState(false);
@@ -61,16 +73,22 @@ export function SyncPanel() {
   const nearby = (st.discovered ?? []).filter((d: any) => d.nearby);
   return (
     <div className="bk sync" id="sync-panel"><h2>Sync devices</h2>
+      {(window as any).UnimsgNative && <BackgroundHint />}
       <p className="hint">Keep UniChat on your phone and computer in step, directly between them and encrypted.</p>
       {toast && <div className="synctoast" id="sync-toast" role="status">{toast}</div>}
       {st.revoked && <div className="warn" id="sync-revoked"><b>This device was removed from the sync.</b> It keeps what it has but gets nothing new. <button className="secondary" onClick={() => run(() => core.call("syncLeave"))}>Start over</button></div>}
+      {st.removedNotice && <div className="warn" id="sync-removed-notice" role="status"><b>{st.removedNotice.reason === "alone" ? "This device was unlinked: all other devices were removed." : `Removed from the sync group by ${st.removedNotice.by}.`}</b> This device is no longer synced with your other devices. It keeps its messages; your account logins are untouched. To sync again, add it to a group with a new code.
+        <div className="btns"><button className="secondary" id="sync-removed-ok" onClick={() => run(() => core.call("syncDismissRemoved"))}>OK</button></div></div>}
+      {st.unlinking && <div className="warn" id="sync-unlinking"><b>{st.unlinking.online ? `Unlinking: telling ${st.unlinking.name}…` : `${st.unlinking.name} will unlink when it comes online.`}</b> With only two devices, both unlink: this device stays linked until {st.unlinking.name} has been told, so that it does not keep a group of one.
+        <div className="btns"><button className="secondary" id="sync-unlink-now" disabled={busy} onClick={() => confirm(`Unlink this device now? ${st.unlinking.name} is not told and stays linked until you remove this device there.`) && run(() => core.call("syncLeave", { force: true }))}>Unlink anyway</button></div></div>}
 
       <Confirm st={st} busy={busy} run={run} />
 
       {st.enabled && !st.revoked && <div className="box" id="sync-devices">
         <h3 style={{ marginTop: 0 }}>Your devices {st.paused && <small className="sub">(paused)</small>}</h3>
-        {st.devices.filter((d: any) => !d.revoked).map((d: any) => <DeviceRow key={d.id} d={d} busy={busy} run={run} rel={(st.proxy?.decisions ?? []).filter((x: any) => x.deviceId === d.id)} />)}
+        {st.devices.filter((d: any) => !d.revoked).map((d: any) => <DeviceRow key={d.id} d={d} busy={busy} run={run} two={st.devices.filter((x: any) => !x.revoked).length === 2} rel={(st.proxy?.decisions ?? []).filter((x: any) => x.deviceId === d.id)} />)}
         {!others.length && <p className="hint">No other device yet.</p>}
+        {st.devices.filter((d: any) => d.revoked && d.removalPending).map((d: any) => <p className="hint" key={d.id} data-removal-pending={d.name} id="sync-removal-pending">Removal pending for {d.name} (offline): it is told and unlinks itself when it next connects to one of your devices.</p>)}
         {syncing && <SyncProgress d={syncing} st={st} />}
       </div>}
       {st.pendingCredentials?.map((c: any) => (
@@ -79,7 +97,7 @@ export function SyncPanel() {
             <button className="secondary" onClick={() => run(() => core.call("syncConfirmCredentials", { accountId: c.accountId, accept: false }))}>Ignore</button></div></div>))}
 
       <div className="box" id="sync-add">
-        {!adding ? <><button className="primary inline big" id="sync-start" disabled={busy || st.revoked} onClick={startAdd}>Add a device</button>
+        {!adding ? <><button className="primary inline big" id="sync-start" disabled={busy || st.revoked || !!st.unlinking} onClick={startAdd}>Add a device</button>
           <p className="hint">Shows a code on this screen for your other device to scan or find.</p></>
           : <Pairing p={pair ?? st.pairing} copied={copied} onCopy={(l) => { navigator.clipboard?.writeText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={() => run(() => core.call("syncStopPairing"))} />}
       </div>
@@ -126,14 +144,37 @@ export function Confirm({ st, busy, run }: { st: any; busy: boolean; run: Run })
     </div></div>);
 }
 
-function SyncProgress({ d, st }: { d: any; st: any }) {
-  const p = d.progress ?? {}, snap = p.phase === "snapshot" && p.snapTotal > 0, pct = snap ? Math.min(100, (100 * p.snapDone) / p.snapTotal) : undefined;
-  const files = st.media?.wanted ?? 0;
-  return <div id="sync-progress"><p className="sub">Syncing with {d.name}{pct !== undefined ? ` · ${Math.round(pct)}%` : ""}{!snap && p.pending ? ` · ${p.pending} messages left` : ""}{files ? ` · ${files} files waiting` : ""}</p>
-    <div className="bar big"><i style={{ width: `${pct ?? 100}%`, opacity: pct === undefined ? 0.4 : 1 }} /></div></div>;
+/** Is a paired device still sending us its accounts (`accounts`) or its chats and messages (`history`)? Fed by sync-progress events, so Settings, the account list and the empty state can say "receiving" instead of "No accounts yet". */
+export function useSyncReceiving() {
+  const [r, set] = useState({ accounts: false, history: false });
+  useEffect(() => {
+    const by = new Map<string, any>(), calc = () => { let accounts = false, history = false; for (const p of by.values()) { if (p.state !== "syncing" || p.phase === "snapshot") continue; if (p.accts && p.accts.done < p.accts.total) accounts = true; if (p.chats && p.chats.done < p.chats.total) history = true; } set((o) => (o.accounts === accounts && o.history === history ? o : { accounts, history })); };
+    const feed = (devs: any[]) => { for (const d of devs ?? []) if (!d.self) by.set(d.id, d.progress ?? {}); calc(); };
+    core.call("syncStatus").then((st: any) => feed(st?.devices), () => {});
+    return core.on((ev: string, d: any) => { if (ev === "sync-progress" && d?.peer) { by.set(d.peer, d); calc(); } else if (ev === "sync-devices" && d?.devices) feed(d.devices); });
+  }, []);
+  return r;
 }
 
-function DeviceRow({ d, busy, run, rel = [] }: { d: any; busy: boolean; run: Run; rel?: any[] }) {
+function SyncProgress({ d, st }: { d: any; st: any }) {
+  const p = d.progress ?? {}, snap = p.phase === "snapshot" && p.snapTotal > 0, pct = snap ? Math.min(100, (100 * p.snapDone) / p.snapTotal) : undefined;
+  const files = st.media?.wanted ?? 0, fMB = Math.round((st.media?.fetchedBytes ?? 0) / 1048576);
+  const recv = !snap && p.accts && p.chats && (p.accts.done < p.accts.total || p.chats.done < p.chats.total), send = !snap && p.out && (p.out.accts.done < p.out.accts.total || p.out.chats.done < p.out.chats.total);
+  const phases = (id: string, ph: { accts: any; chats: any }, withFiles: boolean) => {
+    const aDone = ph.accts.done >= ph.accts.total, cDone = ph.chats.done >= ph.chats.total;
+    const row = (k: string, label: string, done: boolean, n: any) => <li data-phase={k} data-done={done ? "1" : undefined}>{done ? "✓ " : ""}{label}{!done ? ` · ${n.done} of ${n.total}` : ""}</li>;
+    return <ul className="phases" data-phases={id}>{row("accounts", "Accounts and settings", aDone, ph.accts)}{row("chats", "Chats and messages", cDone, ph.chats)}
+      {withFiles && <li data-phase="files" data-done={cDone && !files ? "1" : undefined}>{cDone && !files ? "✓ " : ""}Files{files ? ` · ${files} waiting${fMB ? `, ${fMB} MB received` : ""}` : cDone ? "" : " · after the messages"}</li>}</ul>;
+  };
+  const left = send ? p.out.chats.total - p.out.chats.done : 0;
+  return <div id="sync-progress">
+    <p className="sub">{recv || !send ? "Syncing with" : "Sending to"} {d.name}{pct !== undefined ? ` · ${Math.round(pct)}%` : ""}{!snap && !recv && !send && p.pending ? ` · ${p.pending} messages left` : ""}{!recv && !send && files ? ` · ${files} files waiting` : ""}</p>
+    {recv && phases("in", p, true)}
+    {send && <><p className="sub" data-sending>Sending to {d.name} · {left} messages left</p>{phases("out", p.out, false)}</>}
+    <div className="bar big"><i style={{ width: `${pct ?? (recv ? Math.min(100, (100 * (p.accts.done + p.chats.done)) / Math.max(1, p.accts.total + p.chats.total)) : 100)}%`, opacity: pct === undefined && !recv ? 0.4 : 1 }} /></div></div>;
+}
+
+function DeviceRow({ d, busy, run, rel = [], two = false }: { d: any; busy: boolean; run: Run; rel?: any[]; two?: boolean }) {
   const [renaming, setRenaming] = useState(false), [nm, setNm] = useState(d.name), p = d.progress;
   const syncingNow = d.online && (p?.phase === "snapshot" || p?.state === "syncing");
   const info = d.self ? "This device" : syncingNow ? "Syncing…" : d.online ? `Connected · last synced ${ago(p?.lastSync ?? d.lastSeen)}` : `Offline · last synced ${ago(p?.lastSync ?? d.lastSeen)}`;
@@ -152,7 +193,7 @@ function DeviceRow({ d, busy, run, rel = [] }: { d: any; busy: boolean; run: Run
         {rel.map((x: any) => <small className="sub relayrow" key={x.accountId} data-relay-dev={d.name} data-relay-acct={x.accountId}>{x.allowed ? `Can send as ${x.label}` : `Can't send as ${x.label}`}{" "}
           <button className="linkbtn" disabled={busy} onClick={() => run(() => core.call("syncRelaySet", { deviceId: d.id, accountId: x.accountId, allow: !x.allowed }))}>{x.allowed ? "Stop allowing" : "Allow"}</button></small>)}</div>
       {d.self ? !renaming && <button className="linkbtn" onClick={() => setRenaming(true)}>Rename</button>
-        : <button className="secondary" disabled={busy} onClick={() => confirm(`Remove "${d.name}"? It will stop receiving your messages.`) && run(() => core.call("syncRevoke", { deviceId: d.id }))}>Remove</button>}
+        : <button className="secondary" disabled={busy} onClick={() => confirm(`Remove "${d.name}"? This tells all other devices; with only two devices both unlink.${two ? ` Right now only two devices are linked, so this device unlinks too (and if ${d.name} is offline it unlinks as soon as it is online).` : ` ${d.name} unlinks itself and keeps only what it already has.`}`) && run(() => core.call("syncRevoke", { deviceId: d.id }))}>Remove</button>}
     </div>);
 }
 
@@ -206,7 +247,7 @@ function Advanced({ st, busy, run, host, port, setHost, setPort }: { st: any; bu
       <div className="box"><h3 style={{ marginTop: 0 }}>This device</h3>
         <div className="btns"><button className="secondary" disabled={busy} onClick={() => run(() => core.call("syncNow"))}>Sync now</button>
           <button className="secondary" disabled={busy} onClick={() => run(() => core.call(st.paused ? "syncResume" : "syncPause"))}>{st.paused ? "Resume syncing" : "Pause syncing"}</button>
-          <button className="secondary" disabled={busy} onClick={() => confirm("Stop syncing on this device? It keeps its data but is no longer connected to your other devices.") && run(() => core.call("syncLeave"))}>Stop syncing here</button></div>
+          <button className="secondary" disabled={busy} onClick={() => confirm(others.length === 1 ? `Stop syncing on this device? This tells ${others[0].name}; with only two devices both unlink. Both keep their data.` : "Stop syncing on this device? It tells your other devices, keeps its data and is no longer connected to them.") && run(() => core.call("syncLeave"))}>Stop syncing here</button></div>
         <p className="hint">Rename a device in the list above.</p></div>
       <Accounts st={st} busy={busy} run={run} others={others} />
       <Network st={st} busy={busy} run={run} />
@@ -227,11 +268,12 @@ function HistoryPush({ a, others, busy, run }: { a: any; others: any[]; busy: bo
     <button className="secondary" disabled={busy || !dev} onClick={() => run(() => core.call("syncSendHistory", { accountId: a.id, deviceId: dev }))}>Send the full history of {a.label} now</button></div>;
 }
 function Accounts({ st, busy, run, others }: { st: any; busy: boolean; run: Run; others: any[] }) {
+  const recv = useSyncReceiving();
   return (
     <div className="box" id="sync-accounts"><h3 style={{ marginTop: 0 }}>What to share per account</h3><p className="hint">Logins stay on the device where you signed in, unless you choose "History and login".</p>
       {st.accounts.map((a: any) => (
         <div key={a.id} style={{ borderTop: "1px solid var(--border)", padding: "8px 0" }}>
-          <label className="opt" style={{ alignItems: "center" }}><span style={{ flex: 1 }}><b>{a.label}</b><small className="sub">{a.provider}{a.mode === "credentials" ? " · the login is sent encrypted to your other devices" : ""}</small></span>
+          <label className="opt" style={{ alignItems: "center" }}><span style={{ flex: 1 }}><b>{a.label}</b>{recv.history && a.mode !== "none" && <em className="badge" data-receiving={a.id}> receiving history…</em>}<small className="sub">{a.provider}{a.mode === "credentials" ? " · the login is sent encrypted to your other devices" : ""}</small></span>
             <select value={a.mode} disabled={busy} data-acc={a.id} onChange={(e) => {
               const m = e.target.value as Mode;
               if (m === "credentials" && !confirm(`Share the login of "${a.label}" with your other devices?\n\nThey will ask you before using it. Anyone who gets hold of one of your devices could then use this account.`)) return;
@@ -248,7 +290,7 @@ function Accounts({ st, busy, run, others }: { st: any; busy: boolean; run: Run;
           }} /><span>Let my other devices send as this account<small className="sub">{a.proxyShared ? "On: all your devices may send through this one while it is on." : "Off: a device asks first, and you answer once. The login always stays here."}</small></span></label>}
           {a.via && <p className="hint" data-account-via={a.id}>{viaNote(a.via)}</p>}
           {st.devices.filter((d: any) => d.audit?.[a.id]?.recent?.length).map((d: any) => <details key={d.id} className="relaylog" data-relay-log={d.name}><summary>Sent from {d.name}: {d.audit[a.id].byOp.send ?? 0} messages, {d.audit[a.id].calls} requests</summary>
-            <ul>{d.audit[a.id].recent.slice().reverse().map((r: any, i: number) => <li key={i}><code>{r.op}</code> <small className="sub">{new Date(r.at).toLocaleString()}{r.err ? " · failed" : ""}</small></li>)}</ul></details>)}
+            <ul>{d.audit[a.id].recent.slice().reverse().map((r: any, i: number) => <li key={i}><code>{r.op}</code> <small className="sub">{fmtDateTime(r.at)}{r.err ? " · failed" : ""}</small></li>)}</ul></details>)}
           {a.proxyVia && <p className="hint" data-proxy-via={a.id}>Sending through <b>{a.proxyVia.deviceName ?? "another device"}</b>{a.proxyVia.auto ? " (automatic)" : ""}: {a.proxyVia.online ? "connected" : "that device is offline, showing your archive"}. <button className="linkbtn" onClick={() => run(() => core.call("syncStopProxy", { accountId: a.id }))}>Stop using it through that device</button></p>}
         </div>))}
       {!st.accounts.length && <p className="hint">No accounts yet.</p>}

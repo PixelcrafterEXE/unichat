@@ -53,6 +53,8 @@ export interface SyncOptions {
   maxPairingFailures?: number; maxPairingGlobal?: number;
   /** every refused inbound handshake takes at least this long (default 300 ms; see channel.ts accept) so refusals cannot be told apart by timing; tests set 0 */
   failFloorMs?: number;
+  /** unlinking a group of two: how long to wait for the other device to answer before the instruction is left pending (default 5 s) */
+  unlinkWaitMs?: number;
   /** dial attempts for known devices every this many ms (default 10 s) */
   retryMs?: number;
   now?: () => number;
@@ -78,7 +80,7 @@ export interface SyncOptions {
   move?: MoveOptions;
   net?: { interfaces?: () => Iface[]; connect?: Connector; probeConnectMs?: number; connectMs?: number; overallMs?: number; graceMs?: number; concurrency?: number };
 }
-export const METHODS = new Set(["syncNetworkChanged", "syncStatus", "syncStartPairing", "syncStopPairing", "syncJoin", "syncJoinNearby", "syncBrowse", "syncConfirmJoin", "syncCancelJoin", "syncApproveJoin", "syncDevices", "syncRevoke", "syncSetAccountMode", "syncPause", "syncResume", "syncNow",
+export const METHODS = new Set(["syncNetworkChanged", "syncStatus", "syncStartPairing", "syncStopPairing", "syncJoin", "syncJoinNearby", "syncBrowse", "syncConfirmJoin", "syncCancelJoin", "syncApproveJoin", "syncDevices", "syncRevoke", "syncDismissRemoved", "syncSetAccountMode", "syncPause", "syncResume", "syncNow",
   "syncLeave", "syncCredentials", "syncConfirmCredentials", "syncRenameDevice", "syncSetListen", "syncSetAddresses", "syncSetAdvertise", "syncSetRelays", "syncSetDht", "syncSetMediaPolicy", "syncSetMetered", "syncSetProxyShare", "syncUseProxy", "syncStopProxy", "syncRelaySet", "syncRelayAsk", "syncMoveStart", "syncMoveRespond", "syncMoveCancel", "syncMoveEstimate", "syncSendHistory"]);
 const errmsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** Size limits (mutable for tests): a shared login may be at most `credBytes` in total and `credFiles` files; bigger ones travel in pieces (bulk.ts), never inline. */
@@ -88,15 +90,16 @@ const RPC_INLINE = 300_000;
 
 interface Rpc { ok(v: any): void; fail(e: Error): void; timer: ReturnType<typeof setTimeout> }
 interface Session {
-  peer: string; ch: Secure; initiator: string; startedAt: number; inflight: number[]; sentUpTo: number; peerHave?: { of: string; cursor: number; empty?: boolean }; peerLedger?: string;
+  peer: string; ch: Secure; initiator: string; startedAt: number; inflight: number[]; sentUpTo: number; sentG: number; inflightG: number[]; sg: number; sm: number; tot?: { g: number; m: number }; headDone: boolean; peerHave?: { of: string; cursor: number; g?: number; empty?: boolean }; peerLedger?: string;
   wake: () => void; closed: boolean; sent: number; received: number; applying: Promise<unknown>; via?: string;
+  /** set while we wait for the peer's "unlinked" answer to our "unlink" */ ackWait?: () => void;
   rid: number; pending: Map<number, Rpc>; big: BigAssembler; serving: number;
   snapTried: boolean; snapWait?: { kinds: string[]; ok(v: any): void; timer: ReturnType<typeof setTimeout> }; snapGoMsg?: any; snapAckMsg?: any; snapRx?: { id: string; got: number; size: number; sha: string; cursor: number; ledger: string; tag: string; file: string; fd?: number; lastSaved: number }; skipEcho: boolean;
 }
 interface Pairing { psk: Buffer; code: string; expiresAt: number; failures: number; nearbyPrompts: number; keepListening: boolean; timer: ReturnType<typeof setTimeout> }
 interface PendingJoin { nearby?: boolean; direction: "outgoing" | "incoming"; ch: Secure; sas: string; name: string; id: string; ip: string; since: number; hostOk?: boolean; joinerOk?: boolean; timer: ReturnType<typeof setTimeout>; settle: () => void }
 interface Joining { nearby?: boolean; state: "confirm" | "waiting"; sas: string; hostName: string; ch: Secure; host: string; port: number; pin?: Buffer; direction: "outgoing" | "incoming"; timer: ReturnType<typeof setTimeout> }
-type Progress = { state: "offline" | "connecting" | "syncing" | "idle" | "error"; sent: number; received: number; pending: number; lastSync?: string; error?: string; phase?: "snapshot"; snapDone?: number; snapTotal?: number; snapDir?: "in" | "out" };
+type Progress = { state: "offline" | "connecting" | "syncing" | "idle" | "error"; sent: number; received: number; pending: number; lastSync?: string; error?: string; accts?: { done: number; total: number }; chats?: { done: number; total: number }; out?: { accts: { done: number; total: number }; chats: { done: number; total: number } }; phase?: "snapshot"; snapDone?: number; snapTotal?: number; snapDir?: "in" | "out" };
 interface SrcState { n: number; until: number; strikes: number; last: number; conns: number[]; open: number }
 
 export class SyncService {
@@ -114,6 +117,10 @@ export class SyncService {
   private policy: MediaPolicy = { ...DEFAULT_POLICY }; private metered = false; private blobs?: Blobs; /** profile pictures (avatars.ts) */ avatars?: Avatars; private mediaActive: any = null; private pumping = false;
   private proxies!: Proxies; private moves!: MoveService; private sealKey!: Buffer;
   private progT = 0; private disposed = false;
+  /** we are leaving a group of two: the other device is told to unlink first; until it is (offline), this stays and is delivered on its next session */
+  private unlinkPending?: { peer: string; name: string; since: string; reason: "leave" | "remove" };
+  /** shown once on a device that was removed from / unlinked out of its group */
+  private removedNotice?: { by: string; at: string; reason: "removed" | "unlinked" | "alone" }; private leaving = false;
   readonly ready: Promise<void>; private isReady = false;
   constructor(private host: SyncHost, private store: SyncStore, ledger: Ledger, private o: SyncOptions = {}) {
     this.ledger = ledger; this.ready = this.init(); this.ready.then(() => { this.isReady = true; }, () => { this.isReady = true; });
@@ -157,7 +164,10 @@ export class SyncService {
       describe: (a) => { const x = this.store.listAccounts().find((y) => y.id === a); return x && { provider: x.provider, label: x.label }; },
       changed: () => this.changedDevices(), opts: this.o.move ?? {},
     });
+    this.removedNotice = L.kvGet("removedNotice") ?? undefined; this.unlinkPending = L.kvGet("unlinkPending") ?? undefined;
+    if (this.unlinkPending && !this.group?.devices[this.unlinkPending.peer]) { this.unlinkPending = undefined; L.kvDel("unlinkPending"); }
     this.selfRevoked = !!this.group?.devices[this.me.id]?.revoked;
+    if (this.selfRevoked) { const me = this.group!.devices[this.me.id]; await this.leaveLocal({ by: this.group!.devices[me.revokedBy ?? ""]?.name ?? "another device", at: me.revoked!, reason: "removed" }); } // told while we were not running: unlink now
     if (this.group && !this.selfRevoked) await this.activate();
   }
   private persist() { if (this.group) this.ledger.kvSet("group", this.group); this.ledger.kvSet("clock", this.clock.state()); }
@@ -279,7 +289,8 @@ export class SyncService {
       case "syncResume": this.paused = false; this.ledger.kvSet("paused", false); await this.activate(); this.changedDevices(); return {};
       case "syncNetworkChanged": return this.networkChanged(p?.interfaces);
       case "syncNow": { for (const id of Object.keys(this.group?.devices ?? {})) this.backoff.delete(id); this.tick(); for (const s of this.sessions.values()) s.wake(); return {}; }
-      case "syncLeave": return this.leave();
+      case "syncLeave": return this.leave(!!p?.force);
+      case "syncDismissRemoved": this.removedNotice = undefined; this.ledger.kvDel("removedNotice"); this.changedDevices(); return {};
       case "syncRenameDevice": { const n = String(p.name ?? "").trim().slice(0, 60); if (!n) throw new Error("Give this device a name."); this.me.name = n; this.ledger.kvSet("identity", this.me); if (this.group) { this.group.devices[this.me.id].name = n; this.persist(); } this.changedDevices(); return {}; }
       case "syncCredentials": return this.pendingCreds();
       case "syncConfirmCredentials": return this.confirmCreds(String(p.accountId), p.accept !== false);
@@ -313,13 +324,13 @@ export class SyncService {
     });
     const devices = Object.values(g?.devices ?? {}).map((d) => {
       const s = this.sessions.get(d.id), pr = this.progress.get(d.id);
-      return { id: d.id, name: d.name, self: d.id === this.me.id, online: d.id === this.me.id || !!s, revoked: d.revoked, lastSeen: d.id === this.me.id ? undefined : d.lastSeen, addedAt: d.addedAt, progress: pr, via: s?.via, viaKind: s ? (s.via === "dht" ? "dht" : s.via?.startsWith("relay") ? "relay" : "direct") : undefined, lastAddr: orderAddrs(d).find((a) => a.kind === "tcp" && a.good)?.host,
+      return { id: d.id, name: d.name, self: d.id === this.me.id, online: d.id === this.me.id || !!s, revoked: d.revoked, revokedBy: d.revokedBy ? g?.devices[d.revokedBy]?.name : undefined, removalPending: !!d.revoked && !d.removedAck && now - (Date.parse(d.revoked) || 0) < 30 * 86_400_000, lastSeen: d.id === this.me.id ? undefined : d.lastSeen, addedAt: d.addedAt, progress: pr, via: s?.via, viaKind: s ? (s.via === "dht" ? "dht" : s.via?.startsWith("relay") ? "relay" : "direct") : undefined, lastAddr: orderAddrs(d).find((a) => a.kind === "tcp" && a.good)?.host,
         addrs: d.id === this.me.id ? undefined : (d.addrs ?? []).map((a) => ({ kind: a.kind, host: a.host, port: a.port, url: a.url, src: a.src, good: a.good, bad: a.bad })), audit: this.proxies.audit[d.id] };
     });
     const self = "unichat-" + this.me.id.slice(0, 10) + "." + SERVICE;
     const discovered = this.mdns ? this.mdns.services().filter((s) => s.txt.m === "pair" && s.instance !== self).map((s) => ({ instance: s.instance, name: s.txt.n ?? s.instance, host: s.addrs[0] ?? s.host, port: s.port, nearby: s.txt.nb === "1" })) : [];
     const binds = this.boundHosts().map((h) => (h.includes(":") ? `[${h}]` : h) + ":" + this.port);
-    return { enabled: !!g, paused: this.paused, revoked: this.selfRevoked, deviceId: this.me.id, deviceName: this.me.name, groupId: g?.id, listening: this.servers.size > 0, port: this.port || undefined, binds,
+    return { enabled: !!g, paused: this.paused, revoked: this.selfRevoked, removedNotice: this.removedNotice, unlinking: this.unlinkPending && { peer: this.unlinkPending.peer, name: this.unlinkPending.name, since: this.unlinkPending.since, reason: this.unlinkPending.reason, online: this.sessions.has(this.unlinkPending.peer) }, deviceId: this.me.id, deviceName: this.me.name, groupId: g?.id, listening: this.servers.size > 0, port: this.port || undefined, binds,
       listen: { ...this.listen, error: this.listenErr || undefined, pairingOnly: this.servers.size > 0 && !this.listen.enabled, interfaces: interfaces().filter((i) => !i.internal && i.family === 4).map((i) => ({ name: i.name, address: i.address })) },
       discovery: this.o.mdns === false || this.o.mdns === undefined ? { available: false, reason: "Discovery is off." } : { available: this.mdns?.available ?? false, reason: this.mdns?.reason ?? (this.mdns ? undefined : "Not started (no listener open, or multicast is unavailable on this device).") },
       relays: this.relays, dht: { ...this.dhtSet, state: this.dhtSet.enabled ? this.dhtInfo.state : "off", reason: this.dhtSet.enabled ? this.dhtInfo.reason : undefined, publicKey: this.dht?.publicKey }, advertise: this.advertiseExtra, dialOnly: !!g && !this.servers.size,
@@ -473,6 +484,7 @@ export class SyncService {
   }
   private async startPairing(p: { deviceName?: string; keepListening?: boolean }) {
     if (this.selfRevoked) throw new Error("This device was removed from its group. Leave the group first.");
+    if (this.unlinkPending) throw new Error(`This device is unlinking from its group (waiting for ${this.unlinkPending.name}). Finish that first.`);
     if (p?.deviceName?.trim()) { this.me.name = p.deviceName.trim().slice(0, 60); this.ledger.kvSet("identity", this.me); }
     if (!this.group) { this.group = newGroup(this.me); this.persist(); }
     else if (this.group.devices[this.me.id].name !== this.me.name) { this.group.devices[this.me.id].name = this.me.name; this.persist(); }
@@ -615,9 +627,37 @@ export class SyncService {
     pj.hostOk = accept; pj.settle(); return {};
   }
   private finishJoin(_ok: boolean, _why: string) { const pj = this.pendingJoin; if (!pj) return; clearTimeout(pj.timer); this.pendingJoin = undefined; pj.hostOk ??= false; pj.settle(); }
-  private async leave() {
+  /**
+   * The user unlinks this device. Group of two: the other device is told first (see startUnlink), a group of one is meaningless. Group of three or more: this device
+   * writes its own removal tombstone and tells every connected member before it forgets the group (the others pass it on to members that were offline).
+   * `force` (the user gave up waiting) unlinks right away.
+   */
+  private async leave(force = false) {
+    const g = this.group;
+    if (g && !force && !this.selfRevoked) {
+      const live = Object.values(g.devices).filter((d) => d.id !== this.me.id && !d.revoked);
+      if (live.length === 1) return this.startUnlink(live[0].id, "leave");
+      if (live.length > 1) {
+        revoke(g, this.me.id, this.me.id); g.devices[this.me.id].removedAck = g.devices[this.me.id].revoked; this.persist();
+        const fr = { t: "keys", devices: g.devices, keys: g.keys };
+        await Promise.race([Promise.all([...this.sessions.values()].map((s) => s.ch.send(fr).catch(() => {}))), new Promise((r) => setTimeout(r, 1500))]);
+        await new Promise((r) => setTimeout(r, 100)); // let the frames leave the socket before it is closed
+      }
+    }
+    return this.leaveLocal();
+  }
+  /** Forget the group on this device (archive and account logins stay). With `notice` the UI shows why. */
+  private async leaveLocal(notice?: { by: string; at: string; reason: "removed" | "unlinked" | "alone" }) {
+    if (this.leaving) return {};
+    this.leaving = true;
+    try { return await this.leaveNow(notice); } finally { this.leaving = false; }
+  }
+  private async leaveNow(notice?: { by: string; at: string; reason: "removed" | "unlinked" | "alone" }) {
+    if (notice && !this.group) return {};
+    if (notice && !this.unlinkPending) { this.removedNotice = notice; this.ledger.kvSet("removedNotice", notice); }
+    this.unlinkPending = undefined; this.ledger.kvDel("unlinkPending");
     this.teardown(true);
-    for (const a of Object.keys(this.group?.devices ? this.proxies.usingList().map((u) => u.accountId) : [])) void a;
+    await this.proxies.releaseAll().catch(() => {});
     for (const u of this.proxies.usingList()) await this.proxies.stopUsing(u.accountId).catch(() => {});
     this.group = undefined; this.selfRevoked = false; this.store.ctx = undefined;
     this.ledger.kvDel("group"); this.ledger.kvDel("bootstrapped"); this.ledger.kvDel("cursors");
@@ -656,7 +696,7 @@ export class SyncService {
       checkRemote: (pub, hello, m) => {
         if (hello?.id !== deviceIdOf(pub)) throw new ChannelError("auth", "device id does not match its key");
         if ((m === "pair" || m === "nearby") && this.liveCount() > 1 && Number(hello?.grp) > 1) throw new ChannelError("protocol", "both devices already have a group", true);
-        if (m === "sync") { const d = this.group?.devices[hello.id]; if (!d || d.revoked || !sameKey(Buffer.from(d.pub, "base64"), pub)) throw new ChannelError("auth", "not a member", true); } // only paired, non-revoked devices get past the handshake
+        if (m === "sync") { const d = this.group?.devices[hello.id]; if (!d || !sameKey(Buffer.from(d.pub, "base64"), pub)) throw new ChannelError("auth", "not a member", true); } // only paired, non-revoked devices get past the handshake
       },
     }).then(async (ch) => {
       leave(); sock.setTimeout?.(0);
@@ -669,6 +709,7 @@ export class SyncService {
         return this.pairHost(ch, ip, pr, false, true);
       }
       if (ch.mode === "pair") return Number(ch.hello?.grp) > 1 && this.liveCount() <= 1 ? this.joinInbound(ch, ip) : this.pairHost(ch, ip, this.pairing);
+      if (this.group?.devices[deviceIdOf(ch.remoteStatic)]?.revoked) return this.refuseRemoved(ch, deviceIdOf(ch.remoteStatic)); // a removed device gets told, never synced
       return this.runSession(ch, deviceIdOf(ch.remoteStatic), false, viaRelay ? undefined : sock.remoteAddress, viaDht ? "dht" : viaRelay ? "relay" : undefined);
     }, (e) => {
       leave(); sock.destroy();
@@ -792,21 +833,23 @@ export class SyncService {
     const vr = (v?: string) => (v === "dht" ? 1 : 0); // a LAN / saved-address / relay session beats a DHT one on both ends; between equals the smaller initiator id wins
     if (prev) { if (vr(prev.via) < vr(via) || (vr(prev.via) === vr(via) && prev.initiator <= initiator)) return ch.close(); this.closeSession(prev, "superseded"); }
     let wakeFn = () => {};
-    const s: Session = { peer, ch, initiator, startedAt: this.now(), inflight: [], sentUpTo: 0, wake: () => wakeFn(), closed: false, sent: 0, received: 0, applying: Promise.resolve(), via, rid: 0, pending: new Map(), big: new BigAssembler(BIG_MAX_DEFAULT), serving: 0, snapTried: false, skipEcho: false };
+    const s: Session = { peer, ch, initiator, startedAt: this.now(), inflight: [], sentUpTo: 0, sentG: 0, inflightG: [], sg: 0, sm: 0, headDone: false, wake: () => wakeFn(), closed: false, sent: 0, received: 0, applying: Promise.resolve(), via, rid: 0, pending: new Map(), big: new BigAssembler(BIG_MAX_DEFAULT), serving: 0, snapTried: false, skipEcho: false };
     this.sessions.set(peer, s);
     const d = g.devices[peer]; d.lastSeen = new Date().toISOString();
     if (remoteHost && !outbound && Number(ch.hello?.port) > 0) noteAddr(d, { kind: "tcp", host: remoteHost.replace(/^::ffff:/, ""), port: Number(ch.hello.port), src: "learned" }, "learned");
     this.setProgress(peer, { state: "syncing" }); this.changedDevices();
     let signal: (() => void) | undefined; const waitSignal = (ms: number) => new Promise<void>((ok) => { const t = setTimeout(ok, ms); signal = () => { clearTimeout(t); ok(); }; });
     wakeFn = () => signal?.();
-    const cursors = () => this.ledger.kvGet<Record<string, { ledger: string; applied: number }>>("cursors") ?? {};
+    const cursors = () => this.ledger.kvGet<Record<string, { ledger: string; applied: number; g?: number }>>("cursors") ?? {};
     try {
       await ch.send({ t: "members", devices: g.devices, keys: g.keys, ledger: this.ledger.id, port: this.listeningPort(), addrs: this.selfAddrs() });
       const m = await ch.recv(15_000);
+      if (m?.t === "bye" && m.why === "revoked") return this.removedByPeer(s, m.by); // the peer says we were removed
       if (m?.t !== "members") throw new Error("expected members");
       s.peerLedger = String(m.ledger);
       const r = mergeMembership(g, m.devices, m.keys, this.me.id);
-      if (g.devices[this.me.id].revoked) return this.gotRevoked();
+      if (g.devices[this.me.id].revoked) return this.removedByPeer(s);
+      if (r.revoked.length) this.applyRemoved(r.revoked);
       if (g.devices[peer].revoked) throw new Error("peer revoked");
       { const own = validDhtKey(m.devices?.[peer]?.dht); if (own && g.devices[peer].dht !== own) g.devices[peer].dht = own; } // the device's own report of its DHT key wins
       this.learnAnnounced(g.devices[peer], m.addrs, s); // what the peer says about itself, on every session
@@ -814,26 +857,39 @@ export class SyncService {
       if (r.added.length || r.revoked.length || r.keysAdded) { this.changedDevices(); if (r.keysAdded) this.advertise(); }
       this.resolveRekey(s);
       this.proxies.presenceChanged(peer, true); this.moves.onUp(peer);
-      const cur = cursors()[peer], applied = cur && cur.ledger === s.peerLedger ? cur.applied : 0;
-      await ch.send({ t: "have", of: s.peerLedger, cursor: applied, empty: this.ledger.count() === 0 });
+      const cur = cursors()[peer], applied = cur && cur.ledger === s.peerLedger ? cur.applied : 0, gApplied = cur && cur.ledger === s.peerLedger ? Math.max(cur.g ?? 0, applied) : 0;
+      await ch.send({ t: "have", of: s.peerLedger, cursor: applied, g: gApplied, empty: this.ledger.count() === 0 }); // `g`: cursor of the global-state class (see the priority classes in the sender loop)
       const recvLoop = (async () => {
         for (;;) {
           const x = await ch.recv(75_000);
           switch (x?.t) {
-            case "have": s.peerHave = { of: String(x.of), cursor: Number(x.cursor) || 0, empty: !!x.empty }; if (s.peerHave.of !== this.ledger.id) s.peerHave.cursor = 0; while (s.inflight.length && s.inflight[0] <= s.peerHave.cursor) s.inflight.shift(); signal?.(); break;
+            case "have": s.peerHave = { of: String(x.of), cursor: Number(x.cursor) || 0, g: x.g === undefined ? undefined : Number(x.g) || 0, empty: !!x.empty }; if (s.peerHave.of !== this.ledger.id) { s.peerHave.cursor = 0; if (s.peerHave.g !== undefined) s.peerHave.g = 0; } while (s.inflight.length && s.inflight[0] <= s.peerHave.cursor) s.inflight.shift(); while (s.inflightG.length && s.inflightG[0] <= (s.peerHave.g ?? 0)) s.inflightG.shift(); signal?.(); break;
             case "batch": {
               if (!Array.isArray(x.entries) || x.entries.length > 2000 || !Number.isFinite(x.upTo)) throw new Error("bad batch");
               const res = await this.store.applyRemote(x.entries as WireEntry[], peer);
               s.received += res.applied;
-              const cs = cursors(); cs[peer] = { ledger: s.peerLedger!, applied: Number(x.upTo) }; this.ledger.kvSet("cursors", cs);
-              await ch.send({ t: "have", of: s.peerLedger, cursor: Number(x.upTo) });
-              this.afterApply(res); this.setProgress(peer, { received: s.received, state: x.more ? "syncing" : undefined });
+              // cls "g": global state (accounts, settings, folders, ...) advances only the g cursor; "m": messages only the message cursor; "h": the newest messages ahead of the backlog (no cursor, idempotent); none: both (legacy peers, snapshot tail)
+              const cs = cursors(), pc = cs[peer]?.ledger === s.peerLedger ? cs[peer] : undefined, up = Number(x.upTo), cl = x.cls;
+              let ap = pc?.applied ?? 0, gg = Math.max(pc?.g ?? 0, ap);
+              if (cl === "g") gg = Math.max(gg, up); else if (cl === "m") ap = Math.max(ap, up); else if (cl !== "h") { ap = up; gg = Math.max(gg, up); }
+              if (cl !== "h") { cs[peer] = { ledger: s.peerLedger!, applied: ap, g: gg }; this.ledger.kvSet("cursors", cs); await ch.send({ t: "have", of: s.peerLedger, cursor: ap, g: gg }); }
+              this.afterApply(res);
+              const tot = x.tot && Number.isFinite(x.tot.g) && Number.isFinite(x.tot.m) ? x.tot : undefined;
+              this.setProgress(peer, { received: s.received, state: x.more ? "syncing" : undefined, ...(tot ? { accts: { done: x.more ? Math.min(Number(x.sg) || 0, tot.g) : tot.g, total: tot.g }, chats: { done: x.more ? Math.min(Number(x.sm) || 0, tot.m) : tot.m, total: tot.m } } : {}) });
               if (!x.more) this.setProgress(peer, { lastSync: new Date().toISOString() });
               break;
             }
-            case "keys": { const rr = mergeMembership(g, x.devices, x.keys, this.me.id); if (g.devices[this.me.id].revoked) return this.gotRevoked(); this.persist(); if (rr.keysAdded || rr.revoked.length || rr.added.length) { this.advertise(); this.changedDevices(); } this.resolveRekey(s); if (g.devices[peer].revoked) throw new Error("peer revoked"); break; }
+            case "keys": { const rr = mergeMembership(g, x.devices, x.keys, this.me.id); if (g.devices[this.me.id].revoked) return this.removedByPeer(s); if (rr.revoked.length) this.applyRemoved(rr.revoked); this.persist(); if (rr.keysAdded || rr.revoked.length || rr.added.length) { this.advertise(); this.changedDevices(); } this.resolveRekey(s); if (g.devices[peer].revoked) throw new Error("peer revoked"); break; }
             case "ping": break;
-            case "bye": if (x.why === "revoked") void this.proxies.removedBy(s.peer); return; // that device removed this one: nothing is relayed through it any more
+            case "bye": if (x.why === "revoked") return this.removedByPeer(s, x.by); return; // that device removed this one: unlink
+            case "unlink": { // the other device of a group of two unlinks: so do we (a group of one is meaningless)
+              await ch.send({ t: "unlinked" }).catch(() => {});
+              void this.leaveLocal({ by: g.devices[peer]?.name ?? "another device", at: new Date().toISOString(), reason: x.removed ? "removed" : "unlinked" }); return;
+            }
+            case "unlinked": { // answer to our "unlink" (group of two), or the confirmation of a removed device
+              if (s.ackWait) { const f = s.ackWait; s.ackWait = undefined; f(); } else this.noteRemovedAck(peer);
+              break;
+            }
             default: if (!(await this.handleExtra(s, x, cursors))) throw new Error("unknown message");
           }
         }
@@ -842,9 +898,19 @@ export class SyncService {
         let lastPing = this.now();
         while (!s.closed) {
           const have = s.peerHave;
-          if (!have || s.inflight.length >= WINDOW) { await waitSignal(1000); if (this.now() - lastPing > 20_000) { lastPing = this.now(); await ch.send({ t: "ping" }); } continue; }
-          if (this.wantSnapshot(s)) { await this.sendSnapshot(s); continue; }
-          const from = Math.max(s.sentUpTo, have.cursor), rows = this.ledger.since(from, 400);
+          if (!have || s.inflight.length + s.inflightG.length >= WINDOW) { await waitSignal(1000); if (this.now() - lastPing > 20_000) { lastPing = this.now(); await ch.send({ t: "ping" }); } continue; }
+          // Priority classes (peers that report a `g` cursor): 1) global state (accounts, credentials, settings, folders, merges, flags, aliases, chat caches), 2) the newest messages, 3) the message backlog in ledger order, 4) files (blobs.ts, after this loop is idle). Each class has its own cursor, so resumption and idempotency work per class.
+          const classes = have.g !== undefined; let cls: "g" | "m" | undefined, from = Math.max(s.sentUpTo, have.cursor), rows: ReturnType<Ledger["since"]>;
+          if (classes) {
+            const fromG = Math.max(s.sentG, have.g!), gRows = this.ledger.sinceClass(fromG, 400, false);
+            if (gRows.length) { cls = "g"; from = fromG; rows = gRows; }
+            else {
+              if (this.wantSnapshot(s)) { await this.sendSnapshot(s); continue; }
+              if (!s.headDone && have.cursor === 0) { s.headDone = true; await this.sendHead(s); continue; }
+              cls = "m"; rows = this.ledger.sinceClass(from, 400, true);
+            }
+            if (!s.tot) s.tot = { g: this.ledger.countClass(Math.max(s.sentG, have.g!), false), m: this.ledger.countClass(from, true) };
+          } else { if (this.wantSnapshot(s)) { await this.sendSnapshot(s); continue; } rows = this.ledger.since(from, 400); }
           if (!rows.length) {
             this.setProgress(peer, { state: "idle", pending: 0 });
             await waitSignal(10_000); if (this.now() - lastPing > 20_000) { lastPing = this.now(); await ch.send({ t: "ping" }); } continue;
@@ -855,7 +921,7 @@ export class SyncService {
             let w: WireEntry | undefined;
             if (acct && this.modeOf(acct) === "none") w = undefined;
             else if (parseKey(e.key).kind === "cr") w = await this.credsEntry(e.key, e.hlc);
-            else if (e.src === peer && (have.cursor > 0 || s.skipEcho)) w = undefined; // the peer already has what it gave us
+            else if (e.src === peer && ((cls === "g" ? have.g! : have.cursor) > 0 || s.skipEcho)) w = undefined; // the peer already has what it gave us
             else w = this.store.entry(e, mp);
             const sz = w ? JSON.stringify(w).length : 0;
             if (w && sz > 400_000) w = undefined;
@@ -863,12 +929,15 @@ export class SyncService {
             if (w) { entries.push(w); bytes += sz; }
             upTo = e.seq;
           }
-          last = upTo >= this.ledger.maxSeq();
-          s.sentUpTo = upTo; s.inflight.push(upTo); s.sent += entries.length;
-          await ch.send({ t: "batch", entries, upTo, more: !last });
-          this.setProgress(peer, { sent: s.sent, pending: Math.max(0, this.ledger.maxSeq() - upTo), state: "syncing" });
+          const scanned = rows.indexOf(rows.find((r) => r.seq === upTo)!) + 1;
+          if (cls === "g") { s.sentG = upTo; s.inflightG.push(upTo); s.sg += scanned; last = scanned === rows.length && rows.length < 400 && !this.ledger.sinceClass(Math.max(s.sentUpTo, have.cursor), 1, true).length; }
+          else { s.sentUpTo = upTo; s.inflight.push(upTo); if (cls === "m") s.sm += scanned; last = upTo >= this.ledger.maxSeq(); if (cls === "m") last = scanned === rows.length && rows.length < 400; }
+          s.sent += entries.length;
+          await ch.send({ t: "batch", entries, upTo, more: !last, ...(cls ? { cls, tot: s.tot, sg: s.sg, sm: s.sm } : {}) });
+          this.setProgress(peer, { sent: s.sent, pending: Math.max(0, this.ledger.maxSeq() - upTo), state: "syncing", ...(cls && s.tot ? { out: { accts: { done: last ? s.tot.g : Math.min(s.sg, s.tot.g), total: s.tot.g }, chats: { done: last ? s.tot.m : Math.min(s.sm, s.tot.m), total: s.tot.m } } } : {}) }); // the sending side shows its progress too
         }
       })();
+      if (this.unlinkPending?.peer === peer) void this.sendUnlink(s, 5000); // the instruction waited for this device to come online
       await Promise.race([recvLoop, sendLoop]);
     } catch (e) {
       const ex = e as Error; if (!s.closed) this.setProgress(peer, { state: "error", error: ex.message });
@@ -882,8 +951,11 @@ export class SyncService {
     if (s.snapWait) { clearTimeout(s.snapWait.timer); s.snapWait.ok(undefined); }
     s.big.clear();
     if (s.snapRx?.fd !== undefined) { try { closeSync(s.snapRx.fd); } catch { /* closed */ } }
-    try { void s.ch.send(why === "revoked" ? { t: "bye", why } : { t: "bye" }).catch(() => {}); } catch { /* ignore */ }
-    setTimeout(() => s.ch.close(), 30);
+    try {
+      const gd = this.group?.devices[s.peer]; // a removed device is told by whom, and gets a moment to confirm that it unlinked
+      void s.ch.send(why === "revoked" ? { t: "bye", why, by: this.group?.devices[gd?.revokedBy ?? ""]?.name } : { t: "bye" }).catch(() => {});
+    } catch { /* ignore */ }
+    setTimeout(() => s.ch.close(), why === "revoked" ? 1500 : 30);
     const mine = this.sessions.get(s.peer) === s;
     if (mine) this.sessions.delete(s.peer);
     if (mine && !this.disposed) { this.proxies.presenceChanged(s.peer, false); this.moves.onDown(s.peer); }
@@ -894,7 +966,7 @@ export class SyncService {
     if (!res.chats.size && !res.accounts && !res.global) return;
     if (this.reloadT) return;
     // a backlog arrives as hundreds of batches: reload at most every ~1.5 s while they keep coming (each reload makes the UI rebuild its chat list), 250 ms for an isolated change
-    const since = Date.now() - this.lastReload, wait = since < 10_000 ? 1500 : 250;
+    const since = Date.now() - this.lastReload, wait = res.accounts ? 20 : since < 10_000 ? 1500 : 250; // accounts arrive first: show them at once
     this.reloadT = setTimeout(async () => {
       this.reloadT = undefined; const chats = [...this.chatsDirty]; this.chatsDirty.clear(); this.lastReload = Date.now();
       try { await this.host.reload({ search: false }); } catch { /* hub shutting down */ } // the search index is kept current message by message (SyncCtx.index)
@@ -944,7 +1016,7 @@ export class SyncService {
     };
   }
   /** Frames beyond the ledger protocol. Returns false for an unknown type. */
-  private async handleExtra(s: Session, x: any, cursors: () => Record<string, { ledger: string; applied: number }>): Promise<boolean> {
+  private async handleExtra(s: Session, x: any, cursors: () => Record<string, { ledger: string; applied: number; g?: number }>): Promise<boolean> {
     switch (x?.t) {
       case "big": { const r = s.big.push(x); if (r && r.kind === "msg") await this.handleExtra(s, r.payload, cursors); return true; }
       case "rpc": {
@@ -979,6 +1051,17 @@ export class SyncService {
     const h = s.peerHave; if (!h || s.snapTried || this.group === undefined) return false;
     const max = this.ledger.maxSeq(), min = h.empty ? (this.o.snapshot?.minEntitiesEmpty ?? 50) : (this.o.snapshot?.minEntities ?? 800);
     return (h.cursor === 0 && max >= min) || max - h.cursor > 20_000;
+  }
+  /** The newest messages first (a fresh peer): the chat list is usable long before the backlog is through. They advance no cursor; the ordinary pass sends them again and the receiver skips them. */
+  private async sendHead(s: Session) {
+    const mp = this.store.maps(), entries: WireEntry[] = []; let bytes = 0;
+    const flush = async () => { if (!entries.length) return; const e = entries.splice(0); bytes = 0; s.sent += e.length; await s.ch.send({ t: "batch", entries: e, upTo: 0, more: true, cls: "h" }); };
+    for (const r of this.ledger.newestMessages(600)) {
+      const acct = accountOfKey(r.key); if (acct && this.modeOf(acct) === "none") continue;
+      const w = this.store.entry(r, mp); if (!w) continue; const sz = JSON.stringify(w).length; if (sz > 400_000) continue;
+      if (bytes + sz > BATCH_BYTES) await flush(); entries.push(w); bytes += sz;
+    }
+    await flush();
   }
   private waitSnap(s: Session, kinds: string[], ms: number): Promise<any> {
     return new Promise((ok) => { const timer = setTimeout(() => { s.snapWait = undefined; ok(undefined); }, ms); s.snapWait = { kinds, ok, timer }; });
@@ -1015,7 +1098,7 @@ export class SyncService {
       // the receiver now holds everything up to rec.cursor; credentials never ride in a snapshot, so send them (they still wait for the user's confirmation there)
       const crs: WireEntry[] = []; let from = 0;
       for (;;) { const rows = this.ledger.since(from, 500); if (!rows.length) break; for (const e of rows) { from = e.seq; if (e.seq <= rec.cursor && parseKey(e.key).kind === "cr" && this.modeOf(accountOfKey(e.key)) !== "none") { const w = await this.credsEntry(e.key, e.hlc); if (w) crs.push(w); } } if (from >= rec.cursor) break; }
-      s.sentUpTo = Math.max(s.sentUpTo, rec.cursor); s.inflight.push(rec.cursor);
+      s.sentUpTo = Math.max(s.sentUpTo, rec.cursor); s.sentG = Math.max(s.sentG, rec.cursor); s.inflight.push(rec.cursor);
       await s.ch.send({ t: "batch", entries: crs, upTo: rec.cursor, more: true });
       rmSync(rec.file, { force: true }); delete recs[peer]; this.ledger.kvSet("snapshots", recs);
       this.setProgress(peer, { phase: undefined, lastSync: new Date().toISOString() });
@@ -1041,7 +1124,7 @@ export class SyncService {
     if (r.got - r.lastSaved >= 1 << 20) { r.lastSaved = r.got; const all = this.ledger.kvGet<Record<string, any>>("snapIn") ?? {}; all[s.peer] = { id: r.id, got: r.got }; this.ledger.kvSet("snapIn", all); }
     this.setProgress(s.peer, { phase: "snapshot", snapDone: r.got, snapTotal: r.size, snapDir: "in" });
   }
-  private async onSnapEnd(s: Session, x: any, cursors: () => Record<string, { ledger: string; applied: number }>) {
+  private async onSnapEnd(s: Session, x: any, cursors: () => Record<string, { ledger: string; applied: number; g?: number }>) {
     const r = s.snapRx; if (!r || x.id !== r.id) throw new Error("unexpected snapshot end");
     const all = this.ledger.kvGet<Record<string, any>>("snapIn") ?? {}, fail = async (why: string, drop: boolean) => { if (drop) { rmSync(r.file, { force: true }); delete all[s.peer]; this.ledger.kvSet("snapIn", all); } s.snapRx = undefined; this.setProgress(s.peer, { phase: undefined }); await s.ch.send({ t: "snap-ack", id: r.id, ok: false, error: why }); };
     all[s.peer] = { id: r.id, got: r.got }; this.ledger.kvSet("snapIn", all);
@@ -1052,11 +1135,11 @@ export class SyncService {
       await applySnapshot(r.file, snapshotPassphrase(key.key, r.id), { expectLedger: s.peerLedger, batch: this.ledger.count() === 0 ? 2000 : 1000, apply: (e) => this.store.applyRemote(e, s.peer),
         onProgress: (n) => this.setProgress(s.peer, { phase: "snapshot", snapDone: r.size, snapTotal: r.size, received: s.received + n }) });
     } catch (e) { return fail(errmsg(e), true); }
-    const cs = cursors(); cs[s.peer] = { ledger: s.peerLedger!, applied: r.cursor }; this.ledger.kvSet("cursors", cs);
+    const cs = cursors(); cs[s.peer] = { ledger: s.peerLedger!, applied: r.cursor, g: r.cursor }; this.ledger.kvSet("cursors", cs);
     rmSync(r.file, { force: true }); delete all[s.peer]; this.ledger.kvSet("snapIn", all); s.snapRx = undefined; s.skipEcho = true;
     this.afterApply({ chats: new Set(), accounts: true, global: true });
     this.setProgress(s.peer, { phase: undefined, lastSync: new Date().toISOString() });
-    await s.ch.send({ t: "snap-ack", id: r.id, ok: true }); await s.ch.send({ t: "have", of: s.peerLedger, cursor: r.cursor });
+    await s.ch.send({ t: "snap-ack", id: r.id, ok: true }); await s.ch.send({ t: "have", of: s.peerLedger, cursor: r.cursor, g: r.cursor });
   }
 
   // ============================================================ media (lazy blob sync)
@@ -1098,11 +1181,68 @@ export class SyncService {
     const g = this.group; if (!g) throw new Error("Sync is not set up.");
     if (id === this.me.id) throw new Error("Use \"Leave this group\" to remove this device.");
     if (!g.devices[id] || g.devices[id].revoked) throw new Error("That device is not in the group.");
-    revoke(g, id); this.persist();
-    const s = this.sessions.get(id); if (s) this.closeSession(s, "revoked");
-    this.proxies.forgetDevice(id);
-    for (const u of this.proxies.usingList()) if (u.home === id) await this.proxies.stopUsing(u.accountId, false).catch(() => {});
+    if (!Object.values(g.devices).some((d) => d.id !== id && d.id !== this.me.id && !d.revoked)) return this.startUnlink(id, "remove"); // group of two: both unlink
+    // group of three or more: a tombstone (who, when) + a fresh key without the device. Connected members get it now, the others on their next session (members / keys frames, over any path);
+    // the removed device is told by every member that sees it, or when it next connects to one.
+    revoke(g, id, this.me.id); this.persist();
+    this.applyRemoved([id]);
     this.advertise(); this.broadcastKeys(); this.changedDevices(); return {};
+  }
+  /** Everything that tied this device to the removed ones: sessions (they are told), relay permissions / offers, addresses. */
+  private applyRemoved(ids: string[]) {
+    const g = this.group; if (!g) return;
+    for (const id of ids) {
+      if (id === this.me.id) continue;
+      const s = this.sessions.get(id); if (s) this.closeSession(s, "revoked");
+      this.proxies.forgetDevice(id); void this.proxies.removedBy(id);
+      const d = g.devices[id]; if (d) { delete d.addrs; delete d.dht; }
+      this.backoff.delete(id); this.progress.delete(id);
+    }
+    this.persist(); this.changedDevices();
+    if (this.liveCount() <= 1 && !this.unlinkPending && !this.selfRevoked) { // everybody else is gone (two devices removed each other concurrently): nothing left to sync with
+      const last = g.devices[ids[ids.length - 1]];
+      void this.leaveLocal({ by: g.devices[last?.revokedBy ?? ""]?.name ?? "another device", at: new Date().toISOString(), reason: "alone" });
+    }
+  }
+  /** A removed device confirmed (over a closing session) that it unlinked itself. */
+  private noteRemovedAck(peer: string) {
+    const d = this.group?.devices[peer]; if (!d?.revoked || d.removedAck) return;
+    d.removedAck = new Date().toISOString(); this.persist(); this.changedDevices(); this.broadcastKeys();
+  }
+  /** A removed device connected to us (it still knows an older key): tell it who removed it, wait for its confirmation, drop the connection. */
+  private async refuseRemoved(ch: Secure, id: string) {
+    const g = this.group, d = g?.devices[id]; if (!g || !d) return ch.close();
+    try {
+      await ch.send({ t: "bye", why: "revoked", by: g.devices[d.revokedBy ?? ""]?.name });
+      for (let i = 0; i < 4; i++) { const a = await ch.recv(3000); if (a?.t === "unlinked") { this.noteRemovedAck(id); break; } }
+    } catch { /* gone */ }
+    ch.close();
+  }
+  /** The other device of a group of two (or, for a removal, the device to be removed) must unlink. Delivered now when it is online, otherwise as soon as it is. */
+  private async startUnlink(peer: string, reason: "leave" | "remove") {
+    const d = this.group!.devices[peer];
+    this.unlinkPending = { peer, name: d.name, since: new Date().toISOString(), reason }; this.ledger.kvSet("unlinkPending", this.unlinkPending);
+    this.changedDevices();
+    const t0 = Date.now(), wait = this.o.unlinkWaitMs ?? 5000;
+    if (!this.sessions.has(peer)) { for (const k of Object.keys(this.group!.devices)) this.backoff.delete(k); this.tick(); }
+    while (!this.sessions.get(peer) && Date.now() - t0 < wait) await new Promise((r) => setTimeout(r, 100));
+    const s = this.sessions.get(peer);
+    const done = !!s && (await this.sendUnlink(s, Math.max(1500, wait - (Date.now() - t0))));
+    return { pending: !done, deviceName: d.name };
+  }
+  private async sendUnlink(s: Session, ms: number): Promise<boolean> {
+    const p = this.unlinkPending; if (!p || p.peer !== s.peer || s.closed || s.ackWait) return false;
+    const ack = new Promise<boolean>((ok) => { const t = setTimeout(() => { s.ackWait = undefined; ok(false); }, ms); s.ackWait = () => { clearTimeout(t); ok(true); }; });
+    try { await s.ch.send({ t: "unlink", removed: p.reason === "remove" }); } catch { s.ackWait = undefined; return false; }
+    if (!(await ack)) return false;
+    await this.leaveLocal(); return true;
+  }
+  /** `s.peer` told us (or our own membership list says) that we were removed: confirm, then unlink (the archive stays, the group state goes). */
+  private async removedByPeer(s: Session, byName?: unknown) {
+    const me = this.group?.devices[this.me.id], g = this.group;
+    await s.ch.send({ t: "unlinked" }).catch(() => {});
+    const by = typeof byName === "string" && byName ? byName.slice(0, 60) : g?.devices[me?.revokedBy ?? ""]?.name ?? "another device";
+    await this.leaveLocal({ by, at: me?.revoked ?? new Date().toISOString(), reason: "removed" });
   }
   /** Tell every connected member the membership + keys (they adopt keys that exclude... never a revoked one: those sessions are closed). */
   private broadcastKeys() {
@@ -1113,10 +1253,6 @@ export class SyncService {
   private resolveRekey(s: Session) {
     const g = this.group; if (!g || !needsRekey(g)) return;
     if (this.me.id < s.peer) { rekey(g); this.persist(); this.advertise(); this.broadcastKeys(); }
-  }
-  private gotRevoked() {
-    this.selfRevoked = true; this.persist(); this.teardown(false); void this.proxies.releaseAll();
-    this.host.emit("sync-devices", { ...this.status(), revokedNotice: true });
   }
 
   // ============================================================ credentials (token-style accounts only)

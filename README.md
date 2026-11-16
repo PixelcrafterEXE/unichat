@@ -101,7 +101,7 @@ How to read it:
 | **Account** | | | | | | | | |
 | Link / log in | ✅ Verified | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Remove account and sign out remotely | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Profile pictures of people and chats | ✅ Verified | 🧪 Fake-verified (DM + group pictures, fake servers only) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Profile pictures of people and chats | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Edit own profile (name, about, picture) | 🧪 Untested | 🧪 Untested | ✅ Verified | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | 🛠️ Unimplemented | 🛠️ Unimplemented |
 | Identity verification: emoji comparison with another device or a person, incoming requests, cross-signing + recovery-key set-up, "verify with recovery key" (Settings > Accounts, contact panel) | ⛔ Unsupported | ⛔ Unsupported | 🧪 Fake-verified (fake SDK objects + mock UI only, no real homeserver or second device) | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported |
 | Privacy settings | 🧪 Untested | 🧪 Untested | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |

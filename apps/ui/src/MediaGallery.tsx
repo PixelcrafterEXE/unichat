@@ -5,8 +5,8 @@ import type { Attachment, Chat, Message } from "./types";
 import { cardsOf } from "./types";
 import { VoicePlayer } from "./Voice";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, ImageIcon, Link2, Mic, Play, X } from "./icons";
-import { core, fmtBytes, fmtDuration, loadAttachment, useAttachment } from "./util";
-const fmtTime = (t: string) => new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+import { core, fmtDate, fmtBytes, fmtDuration, loadAttachment, useAttachment } from "./util";
+const fmtTime = (t: string) => fmtDate(t);
 
 export type MediaTab = "media" | "files" | "links" | "voice";
 const TABS: { key: MediaTab; label: string }[] = [{ key: "media", label: "Photos & videos" }, { key: "files", label: "Files" }, { key: "links", label: "Links" }, { key: "voice", label: "Voice" }];

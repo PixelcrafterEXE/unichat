@@ -2,7 +2,7 @@
 import type {
   Capabilities, Card, Chat, Connector, Contact, CoreEvent, HistoryQuery, LoginPrompt, Message, OutgoingMessage, PrivacySetting, Profile, ProfilePatch, ProviderFactory, Space,
 } from "@unimsg/core";
-import { Api, DEFAULT_BASE, DEFAULT_CDN, DEFAULT_GATEWAY, DcError, dbg, endpoint, newIdentity, type Identity, type Mode } from "./api.js";
+import { Api, DEFAULT_BASE, DEFAULT_CDN, DEFAULT_GATEWAY, DcError, type CaptchaChallenge, dbg, endpoint, newIdentity, type Identity, type Mode } from "./api.js";
 import { BOT_INTENTS, Gateway, INTENT } from "./gateway.js";
 import {
   CT, P, basePermissions, channelPermissions, emojiKey, emojiPath, emojiText, isChatType, isThread, mapChat, mapMessage, mapReactions, mapSpace, mapPoll, patchOf, previewOf, snowflakeGt, snowflakeTime, userName,
@@ -145,7 +145,26 @@ class DiscordConnector implements Connector {
   }
 
   // ---------------------------------------------------------------- login
-  async submitLogin(_promptId: string, v: Record<string, string>): Promise<void> {
+  /**
+   * Best-effort: show Discord's hCaptcha to the user through the generic "captcha" login prompt and wait for the solved token (the Api gives up after ~3 min).
+   * Discord's hCaptcha site key is configured for discord.com and may refuse to render on other origins; the UI then offers "Open Discord instead".
+   */
+  private captchas = new Map<string, (token: string | undefined) => void>();
+  private askCaptcha(c: CaptchaChallenge): Promise<string | undefined> {
+    if (c.service !== "hcaptcha") return Promise.resolve(undefined);
+    const promptId = `captcha-${++this.promptN}`;
+    return new Promise((ok) => {
+      const done = (t: string | undefined) => { if (this.captchas.delete(promptId)) { clearTimeout(timer); ok(t); } };
+      const timer = setTimeout(() => done(undefined), 185000);
+      this.captchas.set(promptId, done);
+      this.emit({ type: "login", data: { accountId: this.accountId, promptId, kind: "captcha", service: "hcaptcha", sitekey: c.sitekey, ...(c.rqdata ? { rqdata: c.rqdata } : {}),
+        title: "Discord wants to check that you are human", hint: "Discord asks for this when you message someone new. Solving it lets UniChat continue.", link: { href: "https://discord.com/channels/@me", label: "Open Discord instead" }, expiresAt: Date.now() + 180000 } });
+    });
+  }
+  async submitLogin(promptId: string, v: Record<string, string>): Promise<void> {
+    const cap = this.captchas.get(promptId);
+    if (cap) { cap((v.token ?? "").trim() || undefined); return; }
+    if (promptId.startsWith("captcha-")) return; // late answer after the wait ended: nothing to do
     const mode = (v.mode ?? "").trim().toLowerCase();
     if (mode !== "bot" && mode !== "user") throw new Error('Type "bot" (official bot token) or "user" (your own account token) in the mode field.');
     let token = (v.token ?? "").trim().replace(/^["']|["']$/g, "").replace(/^Bot\s+/i, "");
@@ -185,6 +204,7 @@ class DiscordConnector implements Connector {
     const api = this.api = new Api({
       base: endpoint("UNIMSG_DISCORD_BASE", DEFAULT_BASE), token: s.token, mode: s.mode, identity: this.identity, paceMs: pace,
       onUnauthorized: () => { if (this.api === api) this.needsLogin("Discord rejected the token"); },
+      onCaptcha: (c) => this.askCaptcha(c),
       onCooldown: (ms) => this.err("rate", `Discord asked us to slow down; pausing requests for about ${Math.max(1, Math.round(ms / 1000))} s.`),
     });
     this.startGateway(s);
@@ -544,6 +564,13 @@ class DiscordConnector implements Connector {
     if (!/^\d+$/.test(chatId)) throw new Error("Unknown chat.");
     const l = await this.forbid("read this channel's history", () => api.get<DcMessage[]>(`/channels/${chatId}/messages?limit=${limit}${q.beforeMessageId ? `&before=${q.beforeMessageId}` : ""}`));
     return l.sort((a, b) => (snowflakeGt(a.id, b.id) ? 1 : -1)).map((m) => this.note(m));
+  }
+
+  /** Servers you share with a person: only user accounts can ask (the profile lists the mutual servers); a bot has no such view. */
+  async mutualSpaces(contactId: string): Promise<string[]> {
+    const api = this.ready(); if (this.session?.mode !== "user" || !/^\d+$/.test(contactId)) return [];
+    const p = await api.get<{ mutual_guilds?: { id: string }[] }>(`/users/${contactId}/profile?with_mutual_guilds=true&with_mutual_friends_count=false`, 1);
+    return (p.mutual_guilds ?? []).map((g) => g.id).filter((id) => this.guilds.has(id));
   }
 
   async members(chatId: string): Promise<Contact[]> {

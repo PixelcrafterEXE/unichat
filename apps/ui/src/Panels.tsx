@@ -4,10 +4,10 @@ import { Play, FolderInput, RotateCcw, GitMerge, Unlink, Star, Clock3, Info, Ref
 import { capsOf } from "./types";
 import { PinnedList, usePins } from "./Pins";
 import { acctStatus, viaNote } from "./relay";
-import { focusAccount } from "./StatusDots";
+import { focusAccount, settingsNav } from "./StatusDots";
 import { BackupPanel, ExportChatButton } from "./BackupPanel";
 import { hasSyncLink } from "./syncLink";
-import { SyncPanel } from "./SyncPanel"; // device sync
+import { SyncPanel, useSyncReceiving } from "./SyncPanel"; // device sync
 import { SignalBackupImport } from "./SignalBackupImport";
 import { WhatsAppBackupImport } from "./WhatsAppBackupImport";
 import { StoragePanel } from "./MediaUI";
@@ -16,7 +16,7 @@ import { MediaGallery, VideoCover, type MediaTab } from "./MediaGallery";
 import { Marked } from "./GlobalSearch";
 import { DisappearingSetting } from "./Disappearing";
 import { UpdatesSection, updatesNav } from "./Updates";
-import { Avatar, ProviderIcon, SpaceIcon, core, fmtBytes, fmtTime, forgetAvatar, presenceText, squareImage, useAttachment, type Settings } from "./util";
+import { Avatar, ProviderIcon, SpaceIcon, core, fmtBytes, fmtTime, forgetAvatar, fmtDate, DATE_FORMATS, type DateFormat, fmtDateTime, presenceText, squareImage, useAttachment, type Settings } from "./util";
 
 function Thumb({ chat, m, a, onJump }: { chat: Chat; m: Message; a: Attachment; onJump: (m: Message) => void }) {
   const video = a.kind === "video";
@@ -40,20 +40,29 @@ function AndroidNotifPermission() {
       <span>Android is blocking them, so you won't hear about new messages while the app is closed.</span>
       <button className="primary" onClick={() => void core.call("$requestNotifications", {}).then(() => setTimeout(check, 1500), () => {})}>Allow notifications</button></div>);
 }
-/** DM info: groups (and communities) you are both in. Asks the backend, which lists the members of your groups; shows nothing while there is nothing. */
+/** DM info: groups and communities you are both in. Asks the backend, which lists the members of your groups (and, where the network can tell, the servers you share); shows nothing while there is nothing. */
+type Common = { groups: Chat[]; communities: Space[] };
 function CommonChats({ chat }: { chat: Chat }) {
-  const [r, setR] = useState<{ groups: Chat[]; communities: { id: string; name: string }[] } | "loading" | "none">("loading");
-  useEffect(() => { let on = true; setR("loading"); core.call("commonChats", { chatId: chat.id }).then((x: { groups: Chat[]; communities: { id: string; name: string }[] }) => on && setR(x), () => on && setR("none")); return () => { on = false; }; }, [chat.id]);
+  const [r, setR] = useState<Common | "loading" | "none">("loading");
+  useEffect(() => { let on = true; setR("loading"); core.call("commonChats", { chatId: chat.id }).then((x: Common) => on && setR(x), () => on && setR("none")); return () => { on = false; }; }, [chat.id]);
   if (r === "none") return null;
   if (r === "loading") return <section className="commonsec"><h4>Groups in common</h4><p className="hint">Looking…</p></section>;
-  if (!r.groups.length) return <section className="commonsec"><h4>Groups in common</h4><p className="hint">None found.</p></section>;
   return (
-    <section className="commonsec"><h4>Groups in common · {r.groups.length}</h4>
-      {r.communities.length > 0 && <p className="hint">Communities: {r.communities.map((c) => c.name).join(", ")}</p>}
-      {r.groups.map((g) => (
-        <button key={g.id} type="button" className="netrow linklike" onClick={() => window.dispatchEvent(new CustomEvent("unichat-open-chat", { detail: g.id }))}>
-          <Avatar name={g.name} url={g.avatarUrl} of={{ kind: "chat", id: g.id }} size={30} /><span className="mtext"><b>{g.name}</b></span></button>))}
-    </section>);
+    <>
+      {r.groups.length > 0 || !r.communities.length ? (
+        <section className="commonsec" data-common-groups><h4>{r.groups.length ? `Groups in common · ${r.groups.length}` : "Groups in common"}</h4>
+          {!r.groups.length && <p className="hint">None found.</p>}
+          {r.groups.map((g) => (
+            <button key={g.id} type="button" className="netrow linklike" onClick={() => window.dispatchEvent(new CustomEvent("unichat-open-chat", { detail: g.id }))}>
+              <Avatar name={g.name} url={g.avatarUrl} of={{ kind: "chat", id: g.id }} size={30} /><span className="mtext"><b>{g.name}</b></span></button>))}
+        </section>) : null}
+      {r.communities.length > 0 && (
+        <section className="commonsec" data-common-communities><h4>Communities in common · {r.communities.length}</h4>
+          {r.communities.map((c) => (
+            <button key={c.id} type="button" className="netrow linklike" data-space={c.id} title="Show this community" onClick={() => window.dispatchEvent(new CustomEvent("unichat-open-space", { detail: c.id }))}>
+              <SpaceIcon space={c} size={30} /><span className="mtext"><b>{c.name}</b></span></button>))}
+        </section>)}
+    </>);
 }
 export function ContactPanel({ place, merge, onMerge, chat, caps, messages, muted, onMute, onSearch, onClose, onImage, onJump, onRename, providerName, reloadKey, onLeave, onBlock, onAddMembers, onRemoveMember, onRenameNetwork, onPerson }: {
   place?: PlaceInfo;
@@ -102,8 +111,7 @@ export function ContactPanel({ place, merge, onMerge, chat, caps, messages, mute
           {chat.originalName && <div className="handle">{merge ? "Original" : providerName} name: {chat.originalName}</div>}
           {person?.handle && !merge && <div className="handle">{person.handle}</div>}
           {dm && !merge && (() => { const p = { online: chat.online ?? person?.online, lastSeen: chat.lastSeen ?? person?.lastSeen }, t = presenceText(p); return t ? <div className="handle presence" data-presence={p.online ? "online" : "seen"}>{t}</div> : null; })()}
-          <div className="tags">{merge ? merge.members.map((c) => <span key={c.id} className="tag brand"><ProviderIcon provider={c.provider} size={14} /> {merge.providers.find((x) => x.name === c.provider)?.displayName ?? c.provider}</span>)
-            : <span className="tag brand"><ProviderIcon provider={chat.provider} size={14} /> {providerName}</span>}{caps?.e2ee && <span className="tag"><Lock size={11} /> End-to-end encrypted</span>}</div></div>
+          {caps?.e2ee && <div className="tags"><span className="tag"><Lock size={11} /> End-to-end encrypted</span></div>}</div>
         {(chat.description || (!dm && chat.provider !== "mesh" && caps?.chatDescription && chat.canManage !== false)) && <ChatAbout chat={chat} editable={!dm && chat.provider !== "mesh" && !!caps?.chatDescription && chat.canManage !== false} />}
         <div className="infoactions">
           <button onClick={onSearch}><Search size={15} /> Search</button>
@@ -174,7 +182,8 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
   onLogin: (accountId: string) => void; onAccountAction: (kind: "signout" | "signin" | "remove" | "profile", a: Account) => void;
   accounts: Account[]; providers: ProviderInfo[]; settings: Settings; onChange: (s: Settings) => void; onAdd: () => void; onClose: () => void;
 }) {
-  const [sec, setSec] = useState<Section>(() => (updatesNav.pending ? "about" : hasSyncLink() && !focusAccount.id ? "sync" : "accounts"));
+  const recv = useSyncReceiving();
+  const [sec, setSec] = useState<Section>(() => { const w = settingsNav.section as Section | undefined; settingsNav.section = undefined; return w ?? (updatesNav.pending ? "about" : hasSyncLink() && !focusAccount.id ? "sync" : "accounts"); });
   useEffect(() => { updatesNav.pending = false; const f = () => { updatesNav.pending = false; setSec("about"); setTimeout(() => document.getElementById("updates")?.scrollIntoView({ block: "start" }), 50); }; addEventListener("unichat-open-updates", f); return () => removeEventListener("unichat-open-updates", f); }, []);
   useEffect(() => { // opened from a status ring in the chat list footer: show that account's card
     const id = focusAccount.id; if (!id) return; focusAccount.id = undefined;
@@ -205,13 +214,15 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
         <button className="closex" onClick={onClose} title="Close (Esc)"><X size={18} /></button>
         {sec === "accounts" && <>
           <h2>Accounts</h2><p className="hint"><b>Sign out</b> keeps your chats as a read-only archive. <b>Remove</b> deletes the account and its data from this device.</p>
+          {recv.history && accounts.length > 0 && <p className="hint" data-receiving-history>Receiving chats and messages from your other device… the accounts below are already here.</p>}
           {accounts.map((a) => <AccountCard key={a.id} a={a} p={providers.find((x) => x.name === a.provider)} onLogin={() => onLogin(a.id)} onAction={(k) => onAccountAction(k, a)} />)}
-          {!accounts.length && <p className="hint" data-loading={loading ? "accounts" : undefined}>{loading ? "Still loading your accounts…" : "No accounts yet."}</p>}
+          {!accounts.length && <p className="hint" data-loading={loading ? "accounts" : undefined}>{recv.accounts ? "Receiving your accounts from your other device…" : loading ? "Still loading your accounts…" : "No accounts yet."}</p>}
           <button className="primary inline" onClick={onAdd}><Plus size={16} /> Add account</button></>}
         {sec === "appearance" && <>
           <h2>Appearance</h2>
           <label className="row"><span><b>Theme</b></span><select value={settings.theme} onChange={(e) => set("theme", e.target.value as Settings["theme"])}><option value="dark">Dark</option><option value="light">Light</option><option value="system">Follow system</option></select></label>
           <label className="row"><span><b>Message style</b><small className="rowhint">Bubbles show your messages on the right, like WhatsApp; Flat lists everything on the left, like Discord.</small></span><select value={settings.messageStyle} onChange={(e) => set("messageStyle", e.target.value as Settings["messageStyle"])}><option value="bubbles">Bubbles</option><option value="flat">Flat</option></select></label>
+          <label className="row"><span><b>Date format</b><small className="rowhint">How dates are written in the chat, search and info panels. Times always follow your system.</small></span><select id="dateFormat" value={settings.dateFormat ?? "system"} onChange={(e) => set("dateFormat", e.target.value as DateFormat)}>{DATE_FORMATS.map(([k, l]) => <option key={k} value={k}>{l}{k === "system" ? "" : ` (${fmtDate(new Date(2026, 10, 16), {}, k)})`}</option>)}</select></label>
           <label className="toggle"><span><b>Show communities with only one chat as a normal chat</b><small>A community that holds just one chat gets no entry in the left bar; its chat is listed under Personal. Chats you moved into a folder count too.</small></span>
             <input type="checkbox" id="collapseSingle" checked={collapse} onChange={(e) => { setCollapse(e.target.checked); core.call("setSetting", { key: "collapseSingleChatCommunities", value: e.target.checked }).catch(() => setCollapse(!e.target.checked)); }} /><i /></label></>}
         {sec === "notifications" && <>
@@ -259,7 +270,7 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
 
 function AccountCard({ a, p, onLogin, onAction }: { a: Account; p?: ProviderInfo; onLogin: () => void; onAction: (k: "signout" | "signin" | "remove" | "profile") => void }) {
   const signedOut = a.state === "signed-out" || (a.state === "needs-login" && !!a.everLinked);
-  const stateText = a.state === "signed-out" ? `signed out${a.signedOutAt ? " " + new Date(a.signedOutAt).toLocaleDateString() : ""}` : a.state === "needs-login" && a.everLinked ? "unlinked, sign in again" : a.state.replace("-", " ");
+  const stateText = a.state === "signed-out" ? `signed out${a.signedOutAt ? " " + fmtDate(a.signedOutAt, {}) : ""}` : a.state === "needs-login" && a.everLinked ? "unlinked, sign in again" : a.state.replace("-", " ");
   const [label, setLabel] = useState(a.label); const [editing, setEditing] = useState(false);
   const caps = capsOf(a, p ? [p] : [], a.provider);
   const feats = caps ? Object.entries({ Reactions: caps.reactions, Edits: caps.edits, Voice: caps.voiceNotes, Location: caps.location, Contacts: caps.contactCards, Communities: caps.spaces, "E2EE": caps.e2ee, Mentions: caps.mentions }).filter(([, v]) => v).map(([k]) => k) : [];
@@ -272,7 +283,7 @@ function AccountCard({ a, p, onLogin, onAction }: { a: Account; p?: ProviderInfo
   const [asked, setAsked] = useState("");
   const askHome = async () => { try { const r = await core.call("syncRelayAsk", { accountId: a.id }); setAsked(r.state === "pending" ? `Asked ${a.via?.device}. It shows a question there.` : r.state === "denied" ? `${a.via?.device} doesn't allow sending.` : ""); } catch (err: any) { setAsked(err.message); } };
   if (a.via) notices.push(viaNote(a.via));
-  else if (signedOut) notices.push(`Read-only archive${a.signedOutAt ? ` since ${new Date(a.signedOutAt).toLocaleDateString()}` : ""}: your chats and messages stay here, but messages sent to you while signed out won't arrive.`);
+  else if (signedOut) notices.push(`Read-only archive${a.signedOutAt ? ` since ${fmtDate(a.signedOutAt, {})}` : ""}: your chats and messages stay here, but messages sent to you while signed out won't arrive.`);
   if (!signedOut && caps?.sync) notices.push("Contacts only arrive when your phone shares them. That happens automatically after linking; use Sync contacts if people you added later are missing.");
   return (
     <div className={"acard" + (signedOut ? " dim" : "")} data-account={a.id}>
@@ -338,7 +349,7 @@ export function SearchPanel({ chat, members, providers, accounts, onJump, onClos
     return () => { live = false; clearTimeout(t); };
   }, [q, chat.id]);
   const term = q.trim();
-  const day = (iso: string) => new Date(iso).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+  const day = (iso: string) => fmtDate(iso);
   return (
     <aside className="info sidesearch">
       <header><span>Search in {chat.kind === "channel" ? "#" : ""}{chat.name}</span><button className="icon" onClick={onClose} aria-label="Close search"><X size={18} /></button></header>
@@ -369,7 +380,7 @@ function ScheduledList({ chats }: { chats: Chat[] }) {
   const load = () => core.call("jobs").then((j: JobRow[]) => setJobs((j ?? []).filter((x) => x.kind === "send" && ((x.status === "pending" && (x.payload.waiting || x.runAt > Date.now() - 60_000)) || (x.status === "failed" && (x.payload.late || x.payload.aborted))))), (e) => setErr(e.message));
   useEffect(() => { load(); const i = setInterval(load, 5000); const off = core.on((ev: string) => { if (ev === "job") load(); }); return () => { clearInterval(i); off(); }; }, []);
   const name = (id?: string) => chats.find((c) => c.id === id)?.name ?? "a chat";
-  const when = (j: JobRow) => new Date(j.payload.due ?? j.runAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const when = (j: JobRow) => fmtDateTime(j.payload.due ?? j.runAt, { dateStyle: "medium", timeStyle: "short" } as any);
   const act = (m: string, id: string) => core.call(m, { id }).then(load, (e) => { alert(e.message); load(); });
   return (
     <>

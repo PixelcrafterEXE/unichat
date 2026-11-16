@@ -17,7 +17,7 @@ pnpm --filter @unimsg/desktop dev            # electron-vite dev (HMR renderer)
 pnpm --filter @unimsg/desktop build          # -> apps/desktop/out/{main,preload,renderer}
 pnpm --filter @unimsg/desktop start          # run the built app (electron-vite preview)
 pnpm --filter @unimsg/desktop package:dir    # unpacked app in dist/linux-unpacked/unichat
-pnpm --filter @unimsg/desktop dist:linux     # AppImage + deb
+pnpm --filter @unimsg/desktop dist:linux     # AppImage + deb + pacman (.pkg.tar.zst)
 pnpm --filter @unimsg/desktop dist:win       # NSIS installer + portable exe (build on Windows, or Linux with wine)
 ```
 Headless run with a throwaway profile:
@@ -48,4 +48,8 @@ UNIMSG_DATA=$(mktemp -d) xvfb-run -a apps/desktop/node_modules/electron/dist/ele
 - `safeStorage.isEncryptionAvailable`/`encryptString` are deprecated in Electron 45 (still work); migrating needs an async KeyWrap in `@unimsg/host`.
 
 ## Self-update
-Own implementation (no electron-updater: the Hub's `Updater` already does release lookup, token handling, download and SHA-256 verification, see docs/ARCHITECTURE.md "Updates"). `src/updater.ts`: `desktopAsset()` picks `desktop-linux-appimage` (running as AppImage, `$APPIMAGE` set; self-update) or `desktop-linux-deb` (manual); unpackaged runs and other OSes get no updates. `replaceAppImage()` copies the verified file next to the running one, renames the old one to `<name>.AppImage.bak`, renames the new one into place and `main.ts` relaunches. Package version: `0.0.0-dev` locally (shown as `dev`); CI builds with `UNICHAT_VERSION=0.1.N` (`dist:linux` passes it as `extraMetadata.version`). Release file names: `unichat-desktop-<version>.AppImage|deb`. Not tested on a real AppImage in this environment.
+Own implementation (no electron-updater: the Hub's `Updater` already does release lookup, token handling, download and SHA-256 verification, see docs/ARCHITECTURE.md "Updates"). `src/updater.ts`: `desktopAsset()` picks `desktop-linux-appimage` (running as AppImage, `$APPIMAGE` set; self-update) or `desktop-linux-deb` or `desktop-linux-pacman` (manual; told apart by electron-builder's `resources/package-type` file); unpackaged runs and other OSes get no updates. `replaceAppImage()` copies the verified file next to the running one, renames the old one to `<name>.AppImage.bak`, renames the new one into place and `main.ts` relaunches. Package version: `0.0.0-dev` locally (shown as `dev`); CI builds with `UNICHAT_VERSION=0.1.N` (`dist:linux` passes it as `extraMetadata.version`). Release file names: `unichat-desktop-<version>.AppImage|deb|pkg.tar.zst`. Not tested on a real AppImage in this environment.
+
+## Arch Linux package (pacman)
+
+`linux.target` includes `pacman`: electron-builder runs fpm and writes `dist/unichat-desktop-<version>.pkg.tar.zst` (zstd; the `pacman:` block in `electron-builder.yml` sets the name, compression and the Arch dependency names gtk3, nss, libsecret, libxss, ...). Install with `sudo pacman -U unichat-desktop-<version>.pkg.tar.zst`; for the key storage install `gnome-keyring` or `kwallet`. The build machine needs `zstd` and `bsdtar` (Ubuntu: `zstd libarchive-tools`; the release workflow installs them). The package is not signed and not in the AUR. The in-app updater downloads and verifies the new file (manifest key `desktop-linux-pacman`) and shows the `pacman -U` command, like the `.deb` case. Not built locally here: only the config, the YAML and the asset selection are verified, the first real build happens in the release workflow.

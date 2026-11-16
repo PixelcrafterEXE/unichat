@@ -5,6 +5,8 @@ import { acctStatus } from "./relay";
 import { ProviderIcon } from "./util";
 
 /** Set before opening Settings to make the Accounts section scroll to (and highlight) one account's card. */
+/** Where the next opened Settings page starts (a button elsewhere sets it, then opens Settings). */
+export const settingsNav: { section?: string } = {};
 export const focusAccount: { id?: string } = {};
 
 export type Ring = "ok" | "wait" | "bad" | "off" | "relay";

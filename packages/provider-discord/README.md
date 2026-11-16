@@ -15,7 +15,7 @@ There are two ways in, and they are **not** equally allowed.
 
 * **User mode is an explicit opt-in.** The login form shows the warning in a prominent box and its **required checkbox** must be ticked (the UI refuses to submit otherwise; the
   provider also refuses user mode unless the `confirm` value is `true`, or the legacy `YES`). Nothing is sent to Discord before that.
-* **UniChat does not log in with a password** and has no captcha / MFA / token-extraction code. You paste a token you obtained yourself.
+* **UniChat does not log in with a password** and has no password / MFA / token-extraction code (the one captcha it relays is described below). You paste a token you obtained yourself.
   UniChat does not tell you how to extract it.
 * We reduce the risk (see "Behaving conservatively") but **cannot remove it**. Use a throw-away or test account if you can. If the
   account matters to you, use a bot token or the official app.
@@ -113,6 +113,16 @@ Declared `false` in both modes: `e2ee`, `readReceipts`, `sync`, `refreshChat`, `
 
 All of these go through the paced request queue (user mode: jittered gaps, 10-minute slow-down after any 429). Joining and creating servers is the kind of
 action Discord's anti-abuse system watches closely (captcha / "verify your account"): do it with an account you can afford to lose, or in the app.
+
+### Captcha when you message someone new (user mode, best-effort)
+
+When Discord answers a request of a user account with `400 {"captcha_key":["captcha-required"], ...}` (typically opening a DM with a new person), UniChat shows the
+hCaptcha challenge in a "Discord wants to check that you are human" dialog, takes the solved token and **retries that one request once** with the headers Discord clients
+send (`X-Captcha-Key`, `X-Captcha-Rqtoken`) and the same body. The hCaptcha script is loaded from `js.hcaptcha.com` only when the dialog opens. The token, site key and
+rqtoken are never logged, stored or put into error text. Cancelling, a timeout (about 3 minutes), a refused answer or a background job produce the plain explanatory
+error instead. **Uncertain:** Discord's site key is configured for discord.com, so hCaptcha may refuse to render it on other origins; the dialog then says so and offers
+"Open Discord instead" (solve it in the official app, then try again). Using a user token breaks Discord's Terms of Service whatever the captcha does. This is verified
+only against the fake server, never the real service.
 
 ## Hypotheses (could not be verified against the real service)
 

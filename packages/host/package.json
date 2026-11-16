@@ -21,6 +21,7 @@
     "@unimsg/provider-remote": "workspace:*"
   },
   "scripts": {
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "test": "tsx --test src/keymismatch.test.ts"
   }
 }

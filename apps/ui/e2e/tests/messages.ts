@@ -123,4 +123,84 @@ export default [
     await t.click(".voice .vspeed");
     await t.ok("speed button cycles 1x -> 1.5x", `document.querySelector('.voice .vspeed').textContent.includes('1.5')`);
   }),
+
+  test("scroll-to-latest button jumps to the newest message from the top of a big, windowed chat", async (t) => {
+    await t.open("&big=1&chat=mx-1:big-grp0");
+    await t.waitSel(".messages .msg");
+    await t.ev(`(async()=>{ for(let i=0;i<6;i++){ const b=document.querySelector('.loadmore'); if(!b) break; b.click(); await new Promise(r=>setTimeout(r,150)); while(document.querySelector('.loadmore')?.disabled) await new Promise(r=>setTimeout(r,30)); } const box=document.querySelector('.messages'); box.scrollTop=0; })()`);
+    await t.waitSel(".tolatest");
+    const before = await t.ev<number>(`+document.querySelector('.messages').dataset.count`);
+    await t.click(".tolatest");
+    await t.ok("the list is at the bottom", `(()=>{const b=document.querySelector('.messages'); return b.scrollHeight-b.scrollTop-b.clientHeight<120})()`);
+    await t.ok("the newest message is rendered", `(()=>{const m=[...document.querySelectorAll('.messages .msg')].pop(), b=document.querySelector('.messages').getBoundingClientRect(); return m && m.getBoundingClientRect().bottom<=b.bottom+4 && m.getBoundingClientRect().bottom>b.top})()`);
+    await t.waitFor(`!document.querySelector('.tolatest')`);
+    t.check("older pages stay loaded", (await t.ev<number>(`+document.querySelector('.messages').dataset.count`)) >= before);
+  }, { timeout: 90000 }),
+
+  test("a sent message shows instantly (pending), then becomes the real one without a duplicate", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    await t.ev(`globalThis.__mockSlowSend=1200`);
+    const n = await t.ev<number>(`document.querySelectorAll('.messages .msg').length`);
+    await t.typeIn("instant hello"); await t.enter();
+    await t.ok("it is in the list at once, marked as sending", `(()=>{const m=__e2e.msg("instant hello"); return !!m && m.classList.contains('pend') && /^pend-/.test(m.dataset.mid)})()`, );
+    t.check("the backend has not answered yet", (await t.ev<number>(`(globalThis.__mockSendLog||[]).length`)) === 0);
+    await t.ok("the real message replaces it", `(()=>{const l=[...document.querySelectorAll('.messages .msg')].filter(m=>/instant hello/.test(m.textContent)); return l.length===1 && !l[0].classList.contains('pend') && !/^pend-/.test(l[0].dataset.mid)})()`);
+    await t.eq("exactly one message was added", `document.querySelectorAll('.messages .msg').length`, n + 1);
+    await t.ev(`globalThis.__mockSlowSend=0`);
+  }),
+
+  test("a pending message keeps its place before later ones, and a failed slow send turns into Retry", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    await t.ev(`globalThis.__mockSlowSend=800`);
+    await t.typeIn("/fail slow one"); await t.enter();
+    await t.ok("shown pending first", `(()=>{const m=__e2e.msg("/fail slow one"); return !!m && m.classList.contains('pend')})()`);
+    await t.waitSel(".msg button", "Retry");
+    await t.eq("one failed row, the placeholder is gone", `[...document.querySelectorAll('.messages .msg')].filter(m=>/slow one/.test(m.textContent)).length`, 1);
+    await t.ok("it is the last message", `(()=>{const l=[...document.querySelectorAll('.messages .msg')]; return /slow one/.test(l[l.length-1].textContent)})()`);
+    await t.ev(`globalThis.__mockSlowSend=0`);
+  }),
+
+  test("two quick pending sends stay in order and are not duplicated", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    const n = await t.ev<number>(`document.querySelectorAll('.messages .msg').length`);
+    await t.ev(`globalThis.__mockSlowSend=500`);
+    await t.typeIn("first"); await t.enter(); await t.typeIn("second"); await t.enter();
+    await t.ok("both pending, in order", `(()=>{const l=[...document.querySelectorAll('.messages .msg.pend')].map(m=>m.textContent); return l.length===2 && /first/.test(l[0]) && /second/.test(l[1])})()`);
+    await t.ok("both become real", `!document.querySelector('.msg.pend') && !!__e2e.msg("first") && !!__e2e.msg("second")`);
+    await t.ok("in order, one row each", `(()=>{const a=__e2e.msg("first"), b=__e2e.msg("second"); return !!(a.compareDocumentPosition(b)&4) && [...document.querySelectorAll('.messages .msg')].length===${n}+2})()`);
+    await t.ev(`globalThis.__mockSlowSend=0`);
+  }),
+
+  test("a pending reply shows its quote at once and is not duplicated", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    await t.waitSel(".messages .msg");
+    const target = "Are we still on for Saturday?"; await t.waitFor(`__e2e.msg(${JSON.stringify(target)})`);
+    await msgMenu(t, target); await t.click(".ctxmenu button", /Reply/);
+    await t.ev(`globalThis.__mockSlowSend=700`);
+    await t.typeIn("quoted answer"); await t.enter();
+    await t.ok("pending with a quote", `(()=>{const m=__e2e.msg("quoted answer"); return !!m && m.classList.contains('pend') && !!m.querySelector('.quote')})()`);
+    await t.ok("real one has the quote, once", `(()=>{const l=[...document.querySelectorAll('.messages .msg')].filter(m=>/quoted answer/.test(m.textContent)); return l.length===1 && !l[0].classList.contains('pend') && !!l[0].querySelector('.quote')})()`);
+    await t.ev(`globalThis.__mockSlowSend=0`);
+  }),
+
+  test("contact info: no messenger chips under the name; the networks of a merged chat are listed in their own section", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    await t.click("main header .titlebtn");
+    await t.waitSel("aside.info .hero h2");
+    await t.eq("no provider chips in the hero", `document.querySelectorAll('aside.info .hero .tag.brand').length`, 0);
+    await t.ev(`window.__mockCall('mergeChats',{chatIds:['wa-1:anna','mx-1:@anna:matrix.org']}).then(r=>window.dispatchEvent(new CustomEvent('unichat-open-chat',{detail:r.id})))`);
+    await t.waitSel("aside.info .mergesec .netrow");
+    await t.eq("still no chips for a merged chat", `document.querySelectorAll('aside.info .hero .tag.brand').length`, 0);
+    await t.ok("the networks section lists both", `document.querySelectorAll('aside.info .mergesec .netrow .pi').length>=2`);
+  }),
+
+  test("contact info lists the communities in common (icon + name); a click opens that community", async (t) => {
+    await t.open("&chat=wa-1:anna&info=1");
+    await t.waitSel("[data-common-communities] .netrow");
+    await t.eq("two communities listed", `document.querySelectorAll('[data-common-communities] .netrow').length`, 2);
+    await t.ok("with name and community icon", `(()=>{const r=document.querySelector('[data-common-communities] [data-space="wa-1:hike"]'); return !!r && /Hiking Club/.test(r.textContent) && !!r.querySelector('.avatar')})()`);
+    await t.ok("the heading counts them", `/Communities in common · 2/.test(document.querySelector('[data-common-communities] h4').textContent)`);
+    await t.click('[data-common-communities] [data-space="wa-1:hike"]');
+    await t.ok("the community is open: its chats are listed, a personal chat is not", `!!document.querySelector('.chats li[data-chat="wa-1:hike-trips"]') && !document.querySelector('.chats li[data-chat="wa-1:anna"]')`);
+  }),
 ];

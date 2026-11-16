@@ -29,7 +29,7 @@ import { getOwnProfile, updateOwnProfile } from "./ownProfile.js";
 import { applyVote, pollView, registerPoll } from "./polls.js";
 import { Aci } from "@signalapp/libsignal-client";
 import { downloadAttachment } from "./attachments.js";
-import { attachDebug, checkAttachments, pinnedHttp, uploadAttachment, type CdnHttp, type SignalOutgoingAttachment } from "./attachmentUpload.js";
+import { AttachmentUploadError, attachDebug, checkAttachments, pinnedHttp, uploadAttachment, type CdnHttp, type SignalOutgoingAttachment } from "./attachmentUpload.js";
 import { parseContactStream } from "./contacts.js";
 import { renderPreview } from "./richContent.js";
 import { LookupError, lookupE164, lookupUsername, parseHandle } from "./lookup.js";
@@ -77,6 +77,8 @@ export class SignalClient {
   previewDeps: PreviewDeps = {};
   /** Smallest group (other members) that uses one sender-key multi-recipient request; smaller groups are cheaper pairwise. Tests lower it. */
   multiRecipientMin = 2;
+  /** Backoff before re-trying a failed (retryable) per-recipient delivery or sync transcript. Tests zero it. */
+  sendRetryDelaysMs = [500, 2000];
   private unauthConn?: UnauthChat;
   private unauthPending?: Promise<UnauthChat | undefined>;
   private editor?: GroupEditor;
@@ -259,7 +261,9 @@ export class SignalClient {
       {
         onChanged: () => this.emit({ type: "chats-changed", data: {} }),
         onProfileKey: (aci) => { this.peerProfiles?.enqueue(aci); this.peerAvatars?.keyChanged(aci); },
-        onPni: (pni, aci) => { this.inbound.learnPni(pni, aci); },
+        onPni: (pni, aci) => { this.inbound.learnPni(pni, aci, "storage-record"); },
+        onPniNumber: (pni, e164) => { this.inbound.notePniNumber(pni, e164, "storage-record"); },
+        onNumber: (aci, e164) => { this.inbound.linkByNumber(aci, e164, "storage-record"); },
         onNewGroups: (ids) => { for (const id of ids) void this.groups.request(id); },
       },
     );
@@ -285,7 +289,7 @@ export class SignalClient {
     const known = this.store.data.contacts; let added = 0, dirty = false;
     for (const it of list) {
       const id = String(it.aci ?? "").toLowerCase();
-      if (it.pni) { try { this.inbound.learnPni(it.pni, id); } catch { /* best effort */ } } // the backup names both identifiers of one person
+      if (it.pni) { try { this.inbound.learnPni(it.pni, id, "backup"); } catch { /* best effort */ } } // the backup names both identifiers of one person
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) || id === this.ours.toLowerCase()) continue;
       if (known[id]?.blocked || known[id]?.localBlocked) continue;
       const key = typeof it.profileKey === "string" && Buffer.from(it.profileKey, "base64").length === 32 ? Buffer.from(it.profileKey, "base64").toString("base64") : undefined;
@@ -327,6 +331,7 @@ export class SignalClient {
         resolveContactName(merged);
         known[c.aci] = merged;
         if (!this.store.data.chats[c.aci]) this.store.upsertChat({ id: c.aci, kind: "dm" });
+        this.inbound.linkByNumber(c.aci, c.number, "contact-sync"); // ContactDetails has no PNI field; the number ties it to a PNI chat our phone made
         if (expireTimer !== undefined) this.store.data.chats[c.aci]!.expireTimer = expireTimer;
       }
       this.store.touch();
@@ -500,19 +505,32 @@ export class SignalClient {
         });
       } catch (e) { lastError = e; multi = { mode: "sealed", delivered: 0, failed: members.length, fallback: 0 }; }
     }
-    if (multi) { delivered = multi.delivered; failed = multi.failed; fallback = multi.fallback; sealedCount = multi.delivered; anyResult = true; }
-    else {
-      for (const m of members) {
+    const failedMembers: string[] = [];
+    const perMember = async (m: string): Promise<boolean> => {
+      for (let i = 0; ; i++) {
         try {
           const r: DeliverResult | void = await this.sender.deliver(m, content, timestamp, "message", { groupId });
           delivered++;
           if (r) { anyResult = true; if (r.mode === "sealed") sealedCount++; else if (r.fallback) fallback++; }
-        } catch (e) { failed++; lastError = e; }
+          return true;
+        } catch (e) {
+          lastError = e;
+          const delay = this.sendRetryDelaysMs[i];
+          if (delay === undefined || !isRetryableSend(e)) return false;
+          await new Promise((r) => setTimeout(r, delay));
+        }
       }
+    };
+    if (multi) {
+      delivered = multi.delivered; failed = multi.failed; fallback = multi.fallback; sealedCount = multi.delivered; anyResult = true;
+      // members the single sealed request could not cover get an individual (authenticated-capable, retrying) delivery
+      for (const m of multi.retry ?? []) { if (await perMember(m)) failed--; else failedMembers.push(m); }
+    } else {
+      for (const m of members) { if (!(await perMember(m))) { failed++; failedMembers.push(m); } }
     }
     let sync = "none";
     if (members.length === 0 || delivered > 0) {
-      try { await this.sender.deliver(this.ours, { syncMessage: { sent: { timestamp, ...transcript } } }, timestamp, "sync"); sync = "ok"; }
+      try { await this.withSendRetry(() => this.sender.deliver(this.ours, { syncMessage: { sent: { timestamp, ...transcript } } }, timestamp, "sync")); sync = "ok"; }
       catch (e) {
         sync = "failed";
         if (members.length === 0) { groupsDebug(`send members=0 delivered=0 failed=0 sync=failed`); throw e; }
@@ -526,8 +544,9 @@ export class SignalClient {
       throw new Error(`The message could not be delivered to anyone in this group.${reason}`);
     }
     if (failed > 0) {
+      const names = failedMembers.map((m) => this.nameOf(m)).filter((n): n is string => !!n);
       this.emit({ type: "error", data: { id: this.opts.accountId, code: "group-partial-send",
-        message: `The message was not delivered to ${failed} ${failed === 1 ? "person" : "people"} in this group.` } });
+        message: `The message was not delivered to ${failed} ${failed === 1 ? "person" : "people"} in this group${names.length ? ` (${names.join(", ")})` : ""}.` } });
     }
   }
   private profileKey(): Uint8Array | undefined {
@@ -535,17 +554,28 @@ export class SignalClient {
     return k ? new Uint8Array(Buffer.from(k, "base64")) : undefined;
   }
 
+  private async withSendRetry<T>(fn: () => Promise<T>): Promise<T> {
+    for (let i = 0; ; i++) {
+      try { return await fn(); }
+      catch (e) {
+        const delay = this.sendRetryDelaysMs[i];
+        if (delay === undefined || !isRetryableSend(e)) throw e;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
   /** Send `content` to the peer, then mirror it to our other devices as a sent-transcript. */
   private async sendAndSync(peer: string, content: Content, timestamp: number, transcript: { message?: DataMessage; editMessage?: EditMessage }): Promise<void> {
     const self = peer.toLowerCase() === this.ours.toLowerCase();
     if (!self) {
       try {
-        const r: DeliverResult | void = await this.sender.deliver(peer, content, timestamp, "message");
+        const r: DeliverResult | void = await this.withSendRetry(() => this.sender.deliver(peer, content, timestamp, "message"));
         if (r) sendDebug(r.mode, 1, 1, 0, r.fallback ? 1 : 0);
       } catch (e) { if (this.sender.deps.sealed) sendDebug("authenticated", 1, 0, 1, 0); throw e; }
     }
     try {
-      await this.sender.deliver(this.ours, { syncMessage: { sent: { destinationServiceId: peer, timestamp, ...transcript } } }, timestamp, "sync");
+      await this.withSendRetry(() => this.sender.deliver(this.ours, { syncMessage: { sent: { destinationServiceId: peer, timestamp, ...transcript } } }, timestamp, "sync"));
     } catch (e) {
       if (self) throw e; // note-to-self depends on the sync copy
       this.emit({ type: "error", data: { id: this.opts.accountId, code: "sync-failed", message: `delivered, but syncing to other devices failed: ${describe(e)}` } });
@@ -715,10 +745,12 @@ export class SignalClient {
     if (!outAtt.length && !msg.poll && !msg.contacts?.length) previewImage = await this.attachLinkPreview(dm, msg, timestamp);
     const attBytes = outAtt.reduce((n, a) => n + a.data.length, 0);
     this.tag(t, dm);
-    try { await this.dispatch(t, { dataMessage: dm }, timestamp, { message: dm }); }
-    catch (e) { if (outAtt.length) attachDebug("send", attBytes, 0, `error:${e instanceof Error ? e.name : "unknown"}`); throw e; }
-    if (outAtt.length) attachDebug("send", attBytes, 0, "ok");
+    // Index the message BEFORE it goes out: a receipt can overtake send() (it arrives while the sync transcript is still being sent).
     const id = messageId(this.ours, timestamp);
+    this.inbound.holdSent(id, peer);
+    try { await this.dispatch(t, { dataMessage: dm }, timestamp, { message: dm }); }
+    catch (e) { this.inbound.abortSent(id); if (outAtt.length) attachDebug("send", attBytes, 0, `error:${e instanceof Error ? e.name : "unknown"}`); throw e; }
+    if (outAtt.length) attachDebug("send", attBytes, 0, "ok");
     const sentAtt = (dm.attachments ?? []).map((p, i): import("@unimsg/core").Attachment => {
       const aid = `${id}#${i}`, o = outAtt[i]!;
       this.store.rememberAttachment(aid, { cdnNumber: p.cdnNumber, cdnKey: p.cdnKey, key: Buffer.from(p.key!).toString("base64"), digest: Buffer.from(p.digest!).toString("base64"), size: p.size, contentType: p.contentType, fileName: p.fileName });
@@ -735,6 +767,7 @@ export class SignalClient {
     }
     this.store.indexSent(id, peer);
     this.store.upsertChat({ id: peer, kind: t.group ? "group" : "dm", lastMessageAt: new Date(timestamp).toISOString() });
+    this.inbound.releaseSent(id); // early receipts are delivered after the caller has the Message
     return {
       id, chatId: peer, sender: "Me", senderId: this.ours, text: msg.text, time: new Date(timestamp).toISOString(), fromMe: true,
       status: "sent", ...(msg.forwarded ? { forwarded: true } : {}), ...(timer ? { expiresIn: timer } : {}),
@@ -751,25 +784,40 @@ export class SignalClient {
    * message without a preview. Off when OutgoingMessage.linkPreview === false or the account setting (synced from the phone) is off.
    */
   private async attachLinkPreview(dm: DataMessage, msg: OutgoingMessage, timestamp: number): Promise<{ data: Uint8Array; mime: string } | undefined> {
-    if ((msg as { linkPreview?: boolean }).linkPreview === false || this.store.requireAccount().linkPreviews === false) return undefined;
-    const found = firstUrl(msg.text);
-    if (!found || !/^https:/i.test(found.url)) return undefined;
+    // A link preview must NEVER make a text message fail or hang: everything below is isolated, its image upload does not retry,
+    // the whole attempt has a time budget, and nothing is written into `dm` unless the attempt finished in time.
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const p = await this.previewFetcher(found.url);
-      const preview: NonNullable<DataMessage["preview"]>[number] = { url: p.url, title: p.title || new URL(p.url).hostname, date: timestamp };
-      if (p.description) preview.description = p.description;
-      let uploaded = false;
-      if (p.image) {
-        try { preview.image = await uploadAttachment(this.requireChat(), this.cdnHttp, { kind: "image", mime: p.image.mime, data: p.image.data }, Date.now()); uploaded = true; }
-        catch { /* send the preview without its picture */ }
-      }
-      dm.preview = [preview];
-      previewDebug("ok", uploaded);
-      return uploaded ? p.image : undefined;
+      const result = await Promise.race([
+        this.buildLinkPreview(msg, timestamp),
+        new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), this.linkPreviewBudgetMs); }),
+      ]);
+      if (!result) return undefined;
+      dm.preview = [result.preview];
+      previewDebug("ok", !!result.image);
+      return result.image;
     } catch (e) {
       previewDebug(e instanceof PreviewError ? e.reason : "error", false);
       return undefined;
+    } finally { if (timer) clearTimeout(timer); }
+  }
+  /** Overall time budget of the preview attempt (page fetch + image upload). */
+  private linkPreviewBudgetMs = 20_000;
+
+  private async buildLinkPreview(msg: OutgoingMessage, timestamp: number): Promise<{ preview: NonNullable<DataMessage["preview"]>[number]; image?: { data: Uint8Array; mime: string } } | undefined> {
+    if ((msg as { linkPreview?: boolean }).linkPreview === false || this.store.requireAccount().linkPreviews === false) return undefined;
+    const found = firstUrl(msg.text);
+    if (!found || !/^https:/i.test(found.url)) return undefined;
+    const p = await this.previewFetcher(found.url);
+    const preview: NonNullable<DataMessage["preview"]>[number] = { url: p.url, title: p.title || new URL(p.url).hostname, date: timestamp };
+    if (p.description) preview.description = p.description;
+    let image: { data: Uint8Array; mime: string } | undefined;
+    if (p.image) {
+      // upload failure (form refused, CDN down, ...) only costs the picture; the text and the title/description card still go out
+      try { preview.image = await uploadAttachment(this.requireChat(), this.cdnHttp, { kind: "image", mime: p.image.mime, data: p.image.data }, Date.now(), { retries: 0 }); image = p.image; }
+      catch (e) { previewDebug(`image-upload-failed:${e instanceof AttachmentUploadError ? e.errClass : "error"}`, false); }
     }
+    return { preview, image };
   }
 
   // ---------- Groups v2 management ----------
@@ -993,22 +1041,41 @@ export class SignalClient {
   }
 
   /**
-   * Marks `upToMessageId` read. LIMITATION: the provider keeps no message log, so only that single
-   * message's timestamp is acknowledged (not every older unread message).
+   * Marks everything up to `upToMessageId` read: the message itself AND every older incoming message of that chat still
+   * unread (tracked in the store), acknowledged per author (also in groups) with one READ receipt each, plus a read sync
+   * to our other devices so the phone clears them too.
    */
   async markRead(chatId: string, upToMessageId: string): Promise<void> {
     const t = parseMessageId(upToMessageId);
-    const rec = this.store.data.chats[chatId]; if (rec) { rec.unread = 0; this.store.touch(); } // receipts go to the message author, also in groups
-    if (t.author.toLowerCase() === this.ours.toLowerCase()) return; // own message: nothing to acknowledge
-    const timestamp = this.nextTimestamp();
-    if (this.store.account?.readReceipts) {
-      await this.sender.deliver(t.author, { receiptMessage: { type: ReceiptType.READ, timestamp: [t.timestamp] } }, timestamp, "message", { urgent: false });
+    const me = this.ours.toLowerCase();
+    const rec = this.store.data.chats[chatId]; if (rec) { rec.unread = 0; this.store.touch(); }
+    const ids = new Set(this.store.takeUnread(chatId, t.timestamp));
+    if (t.author.toLowerCase() !== me) ids.add(messageId(t.author, t.timestamp));
+    const byAuthor = new Map<string, number[]>();
+    for (const id of ids) {
+      const m = parseMessageId(id);
+      if (m.author.toLowerCase() === me) continue;
+      byAuthor.set(m.author, [...(byAuthor.get(m.author) ?? []), m.timestamp]);
     }
-    await this.sender.deliver(this.ours, { syncMessage: { read: [{ senderAci: t.author, timestamp: t.timestamp }] } }, timestamp, "sync").catch(() => {});
+    if (byAuthor.size === 0) return;
+    const timestamp = this.nextTimestamp();
+    let firstError: unknown;
+    if (this.store.account?.readReceipts) {
+      for (const [author, stamps] of byAuthor) {
+        try { await this.sender.deliver(author, { receiptMessage: { type: ReceiptType.READ, timestamp: stamps.sort((a, b) => a - b) } }, timestamp, "message", { urgent: false }); }
+        catch (e) { firstError ??= e; }
+      }
+    }
+    const read = [...byAuthor].flatMap(([senderAci, stamps]) => stamps.map((ts) => ({ senderAci, timestamp: ts })));
+    await this.sender.deliver(this.ours, { syncMessage: { read } }, timestamp, "sync").catch(() => {});
+    if (firstError) throw firstError;
   }
 }
 
 /** `[signal] send: mode=<sealed|authenticated> recipients=N delivered=N failed=N fallback=N` (counts only). */
+/** Errors worth another attempt: rate limits / 5xx / connection trouble; not "unregistered", captcha, or local bugs. */
+export const isRetryableSend = (e: unknown): boolean => e instanceof SendError ? e.retryable : e instanceof Error && /\b(IoError|Timeout|timeout|ECONN|ChatServiceInactive|ConnectionInvalidated|ConnectedElsewhere)\b/.test(`${e.name} ${e.message} ${(e as { code?: unknown }).code ?? ""}`);
+
 export const sendDebug = (mode: "sealed" | "authenticated", recipients: number, delivered: number, failed: number, fallback: number) => {
   if (process.env.UNIMSG_DEBUG === "1") console.debug(`[signal] send: mode=${mode} recipients=${recipients} delivered=${delivered} failed=${failed} fallback=${fallback}`);
 };

@@ -3,7 +3,7 @@
 //   Backend (packages/core/src/whatsappimport): whatsappBackupInspect (no writes) / whatsappBackupImport / whatsappBackupCancel, progress on `backup-progress` (op "whatsapp-import" / "whatsapp-inspect").
 //   Format: msgstore.db.crypt15 + the 64-digit key of end-to-end encrypted backup (or crypt14 + the 158-byte `key` file, root only).
 import { useEffect, useRef, useState } from "react";
-import { core, fmtBytes } from "./util";
+import { core, fmtBytes, fmtDateTime, fmtDate } from "./util";
 import { native, upload, useProgress, type Prog } from "./backupShared";
 import { SafBackupFinder, safAvailable, safDiscard } from "./SafBackupFinder";
 import "./backup.css";
@@ -100,7 +100,7 @@ export function WhatsAppBackupImport({ onOpenChats, accountId }: { onOpenChats?:
         <table><tbody>
           <tr><td>Messages</td><td id="wbi-n-msgs">{info.messages.toLocaleString()}</td></tr>
           <tr><td>Conversations</td><td id="wbi-n-chats">{info.chats.total} ({info.chats.dms} one-to-one, {info.chats.groups} groups)</td></tr>
-          <tr><td>Time span</td><td>{info.firstAt ? `${new Date(info.firstAt).toLocaleDateString()} to ${new Date(info.lastAt).toLocaleDateString()}` : "-"}</td></tr>
+          <tr><td>Time span</td><td>{info.firstAt ? `${fmtDate(info.firstAt, {})} to ${fmtDate(info.lastAt, {})}` : "-"}</td></tr>
           <tr><td>Photos, videos, files</td><td id="wbi-n-att">{info.canAttachments ? `${info.attachments.present} of ${info.attachments.count} found in the Media folder (${fmtBytes(info.attachments.bytes)} listed)` : `${info.attachments.count} (no Media folder found next to this backup file)`}</td></tr>
         </tbody></table>
         {info.topChats?.length > 0 && <details><summary className="sub">Largest conversations</summary><ul className="hint">{info.topChats.map((c: any, i: number) => <li key={i}>{c.name}: {c.messages}</li>)}</ul></details>}

@@ -31,6 +31,7 @@ public class NodeService extends Service {
     private final Handler main = new Handler(Looper.getMainLooper());
     private NetworkMonitor network;
     private android.net.wifi.WifiManager.MulticastLock multicast;
+    private android.net.wifi.WifiManager.WifiLock wifi; // keeps the Wi-Fi radio out of power save so the PC can reach the sync listener while the screen is off
 
     static int fgsType() {
         if (Build.VERSION.SDK_INT < 34) return 0;
@@ -82,8 +83,15 @@ public class NodeService extends Service {
             boolean want = new NativePrefs(this).syncGroup();
             if (want && multicast == null) {
                 android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-                if (wm != null) { multicast = wm.createMulticastLock("unichat-sync-svc"); multicast.setReferenceCounted(false); multicast.acquire(); }
-            } else if (!want && multicast != null) { multicast.release(); multicast = null; }
+                if (wm != null) {
+                    multicast = wm.createMulticastLock("unichat-sync-svc"); multicast.setReferenceCounted(false); multicast.acquire();
+                    wifi = wm.createWifiLock(android.os.Build.VERSION.SDK_INT >= 29 ? android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY : android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "unichat-sync-wifi");
+                    wifi.setReferenceCounted(false); wifi.acquire();
+                }
+            } else if (!want && multicast != null) {
+                multicast.release(); multicast = null;
+                if (wifi != null) { if (wifi.isHeld()) wifi.release(); wifi = null; }
+            }
         } catch (Exception e) { Log.w(TAG, "multicast lock: " + e.getMessage()); }
     }
 
@@ -92,6 +100,7 @@ public class NodeService extends Service {
     @Override public void onDestroy() {
         if (network != null) network.stop();
         try { if (multicast != null && multicast.isHeld()) multicast.release(); } catch (Exception ignored) { }
+        try { if (wifi != null && wifi.isHeld()) wifi.release(); } catch (Exception ignored) { }
         instance = null; super.onDestroy();
     }
 

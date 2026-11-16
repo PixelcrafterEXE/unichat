@@ -103,6 +103,8 @@ export interface StoreShape {
   identities: Record<string, string>;
   /** PNI (phone-number identity UUID) -> ACI of the same person, from storage records or a verified PniSignatureMessage. Optional: absent in older stores. */
   pnis?: Record<string, string>;
+  /** PNI -> E.164 the phone itself told us belongs to that PNI (sent-message transcript, storage record without ACI). Used to link a PNI chat to the ACI that later shows up with the same number. */
+  pniNumbers?: Record<string, string>;
   senderKeys: Record<string, string>;
   preKeys: Record<string, string>;
   signedPreKeys: Record<string, string>;
@@ -116,6 +118,10 @@ export interface StoreShape {
   chats: Record<string, ChatRecord>;
   /** messageId -> chatId for our own sent messages (receipt routing), bounded */
   sentIndex: Record<string, string>;
+  /** chatId -> ids of incoming messages not yet acknowledged as read (here or on another device), bounded. Absent in older stores. */
+  unreadIds?: Record<string, string[]>;
+  /** id of an EDIT revision (author.editTimestamp) -> id of the original message, so a later edit that targets the latest revision finds the message. Bounded, absent in older stores. */
+  editAlias?: Record<string, string>;
   /** messageId -> reactions: emoji -> sender ids */
   reactions: Record<string, Record<string, string[]>>;
   /** peer ACI -> display name learned from nothing yet (profiles TODO); kept for forward compat */

@@ -55,4 +55,25 @@ export default [
     await settings(t, "Appearance");
     await t.ok("appearance section opens with the collapse setting", `document.querySelector('#collapseSingle')`);
   }, { init: `try{localStorage.setItem('unimsg.settings',JSON.stringify({theme:'light'}))}catch(e){}` }),
+
+  test("date format setting: applies live to the day separators, is remembered, and 'System default' restores the old look", async (t) => {
+    await t.open("&chat=mx-1:!rust-general");
+    await t.waitSel(".messages .daysep");
+    const seps = `[...document.querySelectorAll('.messages .daysep')].map(e=>e.textContent).filter(x=>x!=='Today'&&x!=='Yesterday')`;
+    const before = await t.ev<string[]>(seps);
+    t.check("the chat has an older day separator", before.length > 0, JSON.stringify(before));
+    t.check("system default writes a month name", /[A-Za-z]{3}/.test(before[0] ?? ""), before[0]);
+    const pick = (v: string) => t.ev(`(()=>{const s=document.querySelector('#dateFormat'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,${JSON.stringify(v)}); s.dispatchEvent(new Event('change',{bubbles:true}))})()`);
+    await settings(t, "Appearance");
+    await t.waitSel("#dateFormat");
+    t.check("offers the formats", (await t.ev<number>(`document.querySelectorAll('#dateFormat option').length`)) === 5);
+    for (const [v, re] of [["ymd", "^[A-Za-z]+, \\d{4}-\\d{2}-\\d{2}$"], ["dmy", "^[A-Za-z]+, \\d{2}\\.\\d{2}\\.\\d{4}$"], ["mdy", "^[A-Za-z]+, \\d{2}/\\d{2}/\\d{4}$"], ["dmon", "^[A-Za-z]+, \\d{1,2} [A-Za-z]{3}\\.? \\d{4}$"]] as const) {
+      await pick(v);
+      await t.ok(`${v}: separators use the format`, `(${seps}).every(x=>new RegExp(${JSON.stringify(re)}).test(x))`);
+    }
+    await pick("ymd");
+    await t.ok("remembered in the settings", `JSON.parse(localStorage.getItem('unimsg.settings')).dateFormat==='ymd'`);
+    await pick("system");
+    await t.ok("system default restores the original text", `JSON.stringify(${seps})===${JSON.stringify(JSON.stringify(before))}`);
+  }),
 ];

@@ -9,7 +9,7 @@ import { IdentityKeyPair } from "@signalapp/libsignal-client";
 import type { CoreEvent } from "@unimsg/core";
 import { ContentCodec, type Content } from "../protocol/codec.js";
 import { decryptAttachmentBlob } from "../service/attachments.js";
-import { paddedSize, type CdnHttp, type HttpReq } from "../service/attachmentUpload.js";
+import { paddedSize, uploadRetry, type CdnHttp, type HttpReq } from "../service/attachmentUpload.js";
 import { SignalClient } from "../service/client.js";
 import { groupChatId, groupIdFromMasterKey } from "../service/groups.js";
 import { readFileSync } from "node:fs";
@@ -154,7 +154,7 @@ test("errors are plain-language, leak nothing, and send nothing", async () => {
   const f = await setup({ form: { status: 413 } });
   await assert.rejects(f.client.send(A, { text: "", attachments: [{ kind: "file", mime: "x/y", data: new Uint8Array(10) }] }), /too large/);
   const f2 = await setup({ form: { status: 200, body: "garbage" } });
-  await assert.rejects(f2.client.send(A, { text: "", attachments: [{ kind: "file", mime: "x/y", data: new Uint8Array(10) }] }), (e: Error) => /didn't accept/.test(e.message) && !/ATT-KEY|json|cdn|HTTP/.test(e.message));
+  await assert.rejects(f2.client.send(A, { text: "", attachments: [{ kind: "file", mime: "x/y", data: new Uint8Array(10) }] }), (e: Error) => /didn't accept/.test(e.message) && /malformed/.test(e.message) && !/ATT-KEY|json|cdn[23]/.test(e.message));
   const u = await setup({ cdnStatus: 413 });
   await assert.rejects(u.client.send(A, { text: "", attachments: [{ kind: "file", mime: "x/y", data: new Uint8Array(10) }] }), /too large/);
   const u2 = await setup({ cdnStatus: 403 });
@@ -178,4 +178,81 @@ test("debug lines carry step, byte count, cdn and result only", async () => {
   assert.equal(lines[3], "[signal] attachment upload: step=send bytes=10 cdn=0 result=ok");
   assert.ok(lines.some((l) => l.includes("step=upload") && l.includes("result=error:http-403")));
   assert.ok(!lines.join("\n").includes("secret"));
+});
+
+// ---------- #48: specific errors, retry, cdn2/cdn3 flow ----------
+uploadRetry.delaysMs = [0, 0, 0]; uploadRetry.sleep = async () => {};
+const oneFile = { kind: "file" as const, mime: "x/y", data: new Uint8Array(10) };
+
+test("form refused: the error names the stage and HTTP status", async () => {
+  const f = await setup({ form: { status: 403 } });
+  await assert.rejects(f.client.send(A, { text: "", attachments: [oneFile] }), /refused the attachment upload request \(upload form, HTTP 403\)/);
+  assert.equal(f.formCalls.length, 1, "403 is not transient: no retry");
+  assert.equal(f.calls.length, 0);
+});
+
+test("transient form 503 is retried and then succeeds; persistent 503 surfaces after the retries", async () => {
+  const h = await setup();
+  let n = 0; const real = (h.client as never as { chatConn: { fetch: (r: unknown) => Promise<{ status: number; body: Buffer }> } }).chatConn;
+  const ok = real.fetch;
+  real.fetch = async (r) => (++n < 3 ? { status: 503, body: Buffer.from("") } : ok(r));
+  const m = await h.client.send(A, { text: "", attachments: [oneFile] });
+  assert.equal(n, 3); assert.equal(m.attachments!.length, 1);
+  const g = await setup({ form: { status: 503 } });
+  await assert.rejects(g.client.send(A, { text: "", attachments: [oneFile] }), /HTTP 503/);
+  assert.equal(g.formCalls.length, 4); assert.equal(g.calls.length, 0);
+});
+
+test("429 on the form is retried", async () => {
+  const g = await setup({ form: { status: 429 } });
+  await assert.rejects(g.client.send(A, { text: "", attachments: [oneFile] }), /too fast/);
+  assert.equal(g.formCalls.length, 4);
+});
+
+for (const cdn of [2, 3] as const) {
+  test(`cdn${cdn}: transient CDN 502 on the data transfer restarts the resumable session; 403 on the session start says attributes rejected`, async () => {
+    const h = await setup({ cdn });
+    let puts = 0; const inner = (h.client as never as { cdnHttp: CdnHttp }).cdnHttp;
+    (h.client as never as { cdnHttp: CdnHttp }).cdnHttp = async (r) => (r.method !== "POST" && puts++ === 0 ? { status: 502, headers: {} } : inner(r));
+    await h.client.send(A, { text: "", attachments: [oneFile] });
+    assert.equal(h.reqs.length, 3, "POST, PATCH/PUT(502, not recorded by the inner fake), POST, PATCH/PUT => inner saw POST, POST, PATCH/PUT");
+    assert.equal(h.stored.length, 1);
+    if (cdn === 2) for (const r of h.reqs.filter((x) => x.method === "POST")) assert.equal(r.headers["x-goog-resumable"], "start");
+    const bad = await setup({ cdn, cdnStatus: 403 });
+    await assert.rejects(bad.client.send(A, { text: "", attachments: [oneFile] }), /attributes rejected\), HTTP 403/);
+    assert.equal(bad.reqs.length, 1);
+    const down = await setup({ cdn, cdnStatus: 500 });
+    await assert.rejects(down.client.send(A, { text: "", attachments: [oneFile] }), /HTTP 500/);
+    assert.equal(down.reqs.length, 4);
+  });
+}
+
+test("text-only message never touches the upload endpoints", async () => {
+  const h = await setup({ form: { status: 500 } });
+  const m = await h.client.send(A, { text: "just text, no link" });
+  assert.equal(m.text, "just text, no link"); assert.equal(h.formCalls.length, 0); assert.equal(h.calls.filter((c) => c.mode === "message").length, 1);
+});
+
+test("link preview image upload failing (form 500 / CDN down / form 403) silently keeps the text going", async () => {
+  for (const o of [{ form: { status: 500 } }, { cdnStatus: 500 }, { form: { status: 403 } }]) {
+    const h = await setup(o);
+    (h.client as never as { previewFetcher: unknown }).previewFetcher = async () => ({ url: "https://x.test/", title: "T", image: { data: new Uint8Array([1, 2, 3]), mime: "image/png" } });
+    const m = await h.client.send(A, { text: "see https://x.test/ ok" });
+    const dm = h.calls.find((c) => c.mode === "message")!.content.dataMessage!;
+    assert.equal(dm.body, "see https://x.test/ ok"); assert.equal(m.status, "sent");
+    assert.equal(dm.preview?.[0]?.image, undefined, "no image pointer without a successful upload");
+    assert.equal(h.formCalls.length, 1, "the preview upload is not retried");
+  }
+  const t = await setup();
+  (t.client as never as { previewFetcher: unknown }).previewFetcher = async () => { throw new Error("boom"); };
+  await t.client.send(A, { text: "https://x.test/" });
+  assert.equal(t.calls.filter((c) => c.mode === "message").length, 1);
+});
+
+test("a hung preview fetch cannot delay the text beyond the budget", async () => {
+  const h = await setup();
+  const priv = h.client as never as { previewFetcher: unknown; linkPreviewBudgetMs: number };
+  priv.linkPreviewBudgetMs = 30; priv.previewFetcher = () => new Promise(() => {});
+  await h.client.send(A, { text: "https://x.test/" });
+  assert.equal(h.calls.filter((c) => c.mode === "message")[0]!.content.dataMessage!.preview, undefined);
 });

@@ -207,11 +207,12 @@ test("a revoked device cannot relay any more and its answers are forgotten", asy
   const { n: A, w } = await holder("Laptop"); const { n: B } = await mirror("Phone");
   await pairUp(A, B); await hasMirror(B); await allow(A, B);
   await until(async () => (await acct(B))?.state === "connected", "online", 15_000);
-  await A.call("syncRevoke", { deviceId: id(B) });
+  const bid = id(B);
+  await A.call("syncRevoke", { deviceId: bid }); // a group of two: both unlink
   await assert.rejects(B.call("send", { chatId: CHAT, text: "after revoke" }), /offline|read-only|not allow|unreachable/);
   assert.deepEqual(w.sent, []); assert.deepEqual((await st(A)).proxy.decisions, [], "the old answer is gone");
-  assert.equal(A.svc.status().devices.find((d: any) => d.id === id(B))!.online, false);
-  await assert.rejects(A.call("syncRelaySet", { deviceId: id(B), accountId: ACCT, allow: true }), /Unknown device/);
+  assert.equal((await st(A)).enabled, false); assert.equal((await st(B)).enabled, false);
+  await assert.rejects(A.call("syncRelaySet", { deviceId: bid, accountId: ACCT, allow: true }), /Unknown device/);
   await stop(A, B);
 });
 

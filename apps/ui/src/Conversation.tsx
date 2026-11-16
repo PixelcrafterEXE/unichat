@@ -4,7 +4,7 @@ import { viaNote } from "./relay";
 import { capsOf, cardsOf, type Account, type Attachment, type Capabilities, type Card, type Chat, type Contact, type Location, type Message, type ProviderInfo, type SharedContact } from "./types";
 import { measureMedia, isGif } from "./measure";
 import { placeholderOf } from "../../../packages/core/src/placeholder";
-import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, type Settings } from "./util";
+import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, type Settings } from "./util";
 import { MoreHorizontal, Check, ChevronDown, Calendar, Clock3, Phone, ShoppingBag, List as ListIcon, CreditCard, ExternalLink, Users as UsersIcon, MousePointerClick, FileQuestion, BarChart3, CheckCircle2, Circle, CheckSquare, Square, Info, LogOut, MessageSquareWarning, RotateCcw, ArrowDown, AlertCircle, Ban, Copy, Download, FileText, Forward, ImageIcon, MapPin, Mic, Paperclip, Pencil, Play, Plus, Reply, SendHorizontal, Smile, SmilePlus, Trash2, User, X } from "./icons";
 import { ReactorsModal, loadMembers, useNames } from "./Reactors";
 import type { VoiceClip } from "./Voice";
@@ -27,7 +27,7 @@ interface Props {
   onSignIn: (accountId?: string) => void; onPerson: (senderId: string, name: string) => void;
   hasMore: boolean; onLoadOlder: (limit?: number) => Promise<number | undefined>;
   jumpRef: { current: ((messageId: string, chatId?: string) => void) | undefined };
-  unreadAtOpen: number; loaded: boolean; loadState?: { status: "loading" | "error"; since: number; error?: string }; /** where the messages come from while loading */ loadSource?: LoadSource; /** the chat was read from this device only (source offline / not answering) */ loadNote?: string; onRetry: () => void; onSent: (m: Message) => void; onOpenChat: (id: string) => void; onInfo: () => void;
+  unreadAtOpen: number; loaded: boolean; loadState?: { status: "loading" | "error"; since: number; error?: string }; /** where the messages come from while loading */ loadSource?: LoadSource; /** the chat was read from this device only (source offline / not answering) */ loadNote?: string; onRetry: () => void; onSent: (m: Message, replaces?: string) => void; onOpenChat: (id: string) => void; onInfo: () => void;
 }
 const NET_GAP = 15 * 60_000; // merged chats: show the messenger indicator again after this long a pause
 const WIN_MIN = 300; // below this the whole timeline is rendered (no windowing)
@@ -51,6 +51,8 @@ interface Pending { id: number; blob: Blob; name: string; mime: string; kind: At
 const err = (e: any) => alert(e?.message ?? String(e));
 /** Payloads of sends that failed, keyed by the local placeholder message id, so they can be retried. */
 const newClientId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+/** A message shown the instant it is sent: it carries a local id until the backend answers with the real message (App reconciles them). */
+const isPending = (m: Message) => m.id.startsWith("pend-");
 const failedSends = new Map<string, { payload: any; error: string }>();
 
 export default function Conversation(p: Props) {
@@ -71,7 +73,7 @@ export default function Conversation(p: Props) {
   const loadOlder = async () => {
     const el = list.current; if (!el || olderBusy.current) return; olderBusy.current = true;
     const prev = el.scrollHeight, top0 = el.scrollTop; setLoadingOlder(true); nearBottom.current = false; captureRef.current();
-    try { await p.onLoadOlder(); await new Promise((r) => setTimeout(r, 60)); if (!anchor.current || !offRef.current) el.scrollTop = top0 + (el.scrollHeight - prev); } catch (e) { err(e); } finally { setLoadingOlder(false); olderBusy.current = false; }
+    try { await p.onLoadOlder(); await new Promise((r) => setTimeout(r, 60)); if (nearBottom.current) return; /* jumped to the latest meanwhile */ if (!anchor.current || !offRef.current) el.scrollTop = top0 + (el.scrollHeight - prev); } catch (e) { err(e); } finally { setLoadingOlder(false); olderBusy.current = false; }
   };
   const hasMoreRef = useRef(p.hasMore); hasMoreRef.current = p.hasMore;
   const [note, setNote] = useState<string>();
@@ -125,6 +127,14 @@ export default function Conversation(p: Props) {
     setTimeout(() => el!.classList.remove("hl"), 2200);
   };
 
+  /** Jump to the newest message. The windowed list only has estimated heights far from the viewport, so a smooth scroll to the end gets cancelled by
+   *  re-layout / history paging: pin to the bottom first (the window then renders the tail) and scroll there instantly, again after the re-render. */
+  const toLatest = () => {
+    const box = list.current; if (!box) return;
+    nearBottom.current = true; anchor.current = null; jumpUntil.current = 0; setAtBottom(true);
+    box.scrollTop = box.scrollHeight;
+    requestAnimationFrame(() => { nearBottom.current = true; box.scrollTop = box.scrollHeight; end.current?.scrollIntoView({ block: "end" }); });
+  };
   useEffect(() => { if (nearBottom.current) end.current?.scrollIntoView({ block: "end" }); }, [messages.length, p.typing.length]);
   const inner = useRef<HTMLDivElement>(null);
   useEffect(() => { nearBottom.current = true; end.current?.scrollIntoView({ block: "end" }); }, [chat.id]);
@@ -278,7 +288,7 @@ export default function Conversation(p: Props) {
         <div ref={end} />
         </div>
       </div>
-      {!atBottom && <button className="tolatest" title="Jump to latest" onClick={() => end.current?.scrollIntoView({ behavior: "smooth", block: "end" })}><ArrowDown size={18} /></button>}
+      {!atBottom && <button className="tolatest" title="Jump to latest" onClick={toLatest}><ArrowDown size={18} /></button>}
       {drag && <div className="dropzone">Drop files to send</div>}
 
       {via.request && !via.offline && (
@@ -288,7 +298,7 @@ export default function Conversation(p: Props) {
         </div>)}
       <ScheduledNote ids={[chat.id, ...(members?.map((c) => c.id) ?? [])]} />
       <Composer ref={composerRef} viaInfo={p.accounts.find((a) => a.id === via.accountId)?.via} onSignIn={() => p.onSignIn(via.accountId)} chat={chat} target={via} viaSelect={viaSelect} caps={caps} settings={settings} reply={reply} editing={editing} known={known}
-        onCancel={() => { setReply(undefined); setEditing(undefined); }} onSent={(m) => { setReply(undefined); setEditing(undefined); p.onSent(m); }} />
+        onCancel={() => { setReply(undefined); setEditing(undefined); }} onSent={(m, r) => { setReply(undefined); setEditing(undefined); p.onSent(m, r); }} />
 
       {forwarding && <ForwardModal chats={p.chats} onPick={forward} onClose={() => setForwarding(undefined)} />}
       {lightbox && <Lightbox {...lightbox} onClose={() => setLightbox(undefined)} />}
@@ -325,7 +335,7 @@ function ScheduledNote({ ids }: { ids: string[] }) {
 }
 interface ComposerApi { focus(): void; setText(t: string): void; addFiles(f: File[]): void; resend(payload: object): Promise<void> }
 
-const Composer = forwardRef<ComposerApi, { viaInfo?: Account["via"]; onSignIn: () => void; chat: Chat; /** the real chat a send goes to (= chat, or the selected "send via" member of a merged chat) */ target: Chat; viaSelect?: React.ReactNode; caps?: Capabilities; settings: Settings; reply?: Message; editing?: Message; known: Contact[]; onCancel: () => void; onSent: (m: Message) => void }>(
+const Composer = forwardRef<ComposerApi, { viaInfo?: Account["via"]; onSignIn: () => void; chat: Chat; /** the real chat a send goes to (= chat, or the selected "send via" member of a merged chat) */ target: Chat; viaSelect?: React.ReactNode; caps?: Capabilities; settings: Settings; reply?: Message; editing?: Message; known: Contact[]; onCancel: () => void; onSent: (m: Message, replaces?: string) => void }>(
 function Composer({ chat, target, viaSelect, caps, settings, reply, editing, known, onCancel, onSent, onSignIn, viaInfo }, ref) {
   const [asked, setAsked] = useState("");
   const [text, setTextRaw] = useState(() => drafts.get(chat.id) ?? "");
@@ -378,12 +388,17 @@ function Composer({ chat, target, viaSelect, caps, settings, reply, editing, kno
   const sendRaw = async (payload: object) => {
     // clientId: one id per message; a Retry sends the SAME payload, so a send through another device happens once even if the first answer was lost
     const full = { chatId: target.id, replyToMessageId: reply?.id, clientId: newClientId(), ...payload } as any;
-    try { onSent(await core.call("send", full)); }
+    // show it right away (pending); the real message replaces it when the backend answers (App matches by chat + text, or by this id)
+    const pid = "pend-" + full.clientId;
+    onSent({ id: pid, chatId: target.id, sender: "You", senderId: "me", fromMe: true, status: "sending", time: new Date().toISOString(), text: full.text ?? "", location: full.location, contacts: full.contacts,
+      replyTo: reply && reply.id === full.replyToMessageId ? { messageId: reply.id, sender: reply.sender, textPreview: reply.text.slice(0, 80) || "Attachment" } : undefined,
+      attachments: full.attachments?.map((a: any, i: number) => ({ id: "l" + i, kind: a.kind, mime: a.mime, name: a.name, durationMs: a.durationMs, thumbnailDataUrl: a.kind === "image" && a.dataBase64 ? `data:${a.mime};base64,${a.dataBase64}` : undefined })) });
+    try { onSent(await core.call("send", full), pid); }
     catch (e: any) { // keep a failed placeholder in the timeline with Retry / Discard
       const id = "local-" + Date.now() + Math.random().toString(36).slice(2, 6);
       failedSends.set(id, { payload: full, error: e?.message ?? String(e) });
       onSent({ id, chatId: target.id, sender: "You", senderId: "me", fromMe: true, status: "failed", time: new Date().toISOString(), text: full.text ?? "", location: full.location, contacts: full.contacts,
-        attachments: full.attachments?.map((a: any, i: number) => ({ id: "l" + i, kind: a.kind, mime: a.mime, name: a.name })) });
+        attachments: full.attachments?.map((a: any, i: number) => ({ id: "l" + i, kind: a.kind, mime: a.mime, name: a.name })) }, pid);
     }
   };
 
@@ -548,6 +563,7 @@ function MessageView(p: {
   const nameOf = useNames(p.chat, p.getMessages, hovered && chat0Group(p.chat));
   const reactorTitle = (r: { emoji: string; senderIds: string[]; mine?: boolean; count?: number }) =>
     (chat0Group(p.chat) && r.senderIds.length ? r.senderIds.map((id) => (r.mine && p.getMessages().some((x) => x.fromMe && x.senderId === id) ? "You" : nameOf(id))).join(", ") + (r.count && r.count > r.senderIds.length ? ` and ${r.count - r.senderIds.length} others` : "") + " · " : r.count && r.count > r.senderIds.length ? `${r.count} people · ` : "") + (r.mine ? "Click to remove your reaction · " : "") + "Right-click: who reacted";
+  const pend = isPending(m); // sent a moment ago, the backend has not answered yet
   const [menu, setMenu] = useState<{ x: number; y: number; sel: string }>();
   const lastLong = useRef(0); // touch: a long press opens the same menu as a right click (the browser's own contextmenu event that follows is ignored)
   const lp = useLongPress((x, y) => { lastLong.current = Date.now(); setMenu({ x, y, sel: "" }); });
@@ -568,10 +584,10 @@ function MessageView(p: {
   const attsEl = !!atts.length && <div className="atts">{atts.map((a) => <AttachmentView key={a.id} size={atts.filter((x) => x.kind === "image" || x.kind === "video" || x.gif).length > 1 ? 148 : 300} chat={p.own} m={m} a={a} auto={p.settings.autoDownloadMedia} onImage={p.onImage} />)}{metaPos === "overlay" && meta("ov")}</div>;
   const textEl = !!text && <p className="tx"><Linkified text={text} emojiScope={caps?.customEmoji ? p.own.accountId : undefined} />{m.editedAt && <small className="edited"> (edited)</small>}{metaPos === "inline" && meta("inl")}</p>;
   return (
-    <div data-mid={m.id} data-mkey={m.chatId + "|" + m.id} className={"msg k-" + chat.kind + (p.grouped ? " grouped" : "") + (m.fromMe ? " mine" : "") + (p.net ? " merged" : "") + (!m.deleted && reactions.length ? " hasreact" : "")}
+    <div data-mid={m.id} data-mkey={m.chatId + "|" + m.id} className={"msg k-" + chat.kind + (p.grouped ? " grouped" : "") + (m.fromMe ? " mine" : "") + (pend ? " pend" : "") + (p.net ? " merged" : "") + (!m.deleted && reactions.length ? " hasreact" : "")}
       onClickCapture={(e) => { if (lp.swallow()) { e.stopPropagation(); e.preventDefault(); } }}
       onTouchStart={(e) => { if (!(e.target as HTMLElement).closest("a, audio, video, input, textarea, .vidctrls")) lp.onTouchStart(e); }} onTouchMove={lp.onTouchMove} onTouchEnd={lp.onTouchEnd} onTouchCancel={lp.onTouchCancel}
-      onContextMenu={(e) => { if ((e.target as HTMLElement).closest("a, audio, video, input, textarea")) return; e.preventDefault(); if (Date.now() - lastLong.current < 1200) return; setMenu({ x: e.clientX, y: e.clientY, sel: window.getSelection()?.toString() ?? "" }); }}>
+      onContextMenu={(e) => { if ((e.target as HTMLElement).closest("a, audio, video, input, textarea")) return; e.preventDefault(); if (pend || Date.now() - lastLong.current < 1200) return; setMenu({ x: e.clientX, y: e.clientY, sel: window.getSelection()?.toString() ?? "" }); }}>
       {p.grouped ? <time className="gtime">{fmtTime(m.time)}</time>
         : (() => { const av = <Avatar name={name} size={40} of={m.fromMe ? undefined : chat.kind === "dm" ? { kind: "chat", id: chat.id } : { kind: "contact", id: `${chat.accountId}:${m.senderId}` }} />;
             return chat.kind !== "dm" && !m.fromMe && chat.provider !== "mesh" ? <button className="avbtn" title={`Show ${name}`} onClick={() => p.onPerson(m.senderId, name)}>{av}</button> : av; })()}
@@ -598,8 +614,8 @@ function MessageView(p: {
             {caps?.reactions && <button className="chip add" title="Add reaction" onClick={() => setFullPicker(!fullPicker)}><SmilePlus size={12} /></button>}</div>)}
         {m.status === "failed" && !m.deleted && <div className="foot"><span className="failrow">{failedSends.get(m.id)?.error ?? "Failed to send"} <button className="linkbtn" onClick={p.onRetry}><RotateCcw size={12} /> Retry</button> <button className="linkbtn" onClick={p.onDiscard}>Discard</button></span></div>}
       </div>
-      {!m.deleted && <button className="msgmore" aria-label="Message options" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left, y: r.bottom, sel: "" }); }}><MoreHorizontal size={16} /></button>}
-      {!m.deleted && (
+      {!m.deleted && !pend && <button className="msgmore" aria-label="Message options" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left, y: r.bottom, sel: "" }); }}><MoreHorizontal size={16} /></button>}
+      {!m.deleted && !pend && (
         <div className="actions">
           {caps?.reactions && <button title="React" onClick={() => setPicker(!picker)}><SmilePlus size={16} /></button>}
           {caps?.replies && <button title="Reply" onClick={p.onReply}><Reply size={16} /></button>}
@@ -651,7 +667,7 @@ function CardView({ c, m, chat, auto, onImage, canEdit }: { c: Card; m: Message;
   const [editing, setEditing] = useState(false);
   const ics = () => { try { downloadText(`${c.title.replace(/[^\w\- ]+/g, "").trim() || "event"}.ics`, "text/calendar", icsOf(c, m.id)); } catch (e: any) { alert(e.message); } };
   const Icon = { event: Calendar, invite: UsersIcon, call: Phone, product: ShoppingBag, order: ShoppingBag, list: ListIcon, buttons: MousePointerClick, template: ListIcon, link: ExternalLink, payment: CreditCard, other: FileQuestion }[c.kind] ?? FileQuestion;
-  const when = c.when ? new Date(c.when).toLocaleString([], { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : undefined;
+  const when = c.when ? fmtDateTime(c.when, { weekday: "short", day: "numeric", month: "short", year: "numeric" }) : undefined;
   const until = c.until ? new Date(c.until).toLocaleString([], { hour: "2-digit", minute: "2-digit" }) : undefined;
   return (
     <div className={"cardmsg k-" + c.kind + (c.image ? " withimg " + (c.image.layout === "thumb" ? "thumbimg" : "bannerimg") : "")}>
@@ -773,13 +789,13 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; x: number;
         {m.fromMe && caps?.edits && m.text && <Item icon={<Pencil size={15} />} label="Edit" onClick={p.onEdit} />}
         {m.fromMe && caps?.deletes && <Item icon={<Trash2 size={15} />} label="Delete for everyone" onClick={p.onDelete} danger />}
       </>}
-      <div className="ctxinfo">{new Date(m.time).toLocaleString()}{m.fromMe && m.status ? ` · ${m.status}` : ""}{m.editedAt ? " · edited" : ""}</div>
+      <div className="ctxinfo">{fmtDateTime(m.time, undefined, true)}{m.fromMe && m.status ? ` · ${m.status}` : ""}{m.editedAt ? " · edited" : ""}</div>
     </div>
   );
 }
 
 function AttachmentView({ chat, m, a, auto, onImage, size }: { size: number; chat: Chat; m: Message; a: Attachment; auto: boolean; onImage: (i: { url: string; name?: string; video?: boolean }) => void }) {
-  const eager = auto && (a.kind === "image" || a.kind === "sticker" || a.kind === "voice" || a.kind === "audio" || a.kind === "video" || !!a.gif);
+  const eager = auto && !isPending(m) && (a.kind === "image" || a.kind === "sticker" || a.kind === "voice" || a.kind === "audio" || a.kind === "video" || !!a.gif);
   const { r, err: failed, load } = useAttachment(chat.id, m.id, a, eager);
   if (a.kind === "image" || a.kind === "sticker") {
     const src = r?.url ?? a.thumbnailDataUrl;

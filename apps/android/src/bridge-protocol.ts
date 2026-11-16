@@ -7,7 +7,8 @@
 //   node -> native   {"id":N,"result":...}  |  {"id":N,"error":"message"}
 //                    {"event":"message","data":{...}}                 a Hub event (forwarded to the UI as is)
 //                    {"ctl":"ready","protocol":1,"node":"v18...","sqlite":"sqljs"}   the backend is up (never forwarded to the UI)
-//                    {"ctl":"notify","chatId","messageId","title","body"}  show a local notification (only sent while the UI is in the background)
+//                    {"ctl":"notify","chatId","messageId","title","body","avatar"?}  show a local notification (only sent while the UI is in the background);
+//                                                                      avatar = optional base64 PNG/JPEG/WebP (<= ~64 KB) of the chat, shown as the large icon; never sent when notifyContent is "hidden"
 //                    {"ctl":"state","accounts":N,"sync":bool}          number of configured accounts and whether this device is in a sync group (sent after "ready" and whenever it changes);
 //                                                                      the native side keeps it so the boot receiver knows whether to restart the service
 //
@@ -57,7 +58,7 @@ export type Frame =
   | { id: number; result?: unknown; error?: string }
   | { event: string; data: unknown }
   | { ctl: "ready"; protocol: number; node: string; sqlite: string }
-  | { ctl: "notify"; chatId: string; messageId: string; title: string; body: string }
+  | { ctl: "notify"; chatId: string; messageId: string; title: string; body: string; avatar?: string }
   | { ctl: "state"; accounts: number; sync?: boolean };
 
 /** Methods the native side answers itself for UI requests (kept in sync with NodeBridge.java). */

@@ -3,6 +3,7 @@ import { Identities, KyberPreKeys, PreKeys, SenderKeys, Sessions, SignedPreKeys,
 import { freshStore, type AccountData, type AttachmentRef, type ChatRecord, type IdKind, type StoreShape } from "./types.js";
 
 const SENT_INDEX_MAX = 3000;
+const UNREAD_MAX = 500;
 
 /** Facade over the sealed JSON file: typed data + factories for libsignal store objects. */
 export class SignalStore {
@@ -57,6 +58,35 @@ export class SignalStore {
     const keys = Object.keys(this.data.sentIndex);
     if (keys.length > SENT_INDEX_MAX) for (const k of keys.slice(0, keys.length - SENT_INDEX_MAX)) delete this.data.sentIndex[k];
     this.touch();
+  }
+
+  /** Remember an incoming message as unread (so read receipts can cover EVERY unread message, and a read on another device can clear it). */
+  noteUnread(chatId: string, messageId: string): void {
+    const all = (this.data.unreadIds ??= {});
+    const list = (all[chatId] ??= []);
+    if (!list.includes(messageId)) list.push(messageId);
+    if (list.length > UNREAD_MAX) list.splice(0, list.length - UNREAD_MAX);
+    this.touch();
+  }
+  /** Remove and return the unread ids of a chat whose send timestamp is <= `upTo` (all of them when undefined). */
+  takeUnread(chatId: string, upTo?: number): string[] {
+    const list = this.data.unreadIds?.[chatId]; if (!list) return [];
+    const ts = (id: string) => Number(id.slice(id.lastIndexOf(".") + 1));
+    const taken = list.filter((id) => upTo === undefined || ts(id) <= upTo);
+    if (taken.length) {
+      const rest = list.filter((id) => !taken.includes(id));
+      if (rest.length) this.data.unreadIds![chatId] = rest; else delete this.data.unreadIds![chatId];
+      this.touch();
+    }
+    return taken;
+  }
+  /** Forget one unread id wherever it is; returns the chat it was in. */
+  dropUnread(messageId: string): string | undefined {
+    for (const [chatId, list] of Object.entries(this.data.unreadIds ?? {})) {
+      const i = list.indexOf(messageId);
+      if (i >= 0) { list.splice(i, 1); if (!list.length) delete this.data.unreadIds![chatId]; this.touch(); return chatId; }
+    }
+    return undefined;
   }
 
   rememberAttachment(id: string, ref: AttachmentRef): void {

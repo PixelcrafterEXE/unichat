@@ -2128,9 +2128,17 @@ class WhatsAppConnector implements Connector {
     const sock = this.live();
     const arr = this.store.data.msgs[chatId] ?? [];
     const idx = arr.findIndex((s) => s.m.id === upToMessageId);
-    if (idx < 0) return;
+    const markChat = async (key: { remoteJid: string; id: string; fromMe: boolean; participant?: string }, atSec: number) => { // app-state "chat read": clears the unread mark on the phone and other devices (no receipt is sent by this)
+      try { await (sock as { chatModify?: (m: unknown, jid: string) => Promise<void> }).chatModify?.({ markRead: true, lastMessages: [{ key, messageTimestamp: atSec }] }, chatId); } catch { /* best effort */ }
+    };
+    if (idx < 0) { // the message is not in the provider's own store (it came from a backup import / another device's history): still mark the chat read on WhatsApp
+      await markChat({ remoteJid: chatId, id: upToMessageId, fromMe: false }, Math.floor(Date.now() / 1000));
+      const c0 = this.store.data.chats[chatId]; if (c0 && c0.unread) { c0.unread = 0; this.store.touch(); this.emit({ type: "chats-changed", data: { chatId } }); }
+      return;
+    }
     const keys = arr.slice(Math.max(0, idx - 99), idx + 1).filter((s) => !s.m.fromMe).map((s) => this.keyOf(chatId, s));
     if (keys.length) await sock.readMessages(keys);
+    await markChat(this.keyOf(chatId, arr[idx]!) as { remoteJid: string; id: string; fromMe: boolean; participant?: string }, Math.floor((Date.parse(arr[idx]!.m.time) || Date.now()) / 1000));
     const c = this.store.data.chats[chatId];
     if (c) {
       c.unread = arr.slice(idx + 1).filter((s) => !s.m.fromMe).length;

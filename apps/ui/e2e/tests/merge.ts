@@ -209,12 +209,12 @@ export default [
   test("contact panel of a merged chat: networks, make primary, merge more", async (t) => {
     await merged(t);
     await t.click('main header .hright button[title="Chat info"]');
-    await t.waitSel("aside.info .netrow");
+    await t.waitSel("aside.info .mergesec .netrow");
     const info = await t.ev(`document.querySelector('aside.info').innerText`);
     t.check("shows both networks once each with their account", /networks\s*·\s*2/i.test(info) && /@michi:matrix.org/.test(info) && /\+49 151/.test(info) && (info.match(/\bMatrix\b/g) ?? []).length >= 1, info.replace(/\n/g, " | ").slice(0, 300));
     await t.shot("info");
     await t.click('.netrow button[aria-label^="Make"]');
-    await t.ok("make primary reorders members", `/Matrix/.test(document.querySelector('.netrow b').textContent)`);
+    await t.ok("make primary reorders members", `/Matrix/.test(document.querySelector('.mergesec .netrow b').textContent)`);
     await t.click("aside.info button", /Merge with more/);
     await t.ok("'Merge with more…' opens the picker", `/Merge more into/.test(document.querySelector('.modal h3')?.textContent)`);
   }),

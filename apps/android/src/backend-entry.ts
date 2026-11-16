@@ -16,7 +16,7 @@ import "./libsignal-modules.js";
 import { startBackend, backendReady } from "@unimsg/host";
 import { prepareSqlite, flushSqlite } from "./sqlite-shim.js";
 import { LineReader, encode, PROTOCOL_VERSION, type Frame, type NotifyContent, type Request } from "./bridge-protocol.js";
-import { buildNotification, cachedSnapshot, type Snapshot } from "./notify.js";
+import { buildNotification, cachedSnapshot, withAvatar, type Snapshot } from "./notify.js";
 
 declare const __UNICHAT_VERSION__: string; // esbuild define (scripts/build-backend-bundle.mjs)
 const dataDir: string = process.argv[2] || process.env.UNIMSG_DATA || "";
@@ -42,6 +42,7 @@ up.catch((e) => { console.error("[unimsg] backend failed to start:", (e as Error
 let client: net.Socket | undefined;
 let uiForeground = true, notifyContent: NotifyContent = "full", keepAlive = false, lastAccounts = -1, lastSync = false;
 const send = (f: Frame) => { if (client && !client.destroyed) client.write(encode(f)); };
+const avatarCache = new Map<string, { at: number; v?: string }>();
 const snapshot = cachedSnapshot(() => hub.call("snapshot", {}) as Promise<Snapshot>);
 
 hub.subscribe((event, data: any) => {
@@ -49,7 +50,7 @@ hub.subscribe((event, data: any) => {
   if (event === "message" && !uiForeground) {
     snapshot().then((snap) => {
       const n = buildNotification(data, snap, notifyContent);
-      if (n) send({ ctl: "notify", ...n });
+      if (n) return withAvatar(n, notifyContent, (id) => hub.call("avatar", { kind: "chat", id }) as Promise<{ dataBase64?: string; mime?: string } | null>, avatarCache).then((m) => send({ ctl: "notify", ...m }));
     }).catch(() => {});
   }
   if (event === "accounts-changed" || event === "account" || event === "sync-devices") reportState();

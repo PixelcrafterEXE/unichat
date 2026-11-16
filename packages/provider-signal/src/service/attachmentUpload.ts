@@ -30,7 +30,7 @@ export const attachDebug = (step: "form" | "encrypt" | "upload" | "send", bytes:
 };
 
 export class AttachmentUploadError extends Error {
-  constructor(message: string, readonly step: "form" | "encrypt" | "upload" | "send", readonly errClass: string) { super(message); this.name = "AttachmentUploadError"; }
+  constructor(message: string, readonly step: "form" | "encrypt" | "upload" | "send", readonly errClass: string, readonly transient = false) { super(message); this.name = "AttachmentUploadError"; }
 }
 
 /** Signal's size buckets (Android PaddingInputStream / Desktop logPadSize): max(541, floor(1.05^ceil(log1.05(size)))). */
@@ -72,46 +72,75 @@ function safeCdnUrl(raw: string, base?: URL): URL {
   return u;
 }
 
+/** Retry policy for transient upload failures (5xx / 429 / 408 / network). Exported so tests can zero the delays. */
+export const uploadRetry: { delaysMs: number[]; sleep: (ms: number) => Promise<void> } = {
+  delaysMs: [400, 1500, 4000],
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+const transientStatus = (s: number) => s === 429 || s === 408 || s >= 500;
+
+/** Run `fn`, retrying with backoff while it throws a transient AttachmentUploadError. `retries` caps the retries. */
+async function withRetry<T>(fn: () => Promise<T>, retries = uploadRetry.delaysMs.length): Promise<T> {
+  for (let i = 0; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      const transient = e instanceof AttachmentUploadError ? e.transient : !(e instanceof Error && e.name === "AbortError");
+      const delay = uploadRetry.delaysMs[i];
+      if (!transient || i >= retries || delay === undefined) throw e;
+      await uploadRetry.sleep(delay);
+    }
+  }
+}
+
 async function fetchForm(chat: AuthChat, bytes: number): Promise<UploadForm> {
-  const tooBig = () => new AttachmentUploadError("This file is too large for Signal (the limit is 100 MB).", "form", "http-413");
+  const stage = "form";
+  const tooBig = () => new AttachmentUploadError("This file is too large for Signal (the limit is 100 MB).", stage, "http-413");
   let res;
   try { res = await chat.fetch({ verb: "GET", path: "/v4/attachments/form/upload", headers: [] }); }
-  catch (e) { attachDebug("form", bytes, 0, `error:${errClassOf(e)}`); throw new AttachmentUploadError("Couldn't reach Signal to send the attachment. Check your connection and try again.", "form", errClassOf(e)); }
+  catch (e) { attachDebug("form", bytes, 0, `error:${errClassOf(e)}`); throw new AttachmentUploadError("Couldn't reach Signal to send the attachment. Check your connection and try again.", stage, errClassOf(e), true); }
   if (res.status === 413) { attachDebug("form", bytes, 0, "error:http-413"); throw tooBig(); }
-  if (res.status === 429) { attachDebug("form", bytes, 0, "error:http-429"); throw new AttachmentUploadError("Signal is busy or you are sending too fast; try again shortly.", "form", "http-429"); }
+  if (res.status === 429) { attachDebug("form", bytes, 0, "error:http-429"); throw new AttachmentUploadError("Signal is busy or you are sending too fast (upload form, HTTP 429); try again shortly.", stage, "http-429", true); }
   let form: UploadForm | undefined;
-  if (res.status >= 200 && res.status < 300) {
+  const ok = res.status >= 200 && res.status < 300;
+  if (ok) {
     try { form = JSON.parse(Buffer.from(res.body ?? new Uint8Array()).toString("utf8")) as UploadForm; } catch { form = undefined; }
   }
   if (!form || typeof form.key !== "string" || !form.key || typeof form.signedUploadLocation !== "string" || !CDN_URLS[form.cdn] || form.cdn === 0) {
-    const cls = res.status >= 200 && res.status < 300 ? "bad-form" : `http-${res.status}`;
+    const cls = ok ? "bad-form" : `http-${res.status}`;
     attachDebug("form", bytes, 0, `error:${cls}`);
-    throw new AttachmentUploadError("Signal didn't accept the attachment upload. Try again later.", "form", cls);
+    if (ok) throw new AttachmentUploadError("Signal didn't accept the attachment upload: its reply to the upload request was malformed or named an unsupported CDN. Try again later.", stage, cls);
+    throw new AttachmentUploadError(`Signal refused the attachment upload request (upload form, HTTP ${res.status}). Try again later.`, stage, cls, transientStatus(res.status));
   }
   attachDebug("form", bytes, form.cdn, "ok");
   return { cdn: form.cdn, key: form.key, headers: form.headers && typeof form.headers === "object" ? form.headers : {}, signedUploadLocation: form.signedUploadLocation };
 }
 
+const uploadErr = (stage: string, status: number) => new AttachmentUploadError(uploadMsg(status, stage), "upload", `http-${status}`, transientStatus(status));
+
 async function upload(http: CdnHttp, form: UploadForm, blob: Buffer): Promise<void> {
   const base = safeCdnUrl(form.signedUploadLocation);
   const tus = form.cdn === 3;
+  // cdn2 = Google Cloud Storage resumable upload: the form's attributes (policy/signature headers) go on the session-start POST,
+  // which must carry "x-goog-resumable: start"; the server normally includes it but a form without it is completed here.
+  const gcsHeaders: Record<string, string> = { ...form.headers };
+  if (!tus && !Object.keys(gcsHeaders).some((k) => k.toLowerCase() === "x-goog-resumable")) gcsHeaders["x-goog-resumable"] = "start";
   const create: HttpReq = tus
     ? { method: "POST", url: base, headers: { ...form.headers, "Tus-Resumable": "1.0.0", "Upload-Length": String(blob.length), "Upload-Metadata": `filename ${Buffer.from(form.key).toString("base64")}`, "Content-Type": "application/offset+octet-stream" } }
-    : { method: "POST", url: base, headers: { ...form.headers, "Content-Type": "application/octet-stream" } };
+    : { method: "POST", url: base, headers: { ...gcsHeaders, "Content-Type": "application/octet-stream" } };
   const r1 = await http(create);
-  if (r1.status < 200 || r1.status >= 300) throw new AttachmentUploadError(uploadMsg(r1.status), "upload", `http-${r1.status}`);
+  if (r1.status < 200 || r1.status >= 300) throw uploadErr("session (attributes rejected)", r1.status);
   const loc = first(r1.headers["location"]);
-  if (!loc) throw new AttachmentUploadError(uploadMsg(0), "upload", "no-location");
+  if (!loc) throw new AttachmentUploadError("The attachment could not be uploaded to Signal (the CDN gave no upload location).", "upload", "no-location");
   const target = safeCdnUrl(loc, base);
   const r2 = await http(tus
     ? { method: "PATCH", url: target, headers: { "Tus-Resumable": "1.0.0", "Upload-Offset": "0", "Content-Type": "application/offset+octet-stream" }, body: blob }
     : { method: "PUT", url: target, headers: { "Content-Type": "application/octet-stream" }, body: blob });
-  if (r2.status < 200 || r2.status >= 300) throw new AttachmentUploadError(uploadMsg(r2.status), "upload", `http-${r2.status}`);
+  if (r2.status < 200 || r2.status >= 300) throw uploadErr("data transfer", r2.status);
 }
-const uploadMsg = (status: number) => status === 413
+const uploadMsg = (status: number, stage: string) => status === 413
   ? "This file is too large for Signal (the limit is 100 MB)."
-  : status === 429 || status >= 500 ? "Signal is busy; the attachment was not sent. Try again shortly."
-  : "The attachment could not be uploaded to Signal. Try again later.";
+  : status === 429 || status >= 500 ? `Signal is busy; the attachment was not sent (upload ${stage}, HTTP ${status}). Try again shortly.`
+  : `The attachment could not be uploaded to Signal (upload ${stage}, HTTP ${status}). Try again later.`;
 
 /** Content type without parameters ("audio/ogg; codecs=opus" -> "audio/ogg"). */
 export const baseMime = (mime: string) => (mime.split(";")[0] ?? "").trim().toLowerCase() || "application/octet-stream";
@@ -137,7 +166,7 @@ export function checkAttachments(list: OutgoingAttachment[]): void {
 }
 
 /** Encrypt + upload one attachment and return its pointer. */
-export async function uploadAttachment(chat: AuthChat, http: CdnHttp, a: SignalOutgoingAttachment, now: number): Promise<AttachmentPointer> {
+export async function uploadAttachment(chat: AuthChat, http: CdnHttp, a: SignalOutgoingAttachment, now: number, opts: { retries?: number } = {}): Promise<AttachmentPointer> {
   const size = a.data.length;
   let enc: ReturnType<typeof encryptAttachmentBlob>;
   try {
@@ -147,14 +176,14 @@ export async function uploadAttachment(chat: AuthChat, http: CdnHttp, a: SignalO
     attachDebug("encrypt", size, 0, `error:${errClassOf(e)}`);
     throw new AttachmentUploadError("The attachment could not be prepared for sending.", "encrypt", errClassOf(e));
   }
-  const form = await fetchForm(chat, size);
+  const form = await withRetry(() => fetchForm(chat, size), opts.retries);
   try {
-    await upload(http, form, enc.blob);
+    await withRetry(() => upload(http, form, enc.blob), opts.retries);
     attachDebug("upload", enc.blob.length, form.cdn, "ok");
   } catch (e) {
     attachDebug("upload", enc.blob.length, form.cdn, `error:${errClassOf(e)}`);
     if (e instanceof AttachmentUploadError) throw e;
-    throw new AttachmentUploadError("The attachment could not be uploaded to Signal. Check your connection and try again.", "upload", errClassOf(e));
+    throw new AttachmentUploadError("The attachment could not be uploaded to Signal. Check your connection and try again.", "upload", errClassOf(e), true);
   }
   const voice = a.kind === "voice";
   const contentType = baseMime(a.mime);

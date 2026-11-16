@@ -3,7 +3,7 @@
 // __mockSyncBlockOut(true) makes this device unable to reach the other one (the other one can still reach this one: "show a code here instead"),
 // __mockSyncOffer() makes the other device offer a Signal account as proxy, __mockSyncDrop() takes the paired device offline.
 type Emit = (ev: string, d: unknown) => void;
-export const mockSyncHandles = (m: string) => /^sync(Status|StartPairing|StopPairing|Join|JoinNearby|Browse|ConfirmJoin|CancelJoin|ApproveJoin|Devices|Revoke|SetAccountMode|Pause|Resume|Now|Leave|Credentials|ConfirmCredentials|RenameDevice|SetListen|SetAddresses|SetAdvertise|SetRelays|SetDht|SetMediaPolicy|SetMetered|SetProxyShare|UseProxy|StopProxy|RelaySet|RelayAsk|MoveStart|MoveRespond|MoveCancel|MoveEstimate|SendHistory)$/.test(m);
+export const mockSyncHandles = (m: string) => /^sync(Status|StartPairing|StopPairing|Join|JoinNearby|Browse|ConfirmJoin|CancelJoin|ApproveJoin|Devices|Revoke|DismissRemoved|SetAccountMode|Pause|Resume|Now|Leave|Credentials|ConfirmCredentials|RenameDevice|SetListen|SetAddresses|SetAdvertise|SetRelays|SetDht|SetMediaPolicy|SetMetered|SetProxyShare|UseProxy|StopProxy|RelaySet|RelayAsk|MoveStart|MoveRespond|MoveCancel|MoveEstimate|SendHistory)$/.test(m);
 const SAS = "482 913";
 const S = { enabled: false, paused: false, revoked: false, deviceId: "dev-self", deviceName: "My laptop", pairing: undefined as any, approval: undefined as any, joining: undefined as any, devices: [] as any[],
   listen: { enabled: false, scope: "lan", address: "", interfaces: [{ name: "eth0", address: "192.168.1.20" }, { name: "tailscale0", address: "100.64.0.7" }] } as any, relays: [] as string[], dht: { enabled: true, bootstrap: [] as string[], state: "ready", reason: undefined as string | undefined } as any, advertise: [] as any[],
@@ -11,12 +11,16 @@ const S = { enabled: false, paused: false, revoked: false, deviceId: "dev-self",
   proxy: { offers: [] as any[], using: [] as any[], shared: [] as string[], asks: [] as any[], decisions: [] as any[] },
   accounts: [{ id: "wa-1", provider: "whatsapp", label: "WhatsApp", mode: "archive-only", canShareCredentials: false, canShareProxy: true, canMove: true, proxyShared: false }, { id: "mm-1", provider: "mattermost", label: "Work Mattermost", mode: "archive-only", canShareCredentials: true, canShareProxy: true, proxyShared: false, canMove: true },
     { id: "ig-1", provider: "instagram", label: "Instagram", mode: "none", canShareCredentials: false, canShareProxy: false, moveWhy: "Signed out here (history only)" }] as any[],
-  moves: [] as any[], pendingCredentials: [] as any[], discovered: [] as any[], discovery: { available: true } };
+  removedNotice: undefined as any, unlinking: undefined as any, moves: [] as any[], pendingCredentials: [] as any[], discovered: [] as any[], discovery: { available: true } };
 let emitRef: Emit = () => {};
 let dhtUnavailable = false; // test hook: this platform cannot load the DHT
 let blockOut = false; // this device cannot dial out to the other one
 const snap = () => ({ ...S, listening: S.listen.enabled || !!S.pairing, port: 43210, binds: S.listen.enabled || S.pairing ? ["192.168.1.20:43210"] : [], dialOnly: S.enabled && !S.listen.enabled && !S.pairing, entities: 1234, pending: 0, groupId: S.enabled ? "g1" : undefined });
 const changed = () => emitRef("sync-devices", snap());
+/** this device forgets the group (the archive stays) */
+const wipe = (notice?: any) => { S.enabled = false; S.devices = []; S.revoked = false; S.pairing = undefined; S.approval = undefined; S.joining = undefined; S.listen.enabled = false; S.unlinking = undefined; S.removedNotice = notice; S.proxy = { offers: [], using: [], shared: [], asks: [], decisions: [] }; changed(); return {}; };
+/** group of two: the other device is told to unlink first; offline = the instruction waits (shown as "unlinking", delivered by __mockSyncPeerOnline) */
+const unlink = (d: any, reason: string) => { if (d.online) { wipe(); return { pending: false, deviceName: d.name }; } S.unlinking = { peer: d.id, name: d.name, since: new Date().toISOString(), reason, online: false }; changed(); return { pending: true, deviceName: d.name }; };
 const other = (id: string, name: string) => ({ id, name, online: true, via: "192.168.1.31:43210", viaKind: "direct", lastAddr: "192.168.1.31", addrs: [{ kind: "tcp", host: "192.168.1.31", port: 43210, src: "learned", good: new Date().toISOString() }], progress: { state: "idle", pending: 0, lastSync: new Date().toISOString() } });
 if (typeof window !== "undefined") {
   Object.assign(window, {
@@ -28,9 +32,19 @@ if (typeof window !== "undefined") {
     /** the other device (which was shown a code here) connects to this device and asks to be joined, or, with `joining`, this device joins its group */
     __mockSyncIncomingJoining: () => { S.joining = { state: "confirm", sas: SAS, hostName: "Desktop", direction: "incoming" }; changed(); },
     __mockSyncOffer: () => { S.proxy.offers = [{ deviceId: "dev-a", deviceName: "Desktop", accountId: "signal-1", provider: "signal", label: "Signal (+49…)", using: false }]; if (!S.accounts.some((a) => a.id === "signal-1")) S.accounts.push({ id: "signal-1", provider: "signal", label: "Signal (+49…)", mode: "archive-only", canShareCredentials: false, canShareProxy: false, moveWhy: "Used through Desktop", proxyShared: false }); changed(); },
+    /** this device is removed from the group by another device (or the other device of a group of two unlinks): notice + unlinked */
+    __mockSyncRemoved: (by = "Desktop", reason = "removed") => { wipe({ by, at: new Date().toISOString(), reason }); },
+    /** the offline device we wait for (pending unlink) comes online and unlinks: so do we */
+    __mockSyncPeerOnline: () => { if (S.unlinking) wipe(); },
+    /** a removed (offline) device came back, was told and confirmed */
+    __mockSyncRemovalAcked: (name?: string) => { for (const d of S.devices) if (d.revoked && (!name || d.name === name)) d.removalPending = false; changed(); },
     __mockSyncDrop: () => { const d = S.devices.find((x) => !x.self); if (d) { d.online = false; d.progress = { ...d.progress, state: "offline" }; } for (const u of S.proxy.using) u.online = false; for (const a of S.accounts) if (a.proxyVia) { a.proxyVia.online = false; a.proxyVia.note = "home device unreachable"; } changed(); },
     /** a paired device asks to send as an account of this device (the one-time question) */
     __mockRelayPrompt: (device = "Pixel phone", acct = "mm-1") => { const a = S.accounts.find((x) => x.id === acct); S.proxy.asks = [{ deviceId: S.devices.find((d) => d.name === device)?.id ?? "dev-b", deviceName: device, accountId: acct, label: a?.label ?? acct, since: Date.now() }]; changed(); },
+    /** phased first sync (priority order): step 1 = accounts done, chats 1200 of 5000, files waiting; step 2 = everything done */
+    __mockSyncPhases: (step = 1) => { const d = S.devices.find((x) => !x.self); if (!d) return; S.media.wanted = step === 1 ? 14 : 0;
+      d.progress = step === 1 ? { state: "syncing", pending: 3800, accts: { done: 3, total: 3 }, chats: { done: 1200, total: 5000 }, out: { accts: { done: 3, total: 3 }, chats: { done: 100, total: 900 } } } : { state: "idle", pending: 0, accts: { done: 3, total: 3 }, chats: { done: 5000, total: 5000 }, lastSync: new Date().toISOString() };
+      changed(); emitRef("sync-progress", { peer: d.id, ...d.progress }); },
     __mockSyncSnapshot: () => { const d = S.devices.find((x) => !x.self); if (d) d.progress = { state: "syncing", pending: 0, phase: "snapshot", snapDone: 4_000_000, snapTotal: 10_000_000, snapDir: "in" }; changed(); },
   });
 }
@@ -116,7 +130,11 @@ export async function mockSyncCall(method: string, p: any, emit: Emit): Promise<
       }, 300);
       return { deviceId: "dev-self" };
     }
-    case "syncRevoke": { const d = S.devices.find((x) => x.id === p.deviceId); if (d) d.revoked = new Date().toISOString(); changed(); return {}; }
+    case "syncRevoke": { // mock of service.ts: three or more devices = tombstone for everybody; only two = both unlink (now, or when the other one is online)
+      const d = S.devices.find((x) => x.id === p.deviceId); if (!d) return {};
+      if (S.devices.filter((x) => !x.revoked).length <= 2) return unlink(d, "remove");
+      d.revoked = new Date().toISOString(); d.revokedBy = S.deviceName; d.removalPending = !d.online; changed(); return {}; }
+    case "syncDismissRemoved": S.removedNotice = undefined; changed(); return {};
     case "syncSetAccountMode": { const a = S.accounts.find((x) => x.id === p.accountId); if (!a) throw new Error("Unknown account."); if (p.mode === "credentials" && a.sharedFrom) throw new Error(`This account comes from ${a.sharedFrom}; share it from there.`); if (p.mode === "credentials" && !a.canShareCredentials) throw new Error("This messenger's sessions cannot be copied to other devices."); a.mode = p.mode; return {}; }
     case "syncSetListen": {
       if (p.enabled && p.scope === "address" && !S.listen.interfaces.some((i: any) => i.address === p.address)) throw new Error(`This computer has no network interface with the address ${p.address || "(none)"}.`);
@@ -197,7 +215,7 @@ export async function mockSyncCall(method: string, p: any, emit: Emit): Promise<
     case "syncPause": S.paused = true; return {};
     case "syncResume": S.paused = false; return {};
     case "syncNow": return {};
-    case "syncLeave": S.enabled = false; S.devices = []; S.revoked = false; S.pairing = undefined; S.approval = undefined; S.joining = undefined; S.listen.enabled = false; S.proxy = { offers: [], using: [], shared: [], asks: [], decisions: [] }; return {};
+    case "syncLeave": { const live = S.devices.filter((x) => !x.self && !x.revoked); if (!p?.force && S.enabled && live.length === 1) return unlink(live[0], "leave"); wipe(); return {}; }
     case "syncCredentials": return S.pendingCredentials;
     case "syncConfirmCredentials": S.pendingCredentials = S.pendingCredentials.filter((c) => c.accountId !== p.accountId); return {};
     case "syncRenameDevice": { S.deviceName = p.name; const me = S.devices.find((d) => d.self); if (me) me.name = p.name; return {}; }

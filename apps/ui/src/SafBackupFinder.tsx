@@ -3,7 +3,7 @@
 // files there, and copies the chosen one (and, for WhatsApp, the chosen Media folders) into its own storage so the importer can read it.
 //   Native side: apps/android NodeBridge $backupLocate / $backupCopy / $backupCopyCancel / $backupDiscard (see apps/android/src/bridge-protocol.ts). Mock: mockSaf.ts.
 import { useState } from "react";
-import { core, fmtBytes } from "./util";
+import { core, fmtBytes, fmtDateTime, fmtDate } from "./util";
 import { useProgress } from "./backupShared";
 
 export type SafKind = "whatsapp" | "signal";
@@ -55,7 +55,7 @@ export function SafBackupFinder({ kind, onCopied, disabled }: { kind: SafKind; o
         <p className="sub" id="saf-folder">Folder: <b>{found.folder}</b> <button className="secondary" id="saf-other" disabled={!!busy} onClick={() => { setDone(null); void find(true); }}>Choose another folder</button></p>
         {found.files.length > 0 && <div id="saf-files" role="radiogroup" aria-label="Backup file">
           {found.files.map((f) => <label className="opt" key={f.name}><input type="radio" name="saf-file" checked={file === f.name} disabled={!!busy} onChange={() => setFile(f.name)} />
-            <span><b>{f.name}</b><small>{fmtBytes(f.size)}{f.modified ? `, ${new Date(f.modified).toLocaleString()}` : ""}</small></span></label>)}
+            <span><b>{f.name}</b><small>{fmtBytes(f.size)}{f.modified ? `, ${fmtDateTime(f.modified)}` : ""}</small></span></label>)}
         </div>}
         {kind === "whatsapp" && found.files.length > 0 && (found.hasMedia
           ? <div id="saf-media"><p className="sub">Photos, videos, voice notes and files are optional. They are copied into UniChat's storage for the import and removed again afterwards. Untick what you do not need; large folders are off by default.</p>

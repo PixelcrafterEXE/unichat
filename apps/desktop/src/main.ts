@@ -3,16 +3,29 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { startBackend, type KeyWrap } from "@unimsg/host";
+import { startBackend, DataKeyMismatchError, type KeyWrap } from "@unimsg/host";
 import { createDialogs } from "./dialogs.js";
-import { appVersion, desktopAsset, replaceAppImage } from "./updater.js";
+import { appVersion, desktopAsset, readPackageType, replaceAppImage } from "./updater.js";
+
+// Chromium flags; they must be set before `ready`.
+// Wayland vs X11: `ozone-platform-hint=auto` lets Chromium pick Wayland when WAYLAND_DISPLAY is set and X11 otherwise (the same
+// binary/AppImage works on both; passing a hard `--ozone-platform=wayland` would break on X11-only sessions).
+// Vulkan: Chromium's Vulkan/ANGLE-Vulkan backend is not compatible with the Wayland Ozone platform and prints
+// "'--ozone-platform=wayland' is not compatible with Vulkan". UniChat is a chat UI and needs no Vulkan, so the Vulkan
+// feature is disabled on Linux; GL (EGL/ANGLE-GL) keeps hardware acceleration on both Wayland and X11.
+if (process.platform === "linux") {
+  app.commandLine.appendSwitch("ozone-platform-hint", "auto");
+  app.commandLine.appendSwitch("disable-features", "Vulkan");
+}
 
 // UNIMSG_DATA overrides the data directory (tests, portable installs). Must be set before `ready`.
 // The product is called UniChat, but the data directory stays ~/.config/unimsg so existing users keep their data
 // (Electron would otherwise derive it from the product name).
 app.setName("UniChat");
 app.setPath("userData", process.env.UNIMSG_DATA || join(app.getPath("appData"), "unimsg"));
-const dataDir = app.getPath("userData");
+let dataDir = app.getPath("userData");
+/** Where "use a fresh folder" puts the desktop app's own data (separate from ~/.config/unimsg, which the web server/dev backend uses). */
+const freshDir = join(app.getPath("appData"), "unimsg-desktop");
 const dev = !!process.env.ELECTRON_RENDERER_URL;
 
 let win: BrowserWindow | undefined;
@@ -42,6 +55,16 @@ async function chooseKeyWrap(): Promise<{ keyWrap?: KeyWrap; warning?: string }>
   return { warning: `No OS keychain is available (on Linux install and unlock gnome-keyring or KWallet, libsecret). The encryption key for your message archive is stored in a file with owner-only permissions (0600) instead: ${join(dataDir, "unimsg.key")}. Anyone who can read both that file and the database can read your messages.` };
 }
 
+/** Device sync is off because sync.db is sealed with another key; the rest works. */
+async function keyProblemDialog(e: DataKeyMismatchError) {
+  const choice = await dialog.showMessageBox({ type: "warning", title: "UniChat: device sync disabled", message: "Device sync is off: its data uses a different key",
+    detail: `${e.message}\n\nUniChat runs without device sync this time. Start it from a separate folder to use sync, or open this folder to look at it.`,
+    buttons: ["Continue without sync", "Use a separate desktop folder (restarts)", "Open the folder", "Quit"], defaultId: 0, cancelId: 0 });
+  if (choice.response === 1) { quitting = true; app.relaunch({ args: process.argv.slice(1), execPath: process.env.APPIMAGE || process.execPath }); process.env.UNIMSG_DATA = freshDir; app.quit(); }
+  else if (choice.response === 2) void shell.openPath(e.dataDir);
+  else if (choice.response === 3) { quitting = true; app.quit(); }
+}
+
 function showWindow() { if (!win) return; if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
 
 function createTray() {
@@ -63,7 +86,7 @@ function installSecurity() {
   // Only web notifications are needed; everything else (camera, geolocation, ...) is denied. Microphone for voice notes is allowed.
   ses.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === "notifications" || permission === "media"));
   if (!dev) {
-    const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'";
+    const csp = "default-src 'self'; script-src 'self' https://js.hcaptcha.com https://*.hcaptcha.com; style-src 'self' 'unsafe-inline' https://*.hcaptcha.com; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' https://hcaptcha.com https://*.hcaptcha.com; object-src 'none'; base-uri 'none'; frame-src https://hcaptcha.com https://*.hcaptcha.com";
     ses.webRequest.onHeadersReceived((d, cb) => cb({ responseHeaders: { ...d.responseHeaders, "Content-Security-Policy": [csp] } }));
   }
 }
@@ -80,15 +103,30 @@ app.whenReady().then(async () => {
     app.exit(1); return;
   }
   // Self-update: the Hub downloads + verifies; this process swaps the AppImage (or points to the folder for a .deb) and restarts.
-  const asset = desktopAsset(process.env, process.platform, app.isPackaged);
-  const hub = await startBackend(dataDir, { keyWrap, backup: { paths: "any", dir: join(dataDir, "backups") }, appVersion: appVersion(app.getVersion()),
+  const asset = desktopAsset(process.env, process.platform, app.isPackaged, readPackageType(process.resourcesPath));
+  // A data folder sealed with another key (e.g. by the web server) is a handled condition: explain it, never touch the data.
+  let hub: Awaited<ReturnType<typeof startBackend>>;
+  for (;;) {
+    try { hub = await startBackend(dataDir, { name: "desktop app", onProblem: (e) => { if (!process.env.UNIMSG_NO_DIALOG) void keyProblemDialog(e); }, keyWrap, backup: { paths: "any", dir: join(dataDir, "backups") }, appVersion: appVersion(app.getVersion()),
     update: asset && { platform: asset.key, installMode: asset.mode, install: async (c) => {
-      if (asset.key !== "desktop-linux-appimage") { shell.showItemInFolder(c.file); return { action: "manual", file: c.file, message: `Version ${c.version} is downloaded and checked. Install it with: sudo apt install ${c.file}` }; }
+      if (asset.key !== "desktop-linux-appimage") { shell.showItemInFolder(c.file); return { action: "manual", file: c.file, message: `Version ${c.version} is downloaded and checked. Install it with: ${asset.key === "desktop-linux-pacman" ? "sudo pacman -U" : "sudo apt install"} ${c.file}` }; }
       const current = process.env.APPIMAGE!;
       replaceAppImage(current, c.file);
       setTimeout(() => { quitting = true; app.relaunch({ execPath: current, args: process.argv.slice(1).filter((a) => a !== "--updated") }); app.quit(); }, 600);
       return { action: "restart" };
-    } } });
+    } } }); break; }
+    catch (e) {
+      if (!(e instanceof DataKeyMismatchError)) throw e;
+      console.error("[unimsg] " + e.message);
+      if (process.env.UNIMSG_NO_DIALOG) { app.exit(1); return; }
+      const choice = await dialog.showMessageBox({ type: "error", title: "UniChat: data folder uses a different key", message: "This data folder was sealed with a different encryption key",
+        detail: `${e.message}\n\nThis usually means the folder was created by the web server / dev backend (key file) and is now opened by the desktop app (OS keychain).`,
+        buttons: ["Quit", "Use a separate desktop folder", "Open the folder"], defaultId: 0, cancelId: 0 });
+      if (choice.response === 2) { void shell.openPath(dataDir); app.exit(1); return; }
+      if (choice.response === 0 || dataDir === freshDir) { app.exit(1); return; }
+      dataDir = freshDir; app.setPath("userData", dataDir); // nothing is moved, deleted or overwritten in the old folder
+    }
+  }
   console.log(`[unimsg] data dir: ${dataDir}; key protection: ${keyWrap ? "OS keychain (safeStorage)" : "0600 key file"}`);
 
   win = new BrowserWindow({ width: 1200, height: 800, minWidth: 420, minHeight: 500, title: "UniChat", backgroundColor: "#1e1f22", icon: join(import.meta.dirname, "../../build/icon.png"),

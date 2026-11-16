@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Pin, PinOff, X } from "./icons";
 import type { Message } from "./types";
-import { core, fmtTime } from "./util";
+import { core, fmtDate, fmtTime } from "./util";
 import "./pins.css";
 
 const key = (m: Message) => m.chatId + "|" + m.id;
@@ -72,7 +72,7 @@ export function PinnedList({ pins, canUnpin, onJump }: { pins: Message[]; canUnp
           <button type="button" className="pinbody" title="Show in the conversation" onClick={() => onJump?.(m.id, m.chatId)}>
             <span className="pinwho"><b>{m.fromMe ? "You" : m.sender || m.senderId}</b><time>{fmtTime(m.time)}</time></span>
             <span className="pintext">{pinPreview(m)}</span>
-            {m.pinnedUntil && <small className="pinuntil">until {new Date(m.pinnedUntil).toLocaleDateString()}</small>}
+            {m.pinnedUntil && <small className="pinuntil">until {fmtDate(m.pinnedUntil, {})}</small>}
           </button>
           {canUnpin && <button type="button" className="icon" title="Unpin" aria-label={"Unpin: " + pinPreview(m).slice(0, 40)} onClick={() => void unpin(m)}><X size={14} /></button>}
         </div>))}

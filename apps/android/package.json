@@ -7,7 +7,8 @@
   "scripts": {
     "bundle": "node scripts/build-backend-bundle.mjs",
     "smoke": "node scripts/persist-test.mjs && node scripts/build-backend-bundle.mjs --smoke",
-    "test": "node scripts/persist-test.mjs && node scripts/build-backend-bundle.mjs --smoke",
+    "test:unit": "tsx --test src/notify.test.ts",
+    "test": "tsx --test src/notify.test.ts && node scripts/persist-test.mjs && node scripts/build-backend-bundle.mjs --smoke",
     "ui": "pnpm --filter @unimsg/ui build",
     "sync": "pnpm run ui && pnpm run bundle && cap sync android",
     "debug": "pnpm run sync && cd android && ./gradlew assembleDebug",

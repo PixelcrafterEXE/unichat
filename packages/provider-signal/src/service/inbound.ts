@@ -102,16 +102,43 @@ export class Inbound {
    * PniSignatureMessage whose signature verified. NEVER from a phone number alone (a number can belong to another account later).
    * Creates the (empty) ACI chat when only the PNI chat exists, so the Hub can merge the pair. Returns true when something changed.
    */
-  learnPni(pniIn: string, aciIn: string): boolean {
-    const pni = String(pniIn).toLowerCase(), aci = String(aciIn).toLowerCase(), ours = this.store.account;
+  learnPni(pniIn: string, aciIn: string, source = "unknown"): boolean {
+    const pni = String(pniIn).trim().toLowerCase().replace(/^pni:/, ""), aci = String(aciIn).toLowerCase(), ours = this.store.account;
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     if (!uuid.test(pni) || !uuid.test(aci) || pni === aci || (ours && (aci === ours.aci.toLowerCase() || pni === ours.aci.toLowerCase() || pni === ours.pni?.toLowerCase()))) return false;
     const map = (this.store.data.pnis ??= {});
     let changed = map[pni] !== aci;
     map[pni] = aci;
     if (this.store.data.chats[pni] && !this.store.data.chats[aci]) { this.store.upsertChat({ id: aci, kind: "dm" }); changed = true; }
-    if (changed) { this.store.touch(); this.emit({ type: "chats-changed", data: {} }); }
+    if (changed) {
+      this.store.touch(); this.emit({ type: "chats-changed", data: {} });
+      if (process.env.UNIMSG_DEBUG) console.debug(`[signal] pni link learned source=${source} links=${Object.keys(map).length} pniChat=${this.store.data.chats[pni] ? 1 : 0} aciChat=${this.store.data.chats[aci] ? 1 : 0}`); // counts only, never ids
+    }
     return changed;
+  }
+
+  private static readonly E164 = /^\+[1-9]\d{5,14}$/;
+
+  /**
+   * The phone told us that PNI `pniIn` is the person with number `e164` (our own sent-message transcript / a storage record that holds a PNI
+   * but no ACI yet). Remembered, and linked right away to a known contact (phone-supplied record) with that number.
+   */
+  notePniNumber(pniIn: string, e164: string, source: string): void {
+    const pni = String(pniIn).trim().toLowerCase().replace(/^pni:/, "");
+    if (!Inbound.E164.test(e164) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(pni)) return;
+    const ours = this.store.account; if (ours && (pni === ours.aci.toLowerCase() || pni === ours.pni?.toLowerCase())) return;
+    const map = (this.store.data.pniNumbers ??= {});
+    if (map[pni] !== e164) { map[pni] = e164; this.store.touch(); }
+    for (const c of Object.values(this.store.data.contacts)) if (c.number === e164 && c.aci.toLowerCase() !== pni) this.learnPni(pni, c.aci, `${source}+contact-number`);
+  }
+
+  /**
+   * A trusted source (server-signed sender certificate, phone's contact record / contact sync) says ACI `aci` has number `e164`. Links it to
+   * every PNI chat the phone created for that same number. A number with no phone-created PNI chat links nothing.
+   */
+  linkByNumber(aci: string, e164: string | undefined | null, source: string): void {
+    if (!e164) return;
+    for (const [pni, num] of Object.entries(this.store.data.pniNumbers ?? {})) if (num === e164) this.learnPni(pni, aci, `${source}+number`);
   }
 
   /** PniSignatureMessage from `senderAci`: trusted only if the PNI identity key we hold for that PNI signed the sender's ACI identity key. */
@@ -122,7 +149,7 @@ export class Inbound {
       const ids = this.store.data.identities, find = (id: string) => Object.entries(ids).find(([k]) => k.toLowerCase().startsWith(`${id.toLowerCase()}.`))?.[1];
       const pk = find(pni), ak = find(senderAci); if (!pk || !ak) return; // no identity key of that PNI known: nothing to verify against
       const ok = PublicKey.deserialize(Buffer.from(pk, "base64")).verifyAlternateIdentity(PublicKey.deserialize(Buffer.from(ak, "base64")), Buffer.from(m.signature));
-      if (ok) this.learnPni(pni, senderAci);
+      if (ok) this.learnPni(pni, senderAci, "pni-signature");
     } catch { /* malformed: ignore */ }
   }
 
@@ -158,6 +185,7 @@ export class Inbound {
     const c = d.content;
     const ours = this.ourAci;
     if (d.senderAci.toLowerCase() !== ours.toLowerCase() && (this.store.data.contacts[d.senderAci]?.blocked || this.store.data.contacts[d.senderAci]?.localBlocked)) return; // blocked on the phone / in UniChat
+    if (d.senderE164 && d.senderAci.toLowerCase() !== ours.toLowerCase()) this.linkByNumber(d.senderAci, d.senderE164, "sender-cert");
     if (c.pniSignatureMessage && d.senderAci.toLowerCase() !== ours.toLowerCase()) this.pniSignature(c.pniSignatureMessage, d.senderAci);
     if (c.dataMessage) this.data(c.dataMessage, d.senderAci, d.senderAci, false, envelopeTimestamp);
     if (c.callMessage) this.callMessage(c.callMessage, d.senderAci, envelopeTimestamp);
@@ -174,6 +202,8 @@ export class Inbound {
         const ts = sent.timestamp ?? envelopeTimestamp;
         if (sent.message) this.data(sent.message, ours, dest, true, ts);
         else if (sent.editMessage) this.edit(sent.editMessage, ours, dest, ts);
+        // after the chat exists, so a link to an already known ACI (same number) can create the ACI side and declare the pair
+        if (sent.destinationE164 && /^pni:/i.test(sent.destinationServiceId || serviceIdFromBinary(sent.destinationServiceIdBinary) || "")) this.notePniNumber(dest, sent.destinationE164, "sent-transcript");
       }
       const sm = c.syncMessage;
       if (sm.contacts?.blob) this.hooks.onContactsBlob?.(this.toRef(sm.contacts.blob), !!sm.contacts.complete);
@@ -188,7 +218,8 @@ export class Inbound {
       if (sm.callEvent) this.callEvent(sm.callEvent);
       if (sm.keys) this.applyKeys(sm.keys);
       if (sm.fetchLatest?.type === FetchLatestType.STORAGE_MANIFEST) this.hooks.onStorageManifestChanged?.();
-      // sync.read / viewed: TODO (see README)
+      if (sm.read?.length) this.syncRead(sm.read);
+      // sync.viewed: TODO (see README)
     }
   }
 
@@ -313,9 +344,13 @@ export class Inbound {
     if (fromMe) this.store.indexSent(m.id, chatId);
     const rec = this.store.data.chats[chatId]!;
     rec.lastMessageAt = m.time;
-    if (!fromMe) rec.unread = (rec.unread ?? 0) + 1;
+    if (!fromMe) { rec.unread = (rec.unread ?? 0) + 1; this.store.noteUnread(chatId, m.id); }
     this.store.touch();
+    // an edit that overtook its original is applied now
+    const early = this.pendingEdits.get(m.id);
+    if (early) { this.pendingEdits.delete(m.id); m.text = early.text; m.editedAt = early.editedAt; if (early.card) m.card = early.card; }
     this.emit({ type: "message", data: m });
+    if (fromMe) this.replayReceipts(m.id); // a receipt that overtook the sync transcript
   }
 
   /** Disappearing-messages timer seen on a message / update (seconds, 0 = off). We only record it; nothing is ever deleted here. */
@@ -333,13 +368,31 @@ export class Inbound {
     if (c.profileKey !== b64) { c.profileKey = b64; delete c.sealedRejectedAt; delete c.unrestricted; delete c.profileNameCheckedAt; this.store.touch(); this.hooks.onProfileKey?.(id); }
   }
 
+  /** Edits that arrived before their original message (kept briefly; also emitted at once because the Hub may already have the message). */
+  private pendingEdits = new Map<string, { text: string; editedAt: string; card?: Card; at: number }>();
+
   private edit(e: NonNullable<Content["editMessage"]>, author: string, peer: string, ts: number): void {
     if (e.targetSentTimestamp === undefined || !e.dataMessage) return;
+    if (!e.dataMessage.groupV2?.masterKey?.length && !peer) return; // own transcript without a destination: cannot route
     const chatId = this.chatFor(e.dataMessage, peer);
-    this.emit({ type: "message-update", data: {
-      chatId, messageId: messageId(author, e.targetSentTimestamp),
-      patch: { text: renderMentions(e.dataMessage.body ?? "", e.dataMessage.bodyRanges, (a) => this.displayName(a)), editedAt: new Date(e.dataMessage.timestamp ?? ts).toISOString() },
-    } });
+    // Clients differ in whether a 2nd edit targets the ORIGINAL timestamp or the latest revision's: resolve revisions to the original.
+    const aliases = (this.store.data.editAlias ??= {});
+    const target = aliases[messageId(author, e.targetSentTimestamp)] ?? messageId(author, e.targetSentTimestamp);
+    const editTs = e.dataMessage.timestamp ?? ts;
+    const editedAtMs = validTime(editTs) ? editTs : (validTime(ts) ? ts : Date.now());
+    if (messageId(author, editTs) !== target) {
+      aliases[messageId(author, editTs)] = target;
+      const keys = Object.keys(aliases); if (keys.length > 2000) for (const k of keys.slice(0, keys.length - 2000)) delete aliases[k];
+      this.store.touch();
+    }
+    const text = renderMentions(e.dataMessage.body ?? "", e.dataMessage.bodyRanges, (a) => this.displayName(a));
+    const card = e.dataMessage.preview?.length ? renderPreview(e.dataMessage) : undefined;
+    const editedAt = new Date(editedAtMs).toISOString();
+    this.emit({ type: "message-update", data: { chatId, messageId: target, patch: { text, editedAt, ...(card ? { card } : {}) } } });
+    // keep it for an original that has not been seen yet (out-of-order delivery); the newest edit wins
+    const prev = this.pendingEdits.get(target);
+    if (!prev || Date.parse(prev.editedAt) <= editedAtMs) this.pendingEdits.set(target, { text, editedAt, card, at: Date.now() });
+    for (const [k, v] of this.pendingEdits) if (Date.now() - v.at > 10 * 60_000 || this.pendingEdits.size > 200) this.pendingEdits.delete(k);
   }
 
   private pollUpdated(chatId: string, msgId: string): void {
@@ -374,20 +427,61 @@ export class Inbound {
   private receipt(c: Content, sender: string, at: number): void {
     const r = c.receiptMessage!;
     if (sender.toLowerCase() === this.ourAci.toLowerCase()) return; // never a receipt about my own devices
-    const status = r.type === ReceiptType.DELIVERY ? "delivered" : "read";
-    for (const ts of r.timestamp ?? []) {
-      const id = messageId(this.ourAci, ts);
-      const chatId = this.store.data.sentIndex[id];
-      if (!chatId) continue; // receipt for a message we never sent from this store
-      this.emit({ type: "receipt", data: { chatId, messageId: id, status, by: sender, ...(validTime(at) ? { at: new Date(at).toISOString() } : {}) } });
-    }
+    // proto2 default of ReceiptMessage.type is DELIVERY: an absent type is a delivery receipt, not a read receipt
+    const status = r.type === undefined || r.type === ReceiptType.DELIVERY ? "delivered" : "read";
+    for (const ts of r.timestamp ?? []) this.applyReceipt(messageId(this.ourAci, ts), status, sender, at);
   }
+
+  /** Route a receipt to the sent message. Receipts for messages not (yet) known, or still being sent, are kept and replayed when the message shows up. */
+  private applyReceipt(id: string, status: "delivered" | "read", by: string, at?: number): void {
+    const chatId = this.store.data.sentIndex[id];
+    if (!chatId || this.held.has(id)) {
+      const list = this.earlyReceipts.get(id) ?? [];
+      list.push({ status, by, at, seen: Date.now() });
+      this.earlyReceipts.set(id, list.slice(-50));
+      for (const k of this.earlyReceipts.keys()) { if (this.earlyReceipts.size <= 500) break; this.earlyReceipts.delete(k); }
+      return;
+    }
+    this.emit({ type: "receipt", data: { chatId, messageId: id, status, by, ...(validTime(at) ? { at: new Date(at).toISOString() } : {}) } });
+  }
+  private earlyReceipts = new Map<string, { status: "delivered" | "read"; by: string; at?: number; seen: number }[]>();
+  private held = new Set<string>();
+
+  private replayReceipts(id: string): void {
+    const list = this.earlyReceipts.get(id);
+    if (!list || this.held.has(id)) return;
+    this.earlyReceipts.delete(id);
+    for (const r of list) if (Date.now() - r.seen < 24 * 3600_000) this.applyReceipt(id, r.status, r.by, r.at);
+  }
+
+  /** A message of ours is being sent: index it now and hold receipts for it until the Hub has the message (see releaseSent). */
+  holdSent(id: string, chatId: string): void { this.store.indexSent(id, chatId); this.held.add(id); }
+  /** The send failed: forget it. */
+  abortSent(id: string): void { this.held.delete(id); this.earlyReceipts.delete(id); delete this.store.data.sentIndex[id]; this.store.touch(); }
+  /** The send succeeded and the caller is about to get the Message: deliver receipts that raced ahead of it shortly after. */
+  releaseSent(id: string): void {
+    const t = setTimeout(() => { this.held.delete(id); this.replayReceipts(id); }, this.releaseDelayMs);
+    t.unref?.();
+  }
+  releaseDelayMs = 150;
 
   /** Server-generated delivery receipt (envelope type 5, unsealed senders only). */
   serverDeliveryReceipt(fromAci: string, originalTimestamp: number, at?: number): void {
-    const id = messageId(this.ourAci, originalTimestamp);
-    const chatId = this.store.data.sentIndex[id];
-    if (chatId) this.emit({ type: "receipt", data: { chatId, messageId: id, status: "delivered", by: fromAci, ...(validTime(at) ? { at: new Date(at).toISOString() } : {}) } });
+    this.applyReceipt(messageId(this.ourAci, originalTimestamp), "delivered", fromAci, at);
+  }
+
+  /** SyncMessage.Read: another device of ours read these incoming messages. Clears them from the unread count of their chats. */
+  private syncRead(list: NonNullable<NonNullable<Content["syncMessage"]>["read"]>): void {
+    const changed = new Set<string>();
+    for (const r of list) {
+      const sender = r.senderAci || serviceIdFromBinary(r.senderAciBinary);
+      if (!sender || r.timestamp === undefined) continue;
+      const chatId = this.store.dropUnread(messageId(sender, r.timestamp));
+      const rec = chatId ? this.store.data.chats[chatId] : undefined;
+      if (!chatId || !rec) continue;
+      rec.unread = Math.max(0, (rec.unread ?? 0) - 1); changed.add(chatId);
+    }
+    if (changed.size) { this.store.touch(); for (const chatId of changed) this.emit({ type: "chats-changed", data: { chatId } }); }
   }
 
   private typing(c: Content, sender: string): void {

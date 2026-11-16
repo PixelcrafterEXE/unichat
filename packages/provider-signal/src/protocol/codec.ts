@@ -113,6 +113,7 @@ export interface DataMessage {
 }
 export interface EditMessage { targetSentTimestamp?: number; dataMessage?: DataMessage }
 export interface SyncSent {
+  destinationE164?: string;
   destinationServiceId?: string;
   destinationServiceIdBinary?: Uint8Array;
   timestamp?: number;

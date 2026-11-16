@@ -4,7 +4,40 @@ import { look } from "../lib/ui.ts";
 
 const GENERAL = "&chat=dc-1:general";
 
+
+const newDiscordChat = async (t: any, handle: string) => {
+  await t.ev(`window.__mockCaptcha = true`);
+  await t.click(".chats header button[title='New chat']");
+  await t.waitSel(".modal select, [role=dialog] select");
+  await t.ev(`(()=>{const sel=document.querySelector('.modal select, [role=dialog] select'); __e2e.setv(sel,'dc-2')})()`);
+  await t.waitFor(`[...document.querySelectorAll('.modal input, [role=dialog] input')].filter(i=>i.type!=='checkbox').length`);
+  await t.ev(`__e2e.setv([...document.querySelectorAll('.modal input, [role=dialog] input')].filter(i=>i.type!=='checkbox').at(-1),'${handle}')`);
+  await t.click(".modal button.primary, [role=dialog] button.primary");
+  await t.waitSel('[data-testid="captcha-stub"]');
+};
+const captchaTests = [
+  test("captcha: starting a chat with a new person shows the human check, solving it opens the chat", async (t) => {
+    await t.open();
+    await newDiscordChat(t, "newperson");
+    await t.shot("captcha");
+    await t.ok("modal explains what is happening and offers the fallback", `(()=>{const x=document.body.textContent; return x.includes("check that you are human") && x.includes("Open Discord instead") && x.includes("best-effort")})()`);
+    await t.click('[data-testid="captcha-stub"]');
+    await t.waitFor(`document.querySelector('.chats li.active')?.dataset.chat === 'dc-2:newperson'`);
+    await t.not("the captcha modal closed", `document.querySelector('[data-testid="captcha-stub"]')`);
+    await t.eq("the solved token reached the backend", `globalThis.__captchaToken`, "stub-captcha-token");
+  }),
+  test("captcha: Cancel explains instead of opening a chat", async (t) => {
+    await t.open();
+    await newDiscordChat(t, "someoneelse");
+    await t.click('[data-testid="captcha-cancel"]');
+    await t.waitFor(`document.querySelector('.modal, [role=dialog]')?.textContent.includes("solve a captcha")`);
+    await t.ok("explanatory error, no chat", `!document.querySelector('[data-chat="dc-2:someoneelse"]')`);
+    await t.not("modal closed", `document.querySelector('[data-testid="captcha-stub"]')`);
+  }),
+];
+
 export default [
+  ...captchaTests,
   test("categories: headings, order, collapse, remembered across reloads", async (t) => {
     await t.open();
     await t.space("dc-1:g1");

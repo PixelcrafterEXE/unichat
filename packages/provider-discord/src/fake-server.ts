@@ -32,6 +32,9 @@ export class FakeDiscord {
   inflight = 0; maxInflight = 0; stamps: number[] = [];
   rateLimitNext = 0; rateLimitBody: "json" | "html" = "json";
   failNext = 0;
+  /** When set, POST /users/@me/channels answers hCaptcha-required until it carries X-Captcha-Key == captcha.key and the fixture rqtoken. */
+  captcha: { key: string } | null = null;
+  static readonly RQTOKEN = "rq-token-fixture";
   membersIntent = false;
   blockedChannels = new Set<string>(); // POST -> 403 ("manage:<channel>": PATCH channel -> 403, "events:<guild>": scheduled events -> 403)
   readonly bios = new Map<string, string>();
@@ -154,7 +157,7 @@ export class FakeDiscord {
     }
     if (method === "PATCH" && path === "/users/@me") { const u = this.users.get(me)!; for (const k of ["username", "global_name", "avatar"]) if (k in body) (u as any)[k] = body[k]; this.dispatch("USER_UPDATE", u); return this.json(res, 200, u); }
     if (method === "PATCH" && path === "/users/@me/profile") { if (who.mode !== "user") return this.json(res, 403, { message: "Missing Access", code: 50001 }); this.bios.set(me, body.bio ?? ""); return this.json(res, 200, { bio: body.bio ?? "" }); }
-    if (method === "GET" && (r = m(/^\/users\/(\d+)\/profile$/))) return who.mode === "user" ? this.json(res, 200, { user_profile: { bio: this.bios.get(r[1]) ?? "" } }) : this.json(res, 403, { message: "Missing Access", code: 50001 });
+    if (method === "GET" && (r = m(/^\/users\/(\d+)\/profile$/))) return who.mode === "user" ? this.json(res, 200, { user_profile: { bio: this.bios.get(r[1]) ?? "" }, mutual_guilds: this.guildsFor(me).filter((g) => g.owner_id === r![1] || g.members.some((x) => x.user.id === r![1])).map((g) => ({ id: g.id, nick: null })) }) : this.json(res, 403, { message: "Missing Access", code: 50001 });
     if ((r = m(/^\/users\/@me\/relationships\/(\d+)$/))) {
       if (who.mode !== "user") return this.json(res, 403, { message: "Missing Access", code: 50001 });
       if (method === "PUT") this.relationships.set(r[1], body.type); else this.relationships.delete(r[1]);
@@ -193,6 +196,12 @@ export class FakeDiscord {
     if (method === "POST" && path === "/users/@me/channels") {
       const rid = String(body.recipient_id);
       if (!this.users.has(rid)) return this.json(res, 400, { message: "Invalid Recipient(s)", code: 50033 });
+      if (this.captcha) {
+        const key = String(req.headers["x-captcha-key"] ?? "");
+        if (!key) return this.json(res, 400, { captcha_key: ["captcha-required"], captcha_sitekey: "sitekey-fixture", captcha_service: "hcaptcha", captcha_rqdata: "rqdata-fixture", captcha_rqtoken: FakeDiscord.RQTOKEN });
+        if (key !== this.captcha.key || req.headers["x-captcha-rqtoken"] !== FakeDiscord.RQTOKEN) return this.json(res, 400, { captcha_key: ["incorrect-captcha-sol"] });
+        this.captcha = null;
+      }
       let dm = [...this.channels.values()].find((c) => c.type === 1 && c.recipients?.some((u) => u.id === rid));
       if (!dm) dm = this.channel({ id: snow(), type: 1, recipients: [this.users.get(rid)!], last_message_id: null });
       return this.json(res, 200, dm);

@@ -1,16 +1,18 @@
 // Desktop self-update glue. The download, SHA-256 check and release lookup are the Hub's Updater (packages/core/src/updater.ts);
 // this file decides WHICH asset this install uses and how a verified file replaces the running app.
 //   AppImage: the new file replaces the running AppImage (atomic rename, the old one is kept as <name>.bak), then the app restarts.
+//   .pacman:  (Arch, *.pkg.tar.zst) like .deb: `sudo pacman -U <file>`; detected by electron-builder's resources/package-type file.
 //   .deb:     cannot be installed without root: the folder with the verified file is shown (manual install).
-import { chmodSync, copyFileSync, existsSync, renameSync, rmSync, statSync, accessSync, constants } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, accessSync, constants } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-export type DesktopAsset = { key: "desktop-linux-appimage" | "desktop-linux-deb"; mode: "self" | "manual" } | undefined;
+export type DesktopAsset = { key: "desktop-linux-appimage" | "desktop-linux-deb" | "desktop-linux-pacman"; mode: "self" | "manual" } | undefined;
 
 /** Which release asset belongs to this install (undefined = unsupported platform or a dev run). */
-export function desktopAsset(env: { APPIMAGE?: string }, platform: string, packaged: boolean): DesktopAsset {
+export function desktopAsset(env: { APPIMAGE?: string }, platform: string, packaged: boolean, packageType?: string): DesktopAsset {
   if (platform !== "linux" || !packaged) return undefined;
   if (env.APPIMAGE) return { key: "desktop-linux-appimage", mode: "self" };
+  if (packageType?.trim() === "pacman") return { key: "desktop-linux-pacman", mode: "manual" };
   return { key: "desktop-linux-deb", mode: "manual" };
 }
 
@@ -35,4 +37,9 @@ export function replaceAppImage(current: string, verified: string): ReplaceResul
     try { renameSync(tmp, current); } catch (e) { renameSync(backup, current); throw e; } // put the old one back
     return { backup };
   } catch (e) { rmSync(tmp, { force: true }); throw e; }
+}
+
+/** electron-builder's fpm targets (deb, rpm, pacman) ship `resources/package-type` holding the target name; "" for AppImage/unpacked. */
+export function readPackageType(resourcesPath: string): string {
+  try { return readFileSync(join(resourcesPath, "package-type"), "utf8").trim(); } catch { return ""; }
 }

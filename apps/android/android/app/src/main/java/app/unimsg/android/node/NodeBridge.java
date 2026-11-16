@@ -374,7 +374,7 @@ public final class NodeBridge {
                     break;
                 case "notify":
                     if (!uiForeground && app != null)
-                        Notifier.showMessage(app, o.optString("chatId"), o.optString("messageId"), o.optString("title"), o.optString("body"), notifyContent);
+                        Notifier.showMessage(app, o.optString("chatId"), o.optString("messageId"), o.optString("title"), o.optString("body"), notifyContent, o.optString("avatar", null));
                     break;
                 case "state":
                     if (prefs != null) { prefs.setAccountCount(o.optInt("accounts", 0)); prefs.setSyncGroup(o.optBoolean("sync", false)); }

@@ -56,7 +56,7 @@ export interface SenderDeps {
 export interface GroupSendRequest {
   chatId: string; members: string[]; content: Content; timestamp: number; groupId: Uint8Array; secret: GroupSecretParams;
 }
-export interface GroupSendResult { mode: "sealed"; delivered: number; failed: number; fallback: number }
+export interface GroupSendResult { mode: "sealed"; delivered: number; failed: number; fallback: number; /** Members that could not be prepared/sent in the multi-recipient request and are worth an individual retry (not: unregistered accounts). */ retry?: string[] }
 
 const contentHint = (c: Content) => (c.dataMessage || c.editMessage ? ContentHint.Resendable : ContentHint.Implicit);
 
@@ -67,16 +67,19 @@ export class Sender {
   private get local() { return ProtocolAddress.new(Aci.fromUuid(this.account.aci), this.account.deviceId); }
 
   private knownDevices(aci: string): number[] {
-    const prefix = `aci:${aci}.`;
+    const prefix = `aci:${aci.toLowerCase()}.`;
     return Object.keys(this.store.data.sessions).filter((k) => k.startsWith(prefix)).map((k) => Number(k.slice(prefix.length)))
       .filter((n) => Number.isInteger(n));
   }
-  private dropSession(aci: string, device: number) { delete this.store.data.sessions[`aci:${aci}.${device}`]; this.store.touch(); }
+  private dropSession(aci: string, device: number) { delete this.store.data.sessions[`aci:${aci.toLowerCase()}.${device}`]; this.store.touch(); }
 
-  /** Fetch prekey bundles and establish sessions. `device` undefined = all devices. */
-  private async fetchBundles(aci: string, device?: number): Promise<void> {
+  /**
+   * Fetch prekey bundles and establish sessions. `device` undefined = all devices. Returns false only when ONE specific device
+   * no longer exists (404): the caller then simply leaves it out instead of failing the whole send to the person.
+   */
+  private async fetchBundles(aci: string, device?: number): Promise<boolean> {
     const res = await this.chat().fetch({ verb: "GET", path: `/v2/keys/${aci}/${device ?? "*"}`, headers: [] });
-    if (res.status === 404) throw new SendError("recipient not found or has no prekeys");
+    if (res.status === 404) { if (device !== undefined) return false; throw new SendError("recipient not found or has no prekeys"); }
     if (res.status < 200 || res.status >= 300) throw new SendError(`prekey fetch failed (HTTP ${res.status})`, res.status >= 500 || res.status === 429);
     const json = JSON.parse(Buffer.from(res.body ?? new Uint8Array()).toString("utf8")) as KeysResponse;
     const identity = PublicKey.deserialize(fromB64(json.identityKey));
@@ -88,6 +91,26 @@ export class Sender {
         d.signedPreKey.keyId, PublicKey.deserialize(fromB64(d.signedPreKey.publicKey)), fromB64(d.signedPreKey.signature), identity,
         d.pqPreKey.keyId, KEMPublicKey.deserialize(fromB64(d.pqPreKey.publicKey)), fromB64(d.pqPreKey.signature));
       await processPreKeyBundle(bundle, ProtocolAddress.new(Aci.fromUuid(aci), d.deviceId), this.local, st.sessions, st.identities);
+    }
+    return true;
+  }
+
+  /** Encrypt for one device; a session that cannot encrypt (corrupt/invalid) is reset from a fresh bundle ONCE. undefined = the device is gone. */
+  private async encryptFor(aci: string, deviceId: number, plain: Uint8Array<ArrayBuffer>): Promise<{ ct: Awaited<ReturnType<typeof signalEncrypt>>; registrationId: number } | undefined> {
+    const st = this.store.stores("aci");
+    const addr = ProtocolAddress.new(Aci.fromUuid(aci), deviceId);
+    const attempt = async () => {
+      const ct = await signalEncrypt(plain, addr, this.local, st.sessions, st.identities);
+      const rec = await st.sessions.getSession(addr);
+      if (!rec) throw new SendError("session missing after encrypt");
+      return { ct, registrationId: rec.remoteRegistrationId() };
+    };
+    try { return await attempt(); }
+    catch (e) {
+      if (e instanceof SendError) throw e;
+      this.dropSession(aci, deviceId);
+      if (!(await this.fetchBundles(aci, deviceId))) return undefined;
+      return await attempt();
     }
   }
 
@@ -126,13 +149,16 @@ export class Sender {
       const sealedContents = [];
       for (const deviceId of devices) {
         const addr = ProtocolAddress.new(Aci.fromUuid(aci), deviceId);
-        const ct = await signalEncrypt(plain, addr, this.local, st.sessions, st.identities);
-        const rec = await st.sessions.getSession(addr);
-        if (!rec) throw new SendError("session missing after encrypt");
+        const enc = await this.encryptFor(aci, deviceId, plain);
+        if (!enc) continue; // device vanished while we were resetting its session
         if (sealedNow) {
-          const usmc = UnidentifiedSenderMessageContent.new(ct, cert!, contentHint(content), opts.groupId ? toBytes(opts.groupId) : null);
-          sealedContents.push({ deviceId, registrationId: rec.remoteRegistrationId(), contents: await sealedSenderEncrypt(usmc, addr, st.identities) });
-        } else contents.push({ deviceId, registrationId: rec.remoteRegistrationId(), contents: ct });
+          const usmc = UnidentifiedSenderMessageContent.new(enc.ct, cert!, contentHint(content), opts.groupId ? toBytes(opts.groupId) : null);
+          sealedContents.push({ deviceId, registrationId: enc.registrationId, contents: await sealedSenderEncrypt(usmc, addr, st.identities) });
+        } else contents.push({ deviceId, registrationId: enc.registrationId, contents: enc.ct });
+      }
+      if (contents.length + sealedContents.length === 0) {
+        if (mode === "sync") return { mode: "authenticated", fallback: false };
+        throw new SendError("no devices to send to");
       }
       await this.store.flush();
       try {
@@ -154,6 +180,10 @@ export class Sender {
           for (const d of [...entry.extraDevices, ...entry.staleDevices]) this.dropSession(aci, d);
           for (const d of [...entry.missingDevices, ...entry.staleDevices]) await this.fetchBundles(aci, d);
           devices = this.knownDevices(aci).filter((d) => !(self && d === this.account.deviceId));
+          if (devices.length === 0) {
+            if (mode === "sync") return { mode: "authenticated", fallback: false };
+            throw new SendError("no devices to send to");
+          }
           continue;
         }
         if (LibSignalErrorBase.is(e, ErrorCode.ServiceIdNotFound)) throw new SendError("recipient is no longer registered with Signal");
@@ -210,7 +240,7 @@ export class Sender {
     };
     for (const m of req.members) { try { await prepare(m); } catch { excluded.add(m); } }
     const included = () => req.members.filter((m) => !excluded.has(m));
-    if (included().length === 0) return { mode: "sealed", delivered: 0, failed: excluded.size, fallback };
+    if (included().length === 0) return { mode: "sealed", delivered: 0, failed: excluded.size, fallback, retry: [...excluded] };
 
     const plain = padContent(ContentCodec.encode(req.content));
     const ct = await groupEncrypt(this.local, dist, this.store.senderKeys, plain);
@@ -218,7 +248,7 @@ export class Sender {
     await this.store.flush();
     for (let attempt = 0; attempt < 4; attempt++) {
       const members = included();
-      if (members.length === 0) return { mode: "sealed", delivered: 0, failed: excluded.size, fallback };
+      if (members.length === 0) return { mode: "sealed", delivered: 0, failed: excluded.size, fallback, retry: [...excluded] };
       const recipients = members.flatMap((m) => this.knownDevices(m).map((d) => ProtocolAddress.new(Aci.fromUuid(m), d)));
       const payload = await sealedSenderMultiRecipientEncrypt({ content: usmc, recipients, identityStore: st.identities, sessionStore: st.sessions });
       const token = GroupSendEndorsement.combine(members.map((m) => new GroupSendEndorsement(Buffer.from(end.members[m.toLowerCase()]!, "base64"))))
@@ -226,7 +256,7 @@ export class Sender {
       try {
         const res = await unauth.sendMultiRecipientMessage({ payload, timestamp: req.timestamp, auth: token, onlineOnly: false, urgent: true });
         const unregistered = res.unregisteredIds.length;
-        return { mode: "sealed", delivered: Math.max(0, members.length - unregistered), failed: excluded.size + Math.min(unregistered, members.length), fallback };
+        return { mode: "sealed", delivered: Math.max(0, members.length - unregistered), failed: excluded.size + Math.min(unregistered, members.length), fallback, retry: [...excluded] };
       } catch (e) {
         if (LibSignalErrorBase.is(e, ErrorCode.MismatchedDevices)) {
           for (const entry of e.entries) {

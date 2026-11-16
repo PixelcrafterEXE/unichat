@@ -36,3 +36,27 @@ export function cachedSnapshot(fetch: () => Promise<Snapshot>, ttlMs = 30_000) {
     return inflight ??= fetch().then((s) => { last = s; at = Date.now(); return s; }, () => last).finally(() => { inflight = undefined; });
   };
 }
+
+/** Largest avatar (base64 characters) that travels in a notify frame; bigger pictures are skipped (the generic icon stays). ~64 KB of image. */
+export const MAX_AVATAR_B64 = 88_000;
+type AvatarReply = { dataBase64?: string; mime?: string } | null | undefined;
+const looksLikeImage = (mime?: string) => mime === "image/png" || mime === "image/jpeg" || mime === "image/webp";
+
+/**
+ * Adds the chat's picture (base64 PNG/JPEG/WebP, <= MAX_AVATAR_B64) to a notification, for Android's large icon.
+ * Never in "hidden" mode (no personal picture when the content is hidden). Any failure (no picture, too big, RPC error, slow) returns the
+ * notification unchanged: a notification must never be lost or delayed because of a picture. `cache` keeps recent answers (also misses).
+ */
+export async function withAvatar<N extends { chatId: string }>(n: N, mode: NotifyContent, fetchAvatar: (chatId: string) => Promise<AvatarReply>, cache?: Map<string, { at: number; v?: string }>, opts: { timeoutMs?: number; ttlMs?: number; now?: () => number } = {}): Promise<N & { avatar?: string }> {
+  if (mode === "hidden") return n;
+  const now = opts.now ?? Date.now, ttl = opts.ttlMs ?? 6 * 3600_000;
+  const hit = cache?.get(n.chatId);
+  if (hit && now() - hit.at < ttl) return hit.v ? { ...n, avatar: hit.v } : n;
+  let v: string | undefined;
+  try {
+    const r = await Promise.race([fetchAvatar(n.chatId), new Promise<undefined>((res) => { const t = setTimeout(() => res(undefined), opts.timeoutMs ?? 1500); (t as { unref?: () => void }).unref?.(); })]);
+    if (r?.dataBase64 && looksLikeImage(r.mime) && r.dataBase64.length <= MAX_AVATAR_B64) v = r.dataBase64;
+  } catch { /* no picture */ }
+  if (cache) { if (cache.size > 200) cache.delete(cache.keys().next().value!); cache.set(n.chatId, { at: now(), v }); }
+  return v ? { ...n, avatar: v } : n;
+}

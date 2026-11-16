@@ -1,13 +1,14 @@
 import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { initSyncLink, offerSyncLink } from "./syncLink";
-import { StatusDots, focusAccount } from "./StatusDots";
+import { StatusDots, focusAccount , settingsNav } from "./StatusDots";
 import { offlineLine, sourceOf, timeoutNote } from "./loadsource";
 import { capsOf, type Account, type Chat, type Contact, type LoginPrompt, type Message, type ProviderInfo, type RailGroup, type Space, type UserCategory } from "./types";
 import { CategoryModal, CategoryPickModal } from "./Categories";
 import { X } from "./icons";
 import { setToken } from "./api";
 import { UpdateBanner } from "./Updates";
-import { Avatar, ProviderIcon, ProviderStack, SpaceIcon, core, initials, isCoarse, loadSet, lpHandlers, type LPState, loadSettings, saveSet, saveSettings, useLongPress, presenceText, type Settings } from "./util";
+import { useSyncReceiving } from "./SyncPanel";
+import { Avatar, notificationIcon, ProviderIcon, ProviderStack, SpaceIcon, core, initials, isCoarse, loadSet, lpHandlers, type LPState, loadSettings, saveSet, saveSettings, useLongPress, presenceText, setDateFormat, type Settings } from "./util";
 import { ChatRow, type RowApi } from "./ChatRow";
 import { ChatFilterBar, activeCount, isOnline, matchesFilters, normFilters, type ChatFilters } from "./ChatFilters";
 import { VList } from "./VList";
@@ -26,6 +27,7 @@ import { GROUP_COLORS, addToGroup, changed, dropEdge, dropOnto, groupOf, nudgeIn
 import type { PlaceInfo } from "./Panels";
 import { DisappearBadge } from "./Disappearing";
 import { ChevronDown, ChevronRight, FolderInput, FolderPlus, ArrowUp, ArrowDown, Folder, GitMerge, Unlink, LogOut, Info as InfoIcon, Trash2, Archive, ArchiveRestore, MoreHorizontal, Pin, PinOff, MarkRead, CloudOff, Pencil, Bell, Hash, BellOff, ChevronLeft, Info, Lock, Menu, MessageCircle, Search, Settings as SettingsIcon, SquarePen, Plus, FolderMinus, Tag, Palette, ListPlus } from "./icons";
+import { CaptchaModal } from "./Captcha";
 import { ProfileModal, PersonModal, ArchivedSpacesModal, PopMenu, SpaceInfoModal, ConfirmModal, AddMembersModal, AddMenuModal, CommunityModal, AddAccount, LoginModal, NewChatModal, Lightbox, QuickSwitcher, RenameModal, MergeModal, FolderModal, MoveModal } from "./Modals";
 
 const RANK = ["failed", "sending", "sent", "delivered", "read"]; // delivery status only ever moves forward
@@ -42,7 +44,16 @@ function reuse<T extends { id: string }>(prev: T[], next: T[]): T[] {
   const out = next.map((n, i) => { const o = m.get(n.id); if (o && same(o, n)) { if (prev[i] !== o) all = false; return o; } all = false; return n; });
   return all ? prev : out;
 }
-const upsert = (list: Message[], m: Message) => (list.some((x) => x.id === m.id && x.chatId === m.chatId) ? list : [...list, m]); // (native ids may repeat across the members of a merged chat)
+const isPend = (x: Message) => x.id.startsWith("pend-"), isLocal = (x: Message) => isPend(x) || x.id.startsWith("local-");
+/** Add a message to a chat's list unless it is there (native ids may repeat across the members of a merged chat).
+ *  `replaces`: the id of the optimistic placeholder this message answers. A real message of mine that arrives (event or reply of `send`) also retires the
+ *  oldest placeholder of the same chat with the same text and attachment count, whichever of the two comes first. */
+const upsert = (list: Message[], m: Message, replaces?: string) => {
+  let l = replaces ? list.filter((x) => x.id !== replaces) : list;
+  if (l.some((x) => x.id === m.id && x.chatId === m.chatId)) return l;
+  if (m.fromMe && !isLocal(m)) { const i = l.findIndex((x) => isPend(x) && x.chatId === m.chatId && x.text === m.text && (x.attachments?.length ?? 0) === (m.attachments?.length ?? 0)); if (i >= 0) l = l.filter((_, j) => j !== i); }
+  return [...l, m];
+};
 const CHAT_DRAG = "application/x-unimsg-chat", SPACE_DRAG = "application/x-unimsg-space", CAT_DRAG = "application/x-unimsg-category";
 const PERSONAL_VIEW = "personal"; // the Hub's key of the Personal view (the UI calls it HOME)
 interface CatGroup { key: string; name?: string; id?: string; color?: string; chats: Chat[] }
@@ -78,10 +89,12 @@ export default function App() {
   const [dialog, setDialog] = useState<"archived" | "addmenu" | "add" | "createspace" | "joinspace" | "newchat">();
   const [settingsOpen, setSettingsOpen] = useState(() => q.has("settings") || initSyncLink());
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  setDateFormat(settings.dateFormat); // every date the render below writes goes through the one formatter in util.tsx
   const [panel, setPanel] = useState<"info" | "search" | undefined>(q.has("search") ? "search" : q.has("info") ? "info" : undefined); // right sidebar
   const info = panel === "info";
   const setInfo = (v: boolean) => setPanel(v ? "info" : undefined);
   const acctStateRef = useRef(new Map<string, string>()); // last announced state per account (see the 'account' event)
+  const pickRef = useRef<((id: string) => void) | undefined>();
   const openChatRef = useRef<((id: string) => void) | undefined>(); // set below; a clicked notification opens its chat
   const jumpRef = useRef<((messageId: string, chatId?: string) => void) | undefined>(); // set by the open conversation; used by the search sidebar
   const [conn, setConn] = useState<"up" | "down">("up"); // backend connection (web transport reconnects by itself)
@@ -237,7 +250,10 @@ export default function App() {
         const open = openRef.current === k && document.hasFocus();
         setChats((cs) => cs.map((c) => (c.id === d.chatId || c.id === d.mergeId ? { ...c, ...(stale ? {} : { preview: d.text || c.preview, lastMessageAt: d.time, unread: d.fromMe || open ? c.unread : (c.unread ?? 0) + 1 }) } : c)));
         if (!d.fromMe && !open && !stale && listReadyRef.current && chatsRef.current.some((c) => c.id === k || c.id === d.chatId) && settingsRef.current.notifications && !mutedRef.current.has(k) && "Notification" in window && Notification.permission === "granted")
-          { const mode = settingsRef.current.notifyContent; const nt = new Notification(mode === "hidden" ? "UniChat" : (d.mergeId && chatsRef.current.find((c) => c.id === d.mergeId)?.name) || d.sender || "New message", { body: mode === "full" ? d.text || "Attachment" : "New message", tag: mode === "hidden" ? "unichat" : k }); liveNotes.current.get(k)?.close(); liveNotes.current.set(k, nt); nt.onclose = () => { if (liveNotes.current.get(k) === nt) liveNotes.current.delete(k); }; nt.onclick = () => { try { window.focus(); } catch { /* ignore */ } openChatRef.current?.(d.mergeId ?? k); nt.close(); }; }
+          { const mode = settingsRef.current.notifyContent; const title = mode === "hidden" ? "UniChat" : (d.mergeId && chatsRef.current.find((c) => c.id === d.mergeId)?.name) || d.sender || "New message";
+            // The chat's avatar is the notification icon (not in "hidden" mode, and the app icon stays when there is none or it is slow to load).
+            void notificationIcon(d.mergeId ?? d.chatId, mode).then((icon) => {
+              const nt = new Notification(title, { body: mode === "full" ? d.text || "Attachment" : "New message", tag: mode === "hidden" ? "unichat" : k, ...(icon ? { icon } : {}) }); liveNotes.current.get(k)?.close(); liveNotes.current.set(k, nt); nt.onclose = () => { if (liveNotes.current.get(k) === nt) liveNotes.current.delete(k); }; nt.onclick = () => { try { window.focus(); } catch { /* ignore */ } openChatRef.current?.(d.mergeId ?? k); nt.close(); }; }); }
       }
       if (ev === "message-update") setMsgs((m) => ({ ...m, [k]: (m[k] ?? []).map((x) => (x.id === d.messageId && x.chatId === d.chatId ? { ...x, ...d.patch, ...(d.patch.deleted ? { reactions: [], attachments: undefined, card: undefined, cards: undefined, poll: undefined, location: undefined, contacts: undefined } : {}) } : x)) }));
       if (ev === "receipt") setMsgs((m) => ({ ...m, [k]: (m[k] ?? []).map((x) => (x.id === d.messageId && x.chatId === d.chatId && RANK.indexOf(d.status) >= RANK.indexOf(x.status ?? "sending") ? { ...x, status: d.status } : x)) }));
@@ -385,8 +401,9 @@ export default function App() {
   const unreadIn = (id: string) => unreadAgg.exact.get(id) ?? 0;
   const pick = (id: string) => { setSel([]); setSpace(id); setChatId(undefined); setNavOpen(true); setPanel(undefined); };
   const openChat = (id0: string) => { const id = chats.find((x) => x.id === id0)?.mergedInto ?? id0; const c = chats.find((x) => x.id === id); if (c) { setSpace(c.spaceId ?? HOME); setOpenedUnread((o) => ({ ...o, [id]: c.unread ?? 0 })); if (c.unreadMark) setFlag(id, { unreadMark: false }); } setChatId(id); setNavOpen(false); };
-  openChatRef.current = openChat;
-  useEffect(() => { const h = (e: Event) => openChatRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-chat", h); return () => window.removeEventListener("unichat-open-chat", h); }, []); // e.g. a group listed in a contact's info
+  openChatRef.current = openChat; pickRef.current = pick;
+  useEffect(() => { const h = (e: Event) => openChatRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-chat", h); return () => window.removeEventListener("unichat-open-chat", h); }, []);
+  useEffect(() => { const h = (e: Event) => pickRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-space", h); return () => window.removeEventListener("unichat-open-space", h); }, []); // a community listed in a contact's info // e.g. a group listed in a contact's info
   openRef2.current = openChat;
   backRef.current = () => {
     const close = (el: Element | null) => { if (!el) return false; el.dispatchEvent(new MouseEvent(el.classList.contains("lightbox") ? "click" : "mousedown", { bubbles: true, cancelable: true })); return true; };
@@ -617,7 +634,7 @@ export default function App() {
       onCommunityMute: () => community && setFlag(community.id, { muted: !community.muted }), onCommunityLeave: community && caps?.leaveSpace ? () => leaveSpace(community) : undefined };
   };
   const spaceName = space === HOME ? "Personal" : spaces.find((s) => s.id === space)?.name;
-  const hasAccount = accounts.length > 0;
+  const hasAccount = accounts.length > 0, syncRecv = useSyncReceiving();
 
   const spacePill = (s: Space) => (
     <Pill id={s.id} draggable drop={dropOver === s.id} setOver={setDropOver} onDropChat={(raw) => moveMany(dragChats(raw), s.id)}
@@ -733,7 +750,7 @@ export default function App() {
           renderItem={renderItem} focusKey={chatId} focusIndex={focusIndex}>
           {!listReady && !visible.length && <li className="empty loadingchats" data-loading="chats" role="status" aria-live="polite"><div className="skelrows" aria-hidden>{[0, 1, 2, 3, 4, 5, 6].map((i) => <div key={i} className="skelrow" style={{ opacity: 1 - i * 0.11 }}><span className="skelav" /><span className="skeltext"><i /><i /></span></div>)}</div><p className="hint"><span className="spin" /> {slowStart ? "Still starting…" : "Loading your chats…"}</p>{slowStart && <p className="hint" data-loading="slow">UniChat is opening a large archive. This can take a minute on first start; your chats and accounts are safe.</p>}</li>}
           {listReady && !visible.length && (!viewCats.length || (nFilters > 0 && !filter)) && (
-            <li className="empty">{nFilters > 0 && !filter && hasAccount ? <><p data-empty="filters">No chats match the filters</p><button className="secondary" data-act="clear-filters" onClick={() => setFilters(normFilters({}))}>Clear filters</button></> : !hasAccount ? <><p>No accounts yet</p><button className="primary inline" onClick={() => setDialog("add")}>Add your first account</button></>
+            <li className="empty">{nFilters > 0 && !filter && hasAccount ? <><p data-empty="filters">No chats match the filters</p><button className="secondary" data-act="clear-filters" onClick={() => setFilters(normFilters({}))}>Clear filters</button></> : !hasAccount && syncRecv.accounts ? <p data-empty="receiving"><span className="spin" /> Receiving your accounts from your other device…</p> : !hasAccount ? <><p>No accounts yet</p><button className="primary inline" onClick={() => setDialog("add")}>Add your first account</button><button className="secondary inline" data-act="link-other-device" onClick={() => { settingsNav.section = "sync"; setSettingsOpen(true); }}>Link to another device</button></>
               : space === HOME ? <><p>No chats yet</p>
                 {accounts.some((a) => capsOf(a, providers)?.sync) && <p className="hint">Some accounts only show chats once your phone has shared them.</p>}
                 {accounts.filter((a) => capsOf(a, providers)?.sync).map((a) => <button key={a.id} className="secondary" onClick={() => act("syncAccount", { accountId: a.id })}>Sync contacts from {a.label}</button>)}
@@ -764,7 +781,7 @@ export default function App() {
         {chat
           ? <Conversation onPerson={(senderId, name) => setPerson({ chat, senderId, name })} key={chat.id} chat={chat} messages={msgs[chat.id] ?? []} typing={typing[chat.id] ?? []} caps={chat.offline ? undefined : capsFor(chat)} settings={settings} members={memberChats(chat)} providers={providers} accounts={accounts} onSignIn={(aid) => { const a = accounts.find((x) => x.id === (aid ?? chat.accountId)); if (a) accountAction("signin", a); }}
               chats={listChats} jumpRef={jumpRef} unreadAtOpen={openedUnread[chat.id] ?? 0} loaded={msgs[chat.id] !== undefined} loadState={hist[chat.id]} loadSource={sourceFor(chat.id)} loadNote={loadNote[chat.id]} onRetry={() => loadChat(chat.id)} onInfo={() => setInfo(true)} onOpenChat={openChat} hasMore={!!more[chat.id]} onLoadOlder={(n) => loadOlder(chat.id, n)} onRemove={(id) => setMsgs((s) => ({ ...s, [chat.id]: (s[chat.id] ?? []).filter((x) => x.id !== id) }))}
-              onSent={(m) => setMsgs((s) => { const k = resolvedRef.current.get(chat.id) ?? chat.id; return { ...s, [k]: upsert(s[k] ?? [], m) }; })} onRequest={(accept) => requestAnswer(chat, accept)} />
+              onSent={(m, r) => setMsgs((s) => { const k = resolvedRef.current.get(chat.id) ?? chat.id; return { ...s, [k]: upsert(s[k] ?? [], m, r) }; })} onRequest={(accept) => requestAnswer(chat, accept)} />
           : <div className="placeholder" data-loading={!listReady ? "main" : undefined}>{!listReady ? <span className="hint"><span className="spin" /> {slowStart ? "Still starting…" : "Loading…"}</span> : hasAccount ? "Select a chat" : "Add an account to get started"}</div>}
       </main>
 
@@ -778,7 +795,8 @@ export default function App() {
       <MarkReadToast prog={mr.prog} onCancel={mr.cancel} onDismiss={mr.dismiss} />
       <UpdateBanner onOpen={() => { setSettingsOpen(true); setTimeout(() => dispatchEvent(new Event("unichat-open-updates")), 0); }} />
       {watchers && <Suspense fallback={null}><Watchers /></Suspense>}
-      {login && <LoginModal prompt={login} onCancel={() => {
+      {login?.kind === "captcha" && <CaptchaModal key={login.promptId} prompt={login} onClose={() => setLogin(undefined)} />}
+      {login && login.kind !== "captcha" && <LoginModal prompt={login} onCancel={() => {
         const id = login.accountId; setLogin(undefined);
         // Closing the linking dialog of a brand-new account cancels it (no half-created account is left behind).
         if (fresh.current.delete(id)) core.call("removeAccount", { accountId: id }).then(refresh, () => refresh());

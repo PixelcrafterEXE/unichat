@@ -11,6 +11,16 @@ import { accountOfKey } from "./crdt.js";
 export interface Entity { key: string; seq: number; hlc: string; meta?: any; tomb: boolean; src: string; time?: string; acct: string }
 const P = "s1:";
 
+/** The sealed sync state could not be opened with the supplied data key (AES-GCM authentication failed): the data folder was sealed with a different key. Nothing is deleted or rewritten. */
+export class WrongKeyError extends Error {
+  readonly code = "WRONG_KEY";
+  constructor(what = "sync state") { super(`the ${what} is sealed with a different data key than the one supplied`); this.name = "WrongKeyError"; }
+}
+/** True for a wrong-key failure from this package or from node:crypto's GCM tag check. */
+export function isWrongKey(e: unknown): boolean {
+  return (e as { code?: string } | null)?.code === "WRONG_KEY" || /unable to authenticate data/i.test(String((e as Error | null)?.message ?? ""));
+}
+
 export class Ledger {
   private db: DatabaseSync; private seq = 0; readonly id: string;
   constructor(file: string = ":memory:", private dataKey?: Uint8Array) {
@@ -27,7 +37,13 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS sync_want (ref TEXT PRIMARY KEY, acct TEXT NOT NULL, chat TEXT NOT NULL, msg TEXT NOT NULL, att TEXT NOT NULL, size INTEGER NOT NULL, time TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0, next INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS sync_want_time ON sync_want(time);`);
     this.seq = Number((this.db.prepare("SELECT COALESCE(MAX(seq),0) n FROM sync_entities").get() as { n: number }).n);
-    this.id = this.kvGet<string>("ledgerId") ?? (() => { const i = randomBytes(8).toString("hex"); this.kvSet("ledgerId", i); return i; })();
+    try { // priority class column: 1 = message row, 0 = everything else (accounts, settings, folders, ...): lets the sender serve the small global state first
+    if (!(this.db.prepare("PRAGMA table_info(sync_entities)").all() as any[]).some((c) => c.name === "m")) {
+      this.db.exec("ALTER TABLE sync_entities ADD COLUMN m INTEGER NOT NULL DEFAULT 0; UPDATE sync_entities SET m=1 WHERE key LIKE 'msg\u0001%'");
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS sync_by_class ON sync_entities(m, seq); CREATE INDEX IF NOT EXISTS sync_msg_time ON sync_entities(m, time)");
+    this.id = this.kvGet<string>("ledgerId") ?? (() => { const i = randomBytes(8).toString("hex"); this.kvSet("ledgerId", i); return i; })(); }
+    catch (e) { this.close(); throw e; } // do not leave the file handle open when the key is wrong
   }
   close() { try { this.db.close(); } catch { /* closed */ } }
   // ---- sealed kv ----
@@ -40,7 +56,8 @@ export class Ledger {
     if (!s.startsWith(P)) return s;
     if (!this.dataKey) throw new Error("sync state is sealed but no data key was supplied");
     const b = Buffer.from(s.slice(P.length), "base64"), d = createDecipheriv("aes-256-gcm", this.dataKey, b.subarray(0, 12)); d.setAuthTag(b.subarray(12, 28));
-    return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString("utf8");
+    try { return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString("utf8"); }
+    catch (e) { if (isWrongKey(e)) throw new WrongKeyError(); throw e; }
   }
   kvGet<T>(k: string): T | undefined { const r = this.db.prepare("SELECT v FROM sync_kv WHERE k=?").get(k) as { v: string } | undefined; return r ? JSON.parse(this.open(r.v)) as T : undefined; }
   kvSet(k: string, v: unknown) { this.db.prepare("INSERT OR REPLACE INTO sync_kv VALUES (?,?)").run(k, this.seal(JSON.stringify(v))); }
@@ -51,8 +68,8 @@ export class Ledger {
   /** Insert or replace the entity with the next local sequence number. */
   put(e: { key: string; hlc: string; meta?: unknown; tomb?: boolean; src?: string; time?: string }): number {
     const seq = ++this.seq;
-    this.db.prepare("INSERT OR REPLACE INTO sync_entities (key, seq, hlc, meta, tomb, src, time, acct) VALUES (?,?,?,?,?,?,?,?)")
-      .run(e.key, seq, e.hlc, e.meta === undefined ? null : JSON.stringify(e.meta), e.tomb ? 1 : 0, e.src ?? "", e.time ?? null, accountOfKey(e.key));
+    this.db.prepare("INSERT OR REPLACE INTO sync_entities (key, seq, hlc, meta, tomb, src, time, acct, m) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(e.key, seq, e.hlc, e.meta === undefined ? null : JSON.stringify(e.meta), e.tomb ? 1 : 0, e.src ?? "", e.time ?? null, accountOfKey(e.key), e.key.startsWith("msg\u0001") ? 1 : 0);
     return seq;
   }
   /** Used by bootstrap: never overwrites an entity that already has a (real) stamp. */
@@ -62,6 +79,11 @@ export class Ledger {
   }
   /** Entities after `cursor` in sequence order (at most `limit`). */
   since(cursor: number, limit: number): Entity[] { return (this.db.prepare("SELECT * FROM sync_entities WHERE seq>? ORDER BY seq LIMIT ?").all(cursor, limit) as unknown[]).map((r) => this.row(r)); }
+  /** Same as since(), restricted to one priority class (messages / everything else). */
+  sinceClass(cursor: number, limit: number, messages: boolean): Entity[] { return (this.db.prepare("SELECT * FROM sync_entities WHERE m=? AND seq>? ORDER BY seq LIMIT ?").all(messages ? 1 : 0, cursor, limit) as unknown[]).map((r) => this.row(r)); }
+  /** The newest messages by time (the first screenful of every chat list while the backlog still streams). */
+  newestMessages(limit: number): Entity[] { return (this.db.prepare("SELECT * FROM sync_entities WHERE m=1 AND tomb=0 ORDER BY time DESC LIMIT ?").all(limit) as unknown[]).map((r) => this.row(r)); }
+  countClass(cursor: number, messages: boolean): number { return Number((this.db.prepare("SELECT COUNT(*) n FROM sync_entities WHERE m=? AND seq>?").get(messages ? 1 : 0, cursor) as { n: number }).n); }
   maxSeq() { return this.seq; }
   count() { return Number((this.db.prepare("SELECT COUNT(*) n FROM sync_entities").get() as { n: number }).n); }
   /** Local housekeeping (retention purge, account removal): drops rows WITHOUT recording a change, so nothing is propagated. */

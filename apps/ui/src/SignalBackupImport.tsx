@@ -3,7 +3,7 @@
 //   Backend (packages/core/src/signalimport): signalBackupInspect (no writes) / signalBackupImport / signalBackupCancel, progress on `backup-progress` (op "signal-import" / "signal-inspect").
 //   Formats: Android local backup (signal-….backup + the 30-digit passphrase; keeps photos/files) and Secure Backup (64-character backup key; text only).
 import { useEffect, useRef, useState } from "react";
-import { core, fmtBytes } from "./util";
+import { core, fmtBytes, fmtDateTime, fmtDate } from "./util";
 import { native, upload, useProgress, type Prog } from "./backupShared";
 import { SafBackupFinder, safAvailable, safDiscard } from "./SafBackupFinder";
 import "./backup.css";
@@ -100,7 +100,7 @@ export function SignalBackupImport({ onOpenChats, accountId }: { onOpenChats?: (
         <table><tbody>
           <tr><td>Messages</td><td id="sbi-n-msgs">{info.messages.toLocaleString()}</td></tr>
           <tr><td>Conversations</td><td id="sbi-n-chats">{info.chats.total} ({info.chats.dms} one-to-one, {info.chats.groups} groups)</td></tr>
-          <tr><td>Time span</td><td>{info.firstAt ? `${new Date(info.firstAt).toLocaleDateString()} to ${new Date(info.lastAt).toLocaleDateString()}` : "-"}</td></tr>
+          <tr><td>Time span</td><td>{info.firstAt ? `${fmtDate(info.firstAt, {})} to ${fmtDate(info.lastAt, {})}` : "-"}</td></tr>
           <tr><td>Photos, videos, files</td><td id="sbi-n-att">{info.canAttachments ? `${info.attachments.count} (${fmtBytes(info.attachments.bytes)})` : `${info.attachments.count} (no media folder found next to this backup file)`}</td></tr>
         </tbody></table>
         {info.topChats?.length > 0 && <details><summary className="sub">Largest conversations</summary><ul className="hint">{info.topChats.map((c: any, i: number) => <li key={i}>{c.name}: {c.messages}</li>)}</ul></details>}

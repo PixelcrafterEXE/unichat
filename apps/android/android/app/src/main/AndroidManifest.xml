@@ -67,6 +67,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" /> <!-- Wi-Fi lock: keeps the radio awake so other devices can reach the sync listener while the screen is off -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" /> <!-- mDNS "nearby devices" in Sync devices -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="${fgsPermission}" />
