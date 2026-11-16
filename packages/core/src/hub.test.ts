@@ -1051,5 +1051,18 @@ test("commonChats: a network that fails to list mutual servers still shows the c
   t.conns[0].emit({ type: "message", data: msg("m1", "hello", "2026-01-01T10:00:00Z") });
   const r = await t.call("commonChats", { chatId: `${id}:ann` });
   assert.deepEqual(r.communities.map((x: any) => x.id), [`${id}:s2`]);
+test("captcha login prompt: pending until answered, the answer reaches the connector and the prompt is dropped (also when it expires)", async () => {
+  const t = setup(); const id = await linked(t);
+  const answers: [string, Record<string, string>][] = [];
+  (t.conns[0] as any).submitLogin = async (pid: string, v: Record<string, string>) => { answers.push([pid, v]); };
+  const cap = { promptId: "captcha-1", kind: "captcha" as const, service: "hcaptcha" as const, sitekey: "sk", title: "Check", expiresAt: Date.now() + 60000 };
+  t.conns[0].emit({ type: "login", data: { accountId: "x", ...cap } });
+  const pend = await t.call("pendingLogins");
+  assert.equal(pend.length, 1); assert.equal(pend[0].kind, "captcha"); assert.equal(pend[0].accountId, id);
+  await t.call("submitLogin", { accountId: id, promptId: "captcha-1", values: { token: "tok" } });
+  assert.deepEqual(answers, [["captcha-1", { token: "tok" }]]);
+  assert.equal((await t.call("pendingLogins")).length, 0);
+  t.conns[0].emit({ type: "login", data: { accountId: "x", ...cap, promptId: "captcha-2", expiresAt: Date.now() - 1 } });
+  assert.equal((await t.call("pendingLogins")).length, 0, "expired captcha prompts are not offered again");
   t.done();
 });

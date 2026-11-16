@@ -120,6 +120,9 @@ export const NO_CAPABILITIES: Capabilities = {
 export type LoginPrompt =
   | { accountId: string; promptId: string; kind: "qr"; payload: string; hint?: string }     // render payload as QR
   | { accountId: string; promptId: string; kind: "link"; payload: string; hint?: string }   // open/show URL
+  // A human-check the provider needs solved while the account is already connected (e.g. Discord hCaptcha). The UI renders the widget and answers
+  // submitLogin(promptId, {token}); an empty token = cancelled. The prompt is dropped by the hub after the answer or when `expiresAt` (epoch ms) passes.
+  | { accountId: string; promptId: string; kind: "captcha"; service: "hcaptcha"; sitekey: string; rqdata?: string; title: string; hint?: string; link?: { href: string; label: string }; expiresAt?: number }
   | { accountId: string; promptId: string; kind: "form"; title: string; fields: LoginField[]; error?: string; warning?: LoginWarning };
 export interface LoginField {
   name: string; label: string; type: "text" | "password" | "phone" | "code" | "checkbox" | "select" | "file"; placeholder?: string;

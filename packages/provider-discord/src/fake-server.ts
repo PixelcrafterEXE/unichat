@@ -33,6 +33,9 @@ export class FakeDiscord {
   rateLimitNext = 0; rateLimitBody: "json" | "html" = "json";
   failNext = 0;
   captchaNext = 0; // next request answers 400 + captcha_key (anti-spam check a user account hits when it messages a new person)
+  /** When set, POST /users/@me/channels answers hCaptcha-required until it carries X-Captcha-Key == captcha.key and the fixture rqtoken. */
+  captcha: { key: string } | null = null;
+  static readonly RQTOKEN = "rq-token-fixture";
   membersIntent = false;
   blockedChannels = new Set<string>(); // POST -> 403 ("manage:<channel>": PATCH channel -> 403, "events:<guild>": scheduled events -> 403)
   readonly bios = new Map<string, string>();
@@ -195,6 +198,12 @@ export class FakeDiscord {
     if (method === "POST" && path === "/users/@me/channels") {
       const rid = String(body.recipient_id);
       if (!this.users.has(rid)) return this.json(res, 400, { message: "Invalid Recipient(s)", code: 50033 });
+      if (this.captcha) {
+        const key = String(req.headers["x-captcha-key"] ?? "");
+        if (!key) return this.json(res, 400, { captcha_key: ["captcha-required"], captcha_sitekey: "sitekey-fixture", captcha_service: "hcaptcha", captcha_rqdata: "rqdata-fixture", captcha_rqtoken: FakeDiscord.RQTOKEN });
+        if (key !== this.captcha.key || req.headers["x-captcha-rqtoken"] !== FakeDiscord.RQTOKEN) return this.json(res, 400, { captcha_key: ["incorrect-captcha-sol"] });
+        this.captcha = null;
+      }
       let dm = [...this.channels.values()].find((c) => c.type === 1 && c.recipients?.some((u) => u.id === rid));
       if (!dm) dm = this.channel({ id: snow(), type: 1, recipients: [this.users.get(rid)!], last_message_id: null });
       return this.json(res, 200, dm);

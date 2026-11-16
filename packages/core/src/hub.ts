@@ -391,7 +391,7 @@ export class Hub {
       }
       case "getPrivacy": { const c = this.need(this.resolveAccount(p.accountId)[0]); if (!c.getPrivacy) throw new Error("This messenger has no privacy settings in UniChat"); return c.getPrivacy(); }
       case "setPrivacy": { const c = this.need(this.resolveAccount(p.accountId)[0]); if (!c.setPrivacy) throw new Error("This messenger can't change privacy settings from UniChat"); return c.setPrivacy(String(p.id), String(p.value)); }
-      case "pendingLogins": return [...this.prompts.values()];
+      case "pendingLogins": return [...this.prompts.values()].filter((p: any) => !(p.kind === "captcha" && p.expiresAt && p.expiresAt < Date.now()));
       case "pendingVerifications": return [...this.verifs.values()];
       case "verificationStart": {
         const [a] = this.resolveAccount(p.accountId); const c = this.need(a); if (!c.verificationStart) throw new Error("This messenger has no verification in UniChat");
@@ -499,7 +499,12 @@ export class Hub {
         const [a] = this.resolveAccount(p.accountId); a.info.label = p.label;
         this.store.putAccount({ id: a.info.id, provider: a.info.provider, label: p.label, status: a.conn ? "active" : "archived" }); return a.info;
       }
-      case "submitLogin": { const [a] = this.resolveAccount(p.accountId); return this.need0(a).submitLogin(p.promptId, p.values); }
+      case "submitLogin": {
+        const [a] = this.resolveAccount(p.accountId);
+        const pr = this.prompts.get(a.info.id) as { kind?: string; promptId?: string } | undefined;
+        if (pr?.kind === "captcha" && pr.promptId === p.promptId) this.prompts.delete(a.info.id); // answered (or cancelled): do not offer it again after a reload
+        return this.need0(a).submitLogin(p.promptId, p.values);
+      }
       case "markRead": this.clearUnreadMark(p.chatId); this.noteRead(p.chatId); if (isMergeId(p.chatId)) { const mg = this.merges.get(p.chatId); if (!mg) throw new Error("This merged chat no longer exists."); return this.markReadMerged(mg, p); }
         return this.optional(p.chatId, method, p);
       case "pins": return this.nameSenders(await this.pinsOf(p.chatId));

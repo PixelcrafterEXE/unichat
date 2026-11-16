@@ -38,6 +38,25 @@ export class DcError extends Error {
   }
 }
 
+/**
+ * Discord asked for an hCaptcha (user accounts that message someone new): HTTP 400 {captcha_key:["captcha-required"], captcha_sitekey, ...}.
+ * The challenge fields are only ever handed to `onCaptcha` and are never part of the message; the solved token is sent once, in the retry, and kept nowhere.
+ */
+export interface CaptchaChallenge { sitekey: string; service: string; rqdata?: string; rqtoken?: string }
+const CAPTCHA_TEXT = "Discord wants you to solve a captcha before this (it does that when you message someone new). Solve it once in the official Discord app or website, then try again.";
+export class DcCaptcha extends DcError {
+  readonly sitekey: string; readonly service: string; readonly rqdata?: string; readonly rqtoken?: string;
+  constructor(c: CaptchaChallenge, message = CAPTCHA_TEXT) { super(message, "verify", 400); this.name = "DcCaptcha"; this.sitekey = c.sitekey; this.service = c.service; this.rqdata = c.rqdata; this.rqtoken = c.rqtoken; }
+}
+/** The challenge in a captcha answer (HTTP 400), or undefined when it is some other 400. Only well-formed string fields are taken. */
+function parseCaptcha(j: any): CaptchaChallenge | undefined {
+  if (!j || !Array.isArray(j.captcha_key) || !j.captcha_key.includes("captcha-required")) return undefined;
+  const str = (v: unknown) => (typeof v === "string" && v.length < 8192 ? v : undefined);
+  const sitekey = str(j.captcha_sitekey); if (!sitekey) return undefined;
+  return { sitekey, service: str(j.captcha_service) ?? "hcaptcha", rqdata: str(j.captcha_rqdata), rqtoken: str(j.captcha_rqtoken) };
+}
+const CAPTCHA_WAIT_MS = 180000;
+
 // ---------------------------------------------------------------- client identity (user mode): fixed, persisted, never rotated
 export interface Identity { userAgent: string; locale: string; superProps: string; props: Record<string, string | number | null> }
 export function newIdentity(): Identity {
@@ -55,6 +74,8 @@ export interface ApiOpts {
   paceMs: number;
   onUnauthorized?: () => void;
   onCooldown?: (ms: number, why: string) => void;
+  /** Interactive requests only: show the challenge to the user and resolve with the solved token (undefined = cancelled / gave up). Waited for at most ~3 minutes. */
+  onCaptcha?: (c: CaptchaChallenge) => Promise<string | undefined>;
 }
 
 /** Longer waits than this are not slept through (the UI would hang): the call fails with a plain message and the cooldown stays in force. */
@@ -126,15 +147,16 @@ export class Api {
 
   /** One logical request incl. waiting out rate limits. Throws DcError with plain-English text (never the body, token or ids). */
   raw(method: string, path: string, o: { json?: unknown; form?: FormData; prio?: Prio; timeoutMs?: number } = {}): Promise<Response> {
-    return this.enqueue(o.prio ?? 0, () => this.exec(method, path, o));
+    return this.enqueue(o.prio ?? 0, () => this.exec(method, path, o, o.prio ?? 0));
   }
-  private async exec(method: string, path: string, o: { json?: unknown; form?: FormData; timeoutMs?: number }): Promise<Response> {
+  private async exec(method: string, path: string, o: { json?: unknown; form?: FormData; timeoutMs?: number }, prio: Prio = 0): Promise<Response> {
     const key = this.bucketKey(method, path);
+    let captchaHeaders: Record<string, string> | undefined; // set for the single retry after a solved captcha
     for (let attempt = 0; ; attempt++) {
       const wait = Math.max(this.globalUntil, this.buckets.get(key) ?? 0) - Date.now();
       if (wait > LONG_WAIT) throw new DcError(`Discord is rate limiting this account. UniChat is pausing requests for about ${wait > 90000 ? Math.ceil(wait / 60000) + " minute(s)" : Math.ceil(wait / 1000) + " s"}.`, "rate", 429, undefined, wait);
       if (wait > 0) await sleep(wait + 20);
-      const headers = this.headers();
+      const headers = this.headers(captchaHeaders);
       let body: BodyInit | undefined;
       if (o.json !== undefined) { headers["Content-Type"] = "application/json"; body = JSON.stringify(o.json); } else if (o.form) body = o.form;
       const t0 = Date.now();
@@ -165,10 +187,19 @@ export class Api {
       }
       if (res.status >= 300 && res.status < 400) { await res.arrayBuffer().catch(() => {}); throw new DcError("Discord redirected the request unexpectedly.", "http", res.status); }
       if (res.ok) return res;
-      let code: number | undefined, captcha = false;
-      try { const b = (await res.json()) as { code?: number; captcha_key?: unknown }; code = b.code; captcha = Array.isArray(b.captcha_key); } catch { /* not json */ }
-      // A 400 WITHOUT a code and with `captcha_key`: Discord wants a captcha (typically when a user account opens a DM with someone new). UniChat cannot solve it.
-      if (res.status === 400 && captcha) throw new DcError("Discord asks for a captcha before this account may message a new person (an anti-spam check). Open Discord in the official app or browser, send that person one message there, then try again here.", "verify", 400, code);
+      let code: number | undefined; let captcha: CaptchaChallenge | undefined;
+      let badCaptcha = false;
+      try { const j = (await res.json()) as { code?: number; captcha_key?: unknown }; code = j.code; if (res.status === 400) { captcha = parseCaptcha(j); badCaptcha = !captcha && Array.isArray(j.captcha_key); } } catch { /* not json */ }
+      if (badCaptcha) throw new DcError("Discord did not accept the captcha answer. Solve it once in the official Discord app or website, then try again.", "verify", 400);
+      if (captcha) {
+        if (captchaHeaders || !this.o.onCaptcha || prio !== 0) throw new DcCaptcha(captcha); // already retried once, nobody to ask, or a background job
+        const ch = captcha; let tok: string | undefined;
+        try { tok = await Promise.race([this.o.onCaptcha(ch), sleep(CAPTCHA_WAIT_MS).then(() => undefined)]); } catch { tok = undefined; }
+        if (!tok || typeof tok !== "string") throw new DcCaptcha(ch);
+        captchaHeaders = { "X-Captcha-Key": tok, ...(ch.rqtoken ? { "X-Captcha-Rqtoken": ch.rqtoken } : {}) };
+        dbg("captcha solved, retrying once");
+        continue;
+      }
       if (res.status === 401) { this.o.onUnauthorized?.(); throw new DcError("Discord: the token is no longer valid.", "auth", 401, code); }
       if (res.status === 403 && (code === 40002 || code === 40003)) throw new DcError("Discord asks this account to verify itself (or slow down) before it can be used. Do that in the official app, then try again.", "verify", 403, code);
       const kind = res.status === 403 ? "forbidden" : res.status === 404 ? "notfound" : "http";
