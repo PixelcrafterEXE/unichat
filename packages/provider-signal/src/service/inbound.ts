@@ -218,7 +218,8 @@ export class Inbound {
       if (sm.callEvent) this.callEvent(sm.callEvent);
       if (sm.keys) this.applyKeys(sm.keys);
       if (sm.fetchLatest?.type === FetchLatestType.STORAGE_MANIFEST) this.hooks.onStorageManifestChanged?.();
-      // sync.read / viewed: TODO (see README)
+      if (sm.read?.length) this.syncRead(sm.read);
+      // sync.viewed: TODO (see README)
     }
   }
 
@@ -343,9 +344,10 @@ export class Inbound {
     if (fromMe) this.store.indexSent(m.id, chatId);
     const rec = this.store.data.chats[chatId]!;
     rec.lastMessageAt = m.time;
-    if (!fromMe) rec.unread = (rec.unread ?? 0) + 1;
+    if (!fromMe) { rec.unread = (rec.unread ?? 0) + 1; this.store.noteUnread(chatId, m.id); }
     this.store.touch();
     this.emit({ type: "message", data: m });
+    if (fromMe) this.replayReceipts(m.id); // a receipt that overtook the sync transcript
   }
 
   /** Disappearing-messages timer seen on a message / update (seconds, 0 = off). We only record it; nothing is ever deleted here. */
@@ -404,20 +406,61 @@ export class Inbound {
   private receipt(c: Content, sender: string, at: number): void {
     const r = c.receiptMessage!;
     if (sender.toLowerCase() === this.ourAci.toLowerCase()) return; // never a receipt about my own devices
-    const status = r.type === ReceiptType.DELIVERY ? "delivered" : "read";
-    for (const ts of r.timestamp ?? []) {
-      const id = messageId(this.ourAci, ts);
-      const chatId = this.store.data.sentIndex[id];
-      if (!chatId) continue; // receipt for a message we never sent from this store
-      this.emit({ type: "receipt", data: { chatId, messageId: id, status, by: sender, ...(validTime(at) ? { at: new Date(at).toISOString() } : {}) } });
-    }
+    // proto2 default of ReceiptMessage.type is DELIVERY: an absent type is a delivery receipt, not a read receipt
+    const status = r.type === undefined || r.type === ReceiptType.DELIVERY ? "delivered" : "read";
+    for (const ts of r.timestamp ?? []) this.applyReceipt(messageId(this.ourAci, ts), status, sender, at);
   }
+
+  /** Route a receipt to the sent message. Receipts for messages not (yet) known, or still being sent, are kept and replayed when the message shows up. */
+  private applyReceipt(id: string, status: "delivered" | "read", by: string, at?: number): void {
+    const chatId = this.store.data.sentIndex[id];
+    if (!chatId || this.held.has(id)) {
+      const list = this.earlyReceipts.get(id) ?? [];
+      list.push({ status, by, at, seen: Date.now() });
+      this.earlyReceipts.set(id, list.slice(-50));
+      for (const k of this.earlyReceipts.keys()) { if (this.earlyReceipts.size <= 500) break; this.earlyReceipts.delete(k); }
+      return;
+    }
+    this.emit({ type: "receipt", data: { chatId, messageId: id, status, by, ...(validTime(at) ? { at: new Date(at).toISOString() } : {}) } });
+  }
+  private earlyReceipts = new Map<string, { status: "delivered" | "read"; by: string; at?: number; seen: number }[]>();
+  private held = new Set<string>();
+
+  private replayReceipts(id: string): void {
+    const list = this.earlyReceipts.get(id);
+    if (!list || this.held.has(id)) return;
+    this.earlyReceipts.delete(id);
+    for (const r of list) if (Date.now() - r.seen < 24 * 3600_000) this.applyReceipt(id, r.status, r.by, r.at);
+  }
+
+  /** A message of ours is being sent: index it now and hold receipts for it until the Hub has the message (see releaseSent). */
+  holdSent(id: string, chatId: string): void { this.store.indexSent(id, chatId); this.held.add(id); }
+  /** The send failed: forget it. */
+  abortSent(id: string): void { this.held.delete(id); this.earlyReceipts.delete(id); delete this.store.data.sentIndex[id]; this.store.touch(); }
+  /** The send succeeded and the caller is about to get the Message: deliver receipts that raced ahead of it shortly after. */
+  releaseSent(id: string): void {
+    const t = setTimeout(() => { this.held.delete(id); this.replayReceipts(id); }, this.releaseDelayMs);
+    t.unref?.();
+  }
+  releaseDelayMs = 150;
 
   /** Server-generated delivery receipt (envelope type 5, unsealed senders only). */
   serverDeliveryReceipt(fromAci: string, originalTimestamp: number, at?: number): void {
-    const id = messageId(this.ourAci, originalTimestamp);
-    const chatId = this.store.data.sentIndex[id];
-    if (chatId) this.emit({ type: "receipt", data: { chatId, messageId: id, status: "delivered", by: fromAci, ...(validTime(at) ? { at: new Date(at).toISOString() } : {}) } });
+    this.applyReceipt(messageId(this.ourAci, originalTimestamp), "delivered", fromAci, at);
+  }
+
+  /** SyncMessage.Read: another device of ours read these incoming messages. Clears them from the unread count of their chats. */
+  private syncRead(list: NonNullable<NonNullable<Content["syncMessage"]>["read"]>): void {
+    const changed = new Set<string>();
+    for (const r of list) {
+      const sender = r.senderAci || serviceIdFromBinary(r.senderAciBinary);
+      if (!sender || r.timestamp === undefined) continue;
+      const chatId = this.store.dropUnread(messageId(sender, r.timestamp));
+      const rec = chatId ? this.store.data.chats[chatId] : undefined;
+      if (!chatId || !rec) continue;
+      rec.unread = Math.max(0, (rec.unread ?? 0) - 1); changed.add(chatId);
+    }
+    if (changed.size) { this.store.touch(); for (const chatId of changed) this.emit({ type: "chats-changed", data: { chatId } }); }
   }
 
   private typing(c: Content, sender: string): void {

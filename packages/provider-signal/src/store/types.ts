@@ -118,6 +118,8 @@ export interface StoreShape {
   chats: Record<string, ChatRecord>;
   /** messageId -> chatId for our own sent messages (receipt routing), bounded */
   sentIndex: Record<string, string>;
+  /** chatId -> ids of incoming messages not yet acknowledged as read (here or on another device), bounded. Absent in older stores. */
+  unreadIds?: Record<string, string[]>;
   /** messageId -> reactions: emoji -> sender ids */
   reactions: Record<string, Record<string, string[]>>;
   /** peer ACI -> display name learned from nothing yet (profiles TODO); kept for forward compat */

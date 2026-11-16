@@ -745,10 +745,12 @@ export class SignalClient {
     if (!outAtt.length && !msg.poll && !msg.contacts?.length) previewImage = await this.attachLinkPreview(dm, msg, timestamp);
     const attBytes = outAtt.reduce((n, a) => n + a.data.length, 0);
     this.tag(t, dm);
-    try { await this.dispatch(t, { dataMessage: dm }, timestamp, { message: dm }); }
-    catch (e) { if (outAtt.length) attachDebug("send", attBytes, 0, `error:${e instanceof Error ? e.name : "unknown"}`); throw e; }
-    if (outAtt.length) attachDebug("send", attBytes, 0, "ok");
+    // Index the message BEFORE it goes out: a receipt can overtake send() (it arrives while the sync transcript is still being sent).
     const id = messageId(this.ours, timestamp);
+    this.inbound.holdSent(id, peer);
+    try { await this.dispatch(t, { dataMessage: dm }, timestamp, { message: dm }); }
+    catch (e) { this.inbound.abortSent(id); if (outAtt.length) attachDebug("send", attBytes, 0, `error:${e instanceof Error ? e.name : "unknown"}`); throw e; }
+    if (outAtt.length) attachDebug("send", attBytes, 0, "ok");
     const sentAtt = (dm.attachments ?? []).map((p, i): import("@unimsg/core").Attachment => {
       const aid = `${id}#${i}`, o = outAtt[i]!;
       this.store.rememberAttachment(aid, { cdnNumber: p.cdnNumber, cdnKey: p.cdnKey, key: Buffer.from(p.key!).toString("base64"), digest: Buffer.from(p.digest!).toString("base64"), size: p.size, contentType: p.contentType, fileName: p.fileName });
@@ -765,6 +767,7 @@ export class SignalClient {
     }
     this.store.indexSent(id, peer);
     this.store.upsertChat({ id: peer, kind: t.group ? "group" : "dm", lastMessageAt: new Date(timestamp).toISOString() });
+    this.inbound.releaseSent(id); // early receipts are delivered after the caller has the Message
     return {
       id, chatId: peer, sender: "Me", senderId: this.ours, text: msg.text, time: new Date(timestamp).toISOString(), fromMe: true,
       status: "sent", ...(msg.forwarded ? { forwarded: true } : {}), ...(timer ? { expiresIn: timer } : {}),
@@ -1038,18 +1041,34 @@ export class SignalClient {
   }
 
   /**
-   * Marks `upToMessageId` read. LIMITATION: the provider keeps no message log, so only that single
-   * message's timestamp is acknowledged (not every older unread message).
+   * Marks everything up to `upToMessageId` read: the message itself AND every older incoming message of that chat still
+   * unread (tracked in the store), acknowledged per author (also in groups) with one READ receipt each, plus a read sync
+   * to our other devices so the phone clears them too.
    */
   async markRead(chatId: string, upToMessageId: string): Promise<void> {
     const t = parseMessageId(upToMessageId);
-    const rec = this.store.data.chats[chatId]; if (rec) { rec.unread = 0; this.store.touch(); } // receipts go to the message author, also in groups
-    if (t.author.toLowerCase() === this.ours.toLowerCase()) return; // own message: nothing to acknowledge
-    const timestamp = this.nextTimestamp();
-    if (this.store.account?.readReceipts) {
-      await this.sender.deliver(t.author, { receiptMessage: { type: ReceiptType.READ, timestamp: [t.timestamp] } }, timestamp, "message", { urgent: false });
+    const me = this.ours.toLowerCase();
+    const rec = this.store.data.chats[chatId]; if (rec) { rec.unread = 0; this.store.touch(); }
+    const ids = new Set(this.store.takeUnread(chatId, t.timestamp));
+    if (t.author.toLowerCase() !== me) ids.add(messageId(t.author, t.timestamp));
+    const byAuthor = new Map<string, number[]>();
+    for (const id of ids) {
+      const m = parseMessageId(id);
+      if (m.author.toLowerCase() === me) continue;
+      byAuthor.set(m.author, [...(byAuthor.get(m.author) ?? []), m.timestamp]);
     }
-    await this.sender.deliver(this.ours, { syncMessage: { read: [{ senderAci: t.author, timestamp: t.timestamp }] } }, timestamp, "sync").catch(() => {});
+    if (byAuthor.size === 0) return;
+    const timestamp = this.nextTimestamp();
+    let firstError: unknown;
+    if (this.store.account?.readReceipts) {
+      for (const [author, stamps] of byAuthor) {
+        try { await this.sender.deliver(author, { receiptMessage: { type: ReceiptType.READ, timestamp: stamps.sort((a, b) => a - b) } }, timestamp, "message", { urgent: false }); }
+        catch (e) { firstError ??= e; }
+      }
+    }
+    const read = [...byAuthor].flatMap(([senderAci, stamps]) => stamps.map((ts) => ({ senderAci, timestamp: ts })));
+    await this.sender.deliver(this.ours, { syncMessage: { read } }, timestamp, "sync").catch(() => {});
+    if (firstError) throw firstError;
   }
 }
 
