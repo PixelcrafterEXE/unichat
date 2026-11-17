@@ -124,12 +124,12 @@
    "signal": {
     "status": "verified",
     "at": "2026-11-16T22:11:49.796Z",
-    "note": "added \ud83d\udc4d and removed it"
+    "note": "added 👍 and removed it"
    },
    "whatsapp": {
     "status": "verified",
     "at": "2026-11-16T22:19:56.286Z",
-    "note": "added \ud83d\udc4d and removed it"
+    "note": "added 👍 and removed it"
    }
   },
   "edit": {
@@ -195,7 +195,7 @@
   "send-media": {
    "signal": {
     "status": "failed",
-    "at": "2026-11-16T22:38:57.486Z",
+    "at": "2026-11-17T00:06:48.937Z",
     "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400: Bad Request | x-signal-timestamp=<number> content-length=0). Try again later."
    },
    "whatsapp": {
@@ -207,8 +207,8 @@
   "send-file": {
    "signal": {
     "status": "failed",
-    "at": "2026-11-16T22:29:48.333Z",
-    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again later."
+    "at": "2026-11-17T00:06:48.937Z",
+    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400: Bad Request | x-signal-timestamp=<number> content-length=0). Try again later."
    },
    "whatsapp": {
     "status": "verified",
@@ -231,8 +231,8 @@
   "send-voice": {
    "signal": {
     "status": "failed",
-    "at": "2026-11-16T22:29:48.333Z",
-    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again later."
+    "at": "2026-11-17T00:06:48.937Z",
+    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400: Bad Request | x-signal-timestamp=<number> content-length=0). Try again later."
    },
    "whatsapp": {
     "status": "verified",
@@ -243,8 +243,8 @@
   "gif": {
    "signal": {
     "status": "failed",
-    "at": "2026-11-16T22:29:48.333Z",
-    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again later."
+    "at": "2026-11-17T00:06:48.937Z",
+    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400: Bad Request | x-signal-timestamp=<number> content-length=0). Try again later."
    },
    "whatsapp": {
     "status": "failed",
@@ -267,7 +267,7 @@
   "location": {
    "signal": {
     "status": "unsupported",
-    "at": "2026-11-16T22:38:57.486Z",
+    "at": "2026-11-17T00:06:48.937Z",
     "note": "capability location is off"
    },
    "whatsapp": {
@@ -291,7 +291,7 @@
   "events": {
    "signal": {
     "status": "unsupported",
-    "at": "2026-11-16T22:38:57.486Z",
+    "at": "2026-11-17T00:06:48.937Z",
     "note": "capability events is off"
    },
    "whatsapp": {
@@ -363,7 +363,7 @@
   "refresh-chat": {
    "signal": {
     "status": "unsupported",
-    "at": "2026-11-16T22:38:57.486Z",
+    "at": "2026-11-17T00:06:48.937Z",
     "note": "capability refreshChat is off"
    },
    "whatsapp": {
@@ -375,7 +375,7 @@
   "fetch-history": {
    "signal": {
     "status": "unsupported",
-    "at": "2026-11-16T22:38:57.486Z",
+    "at": "2026-11-17T00:06:48.937Z",
     "note": "capability fetchHistory is off"
    },
    "whatsapp": {
@@ -442,7 +442,7 @@
   "members": {
    "signal": {
     "status": "skipped",
-    "at": "2026-11-16T22:38:57.486Z",
+    "at": "2026-11-17T00:06:48.937Z",
     "note": "adding / removing other people is not done by the live test"
    },
    "whatsapp": {
@@ -495,6 +495,13 @@
    "accounts": [
     "signal",
     "whatsapp"
+   ]
+  },
+  {
+   "at": "2026-11-17T00:06:48.937Z",
+   "transport": "android",
+   "accounts": [
+    "signal"
    ]
   }
  ]

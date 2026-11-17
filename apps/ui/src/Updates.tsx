@@ -16,6 +16,7 @@ export interface UpdateStatus {
 export function useUpdate() {
   const [st, setSt] = useState<UpdateStatus>();
   const [msg, setMsg] = useState("");
+  const [manual, setManual] = useState<{ file: string; message: string; command: string }>();
   const refresh = useCallback(() => core.call("updateStatus").then(setSt).catch(() => {}), []);
   useEffect(() => {
     void refresh();
@@ -26,7 +27,7 @@ export function useUpdate() {
   }, [refresh]);
   const run = async (m: string, p: object = {}) => { setMsg(""); try { const r = await core.call(m, p); setSt(r?.status ?? r); return r; } catch (e: any) { setMsg(e?.message ?? "Something went wrong."); void refresh(); } };
   return {
-    st, msg, setMsg,
+    st, msg, setMsg, manual,
     // "Check now" must never look like it did nothing: a check that finds nothing (or fails, e.g. a private repository
     // without a token) says so right next to the button instead of only updating the status line.
     check: async () => {
@@ -52,7 +53,13 @@ export function useUpdate() {
           else setMsg(x?.error ?? "Could not start the installer.");
         } catch (e: any) { setMsg(e?.message ?? "Could not start the installer."); }
       } else if (r.action === "restart") setMsg("Restarting to finish the update…");
-      else if (r.action === "manual") setMsg(r.message ?? "The update is downloaded. Install it from the folder that opened.");
+      else if (r.action === "manual") {
+        // the backend's message ends in "Install it with: <command>" (a .deb / pacman package needs root, so the user runs it)
+        const text = r.message ?? "The update is downloaded.";
+        const cut = text.indexOf("Install it with: ");
+        setMsg("");
+        setManual({ file: r.file ?? "", message: cut >= 0 ? text.slice(0, cut).trim() : text, command: cut >= 0 ? text.slice(cut + 17).trim() : (r.file ?? "") });
+      }
     },
   };
 }
@@ -62,6 +69,7 @@ const when = (t?: number) => (t ? fmtDateTime(t, { dateStyle: "medium", timeStyl
 export function UpdatesSection() {
   const u = useUpdate(); const st = u.st;
   const [confirm, setConfirm] = useState(false);
+  const manual = u.manual;
   const [repo, setRepo] = useState(""); const [token, setToken] = useState(""); const [saved, setSaved] = useState("");
   useEffect(() => { if (st) setRepo(st.settings.repo); }, [st?.settings.repo]); // eslint-disable-line react-hooks/exhaustive-deps
   const busy = st?.state === "checking" || st?.state === "downloading" || st?.state === "installing";
@@ -76,16 +84,19 @@ export function UpdatesSection() {
       <p id="upd-status" className="hint">{line}</p>
       {st?.error && <p id="upd-error" className="warn">{st.error}</p>}
       {u.msg && <p id="upd-msg" className="hint">{u.msg}</p>}
+      {manual && <div id="upd-manual"><p className="hint">{manual.message} It has to be installed by hand; run:</p>
+        <pre className="notes" id="upd-manual-cmd">{manual.command}</pre>
+        <div className="btns"><button className="secondary" id="upd-manual-copy" onClick={() => { navigator.clipboard?.writeText(manual.command).then(() => u.setMsg("Command copied."), () => u.setMsg(manual.command)); }}>Copy the command</button></div></div>}
       <p className="hint">Last checked: <span id="upd-last">{when(st?.lastChecked)}</span></p>
       {st?.state === "downloading" && st.progress && <div className="bar" id="upd-bar" role="progressbar" aria-valuenow={Math.round(100 * st.progress.done / Math.max(1, st.progress.total))}><i style={{ width: `${100 * st.progress.done / Math.max(1, st.progress.total)}%` }} /></div>}
       {st?.available && st.latest?.notes && <pre id="upd-notes" className="notes">{st.latest.notes}</pre>}
       <div className="btns">
         <button id="upd-check" className="secondary" disabled={busy} onClick={() => void u.check()}>Check now</button>
-        {canSelf && st.state !== "ready" && st.state !== "downloading" && <button id="upd-download" disabled={busy} onClick={() => void u.download()}>{st.installMode === "manual" ? `Download ${v}` : `Download & install ${v}`}</button>}
+        {canSelf && st.state !== "ready" && st.state !== "downloading" && <button id="upd-download" className="primary inline" disabled={busy} onClick={() => void u.download()}>{st.installMode === "manual" ? `Download ${v}` : `Download & install ${v}`}</button>}
         {st?.state === "downloading" && <button className="secondary" onClick={() => void u.cancel()}>Cancel</button>}
-        {canSelf && st.state === "ready" && !confirm && <button id="upd-install" onClick={() => setConfirm(true)}>{st.installMode === "manual" ? "Show the file" : "Restart to update"}</button>}
+        {canSelf && st.state === "ready" && !confirm && <button id="upd-install" className="primary inline" onClick={() => setConfirm(true)}>{st.installMode === "manual" ? "Show the file" : "Restart to update"}</button>}
       </div>
-      {confirm && <div id="upd-confirm" className="confirm"><p><b>Update to {v}?</b> The app restarts.</p><div className="btns"><button id="upd-confirm-go" onClick={() => { setConfirm(false); void u.install(); }}>Update</button><button className="secondary" onClick={() => setConfirm(false)}>Not now</button></div></div>}
+      {confirm && <div id="upd-confirm" className="confirm"><p><b>Update to {v}?</b> The app restarts.</p><div className="btns"><button id="upd-confirm-go" className="primary inline" onClick={() => { setConfirm(false); void u.install(); }}>Update</button><button className="secondary" onClick={() => setConfirm(false)}>Not now</button></div></div>}
       {st && st.installMode === "none" && st.available && <p className="hint">This version of UniChat is updated by whoever runs the server. Ask them to install {v}.</p>}
       <label className="toggle"><span><b>Check for updates automatically</b><small>Once at start and every 6 hours, never on a metered connection.</small></span><input id="upd-auto" type="checkbox" checked={st?.settings.auto ?? true} onChange={(e) => void u.save({ auto: e.target.checked })} /><i /></label>
       <details className="adv"><summary>Advanced</summary>

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { appVersion, desktopAsset, replaceAppImage } from "./updater.js";
+import { appVersion, desktopAsset, linuxPackageType, replaceAppImage } from "./updater.js";
 
 test("asset selection: AppImage self-updates, other packaged Linux installs are manual, dev runs and other OS none", () => {
   assert.deepEqual(desktopAsset({ APPIMAGE: "/home/u/UniChat.AppImage" }, "linux", true), { key: "desktop-linux-appimage", mode: "self" });
@@ -40,4 +40,22 @@ test("replaceAppImage: missing target and unwritable folder fail without changes
     if (process.getuid?.() !== 0) assert.throws(() => replaceAppImage(cur, nw), /cannot write/);
     chmodSync(ro, 0o700); assert.equal(readFileSync(cur, "utf8"), "old");
   } finally { try { chmodSync(join(d, "ro"), 0o700); } catch { /* */ } rmSync(d, { recursive: true, force: true }); }
+});
+
+test("package type: the file wins; without one the system's package database decides (issue #89)", () => {
+  const files = (m: Record<string, string>) => (p: string) => m[p] ?? "";
+  const have = (...paths: string[]) => (p: string) => paths.includes(p);
+  const RES = "/opt/UniChat/resources";
+  // electron-builder wrote one: trusted as it is
+  assert.equal(linuxPackageType(RES, files({ [`${RES}/package-type`]: "deb\n" }), have("/var/lib/pacman/local")), "deb");
+  // the pacman package carries none: an Arch install must NOT be told to fetch the .deb
+  assert.equal(linuxPackageType(RES, files({}), have("/var/lib/pacman/local")), "pacman");
+  assert.equal(linuxPackageType(RES, files({}), have("/var/lib/dpkg/status")), "deb");
+  // both package managers installed: the distribution decides
+  const both = have("/var/lib/pacman/local", "/var/lib/dpkg/status");
+  assert.equal(linuxPackageType(RES, files({ "/etc/os-release": 'ID=cachyos\nID_LIKE=arch\n' }), both), "pacman");
+  assert.equal(linuxPackageType(RES, files({ "/etc/os-release": 'ID=ubuntu\nID_LIKE="debian"\n' }), both), "deb");
+  // nothing to go on: no claim, and desktopAsset keeps its old default
+  assert.equal(linuxPackageType(RES, files({}), () => false), "");
+  assert.deepEqual(desktopAsset({}, "linux", true, ""), { key: "desktop-linux-deb", mode: "manual" });
 });
