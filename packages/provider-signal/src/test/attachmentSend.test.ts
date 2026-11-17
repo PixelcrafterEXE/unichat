@@ -80,7 +80,10 @@ for (const cdn of [3, 2] as const) {
     const data = randomBytes(5000);
     const wave = Array.from({ length: 64 }, (_, i) => i % 101);
     const m = await h.client.send(A, { text: "", attachments: [{ kind: "voice", mime: "audio/ogg; codecs=opus", name: "x.ogg", data, durationMs: 4200, waveform: wave }] });
-    assert.deepEqual(h.formCalls, ["GET /v4/attachments/form/upload"]);
+    // the service refuses the form without uploadLength (issue #85), and the number it wants is the ENCRYPTED size
+    assert.equal(h.formCalls.length, 1);
+    assert.match(h.formCalls[0]!, /^GET \/v4\/attachments\/form\/upload\?uploadLength=(\d+)$/);
+    assert.equal(Number(/uploadLength=(\d+)/.exec(h.formCalls[0]!)![1]), h.stored[0]!.length, "it asks for exactly what it then uploads");
     // transport shape
     assert.equal(h.reqs.length, 2); assert.equal(h.reqs[0]!.headers["x-test"], "1");
     assert.equal(h.reqs[1]!.url.href, `https://cdn${cdn}.signal.org/resumable/xyz`);
@@ -179,7 +182,7 @@ test("debug lines carry step, byte count, cdn and result only", async () => {
     await u.client.send(A, { text: "", attachments: [{ kind: "file", mime: "x/y", data: new Uint8Array(10) }] }).catch(() => {});
   } finally { console.debug = orig; if (prev === undefined) delete process.env.UNIMSG_DEBUG; else process.env.UNIMSG_DEBUG = prev; }
   assert.equal(lines[0], "[signal] attachment upload: step=encrypt bytes=10 cdn=0 result=ok");
-  assert.equal(lines[1], "[signal] attachment upload: step=form bytes=10 cdn=3 result=ok");
+  assert.match(lines[1]!, /^\[signal\] attachment upload: step=form bytes=\d+ cdn=3 result=ok$/); // the form is asked for the padded+encrypted size, not the plain 10 bytes
   assert.match(lines[2]!, /^\[signal\] attachment upload: step=upload bytes=\d+ cdn=3 result=ok$/);
   assert.equal(lines[3], "[signal] attachment upload: step=send bytes=10 cdn=0 result=ok");
   assert.ok(lines.some((l) => l.includes("step=upload") && l.includes("result=error:http-403")));
@@ -267,10 +270,11 @@ test("a hung preview fetch cannot delay the text beyond the budget", async () =>
 test("upload form over the chat connection refused with 400: fetched again as plain HTTPS with this device's credentials, and the attachment goes out (#85)", async () => {
   const h = await setup({ form: { status: 400 } });
   const m = await h.client.send(A, { text: "", attachments: [oneFile] });
-  assert.deepEqual(h.formCalls, ["GET /v4/attachments/form/upload"], "the chat connection is still tried first");
+  assert.match(h.formCalls[0] ?? "", /^GET \/v4\/attachments\/form\/upload\?uploadLength=\d+$/, "the chat connection is still tried first");
+  assert.equal(h.formCalls.length, 1);
   assert.equal(h.formGets.length, 1, "exactly one HTTPS retry");
   const g = h.formGets[0]!;
-  assert.equal(g.url.href, "https://chat.signal.org/v4/attachments/form/upload");
+  assert.match(g.url.href, /^https:\/\/chat\.signal\.org\/v4\/attachments\/form\/upload\?uploadLength=\d+$/);
   assert.equal(g.headers.authorization, "Basic " + Buffer.from(`${ME}.2:pw`).toString("base64"), "this device's own service credentials");
   assert.equal(m.attachments!.length, 1);
   assert.ok(h.calls.length >= 1, "the message itself was sent");
@@ -296,4 +300,13 @@ test("once HTTPS has produced a form, later attachments go there first and do no
   await h.client.send(A, { text: "", attachments: [oneFile] });
   assert.equal(h.formCalls.length, 1, "the chat connection is not asked a second time");
   assert.equal(h.formGets.length, 2, "the second upload went straight to HTTPS");
+});
+
+test("cdn3: every request of the TUS session carries the form's authorisation headers, not just the one that opens it (#85)", async () => {
+  const h = await setup({ cdn: 3 });
+  await h.client.send(A, { text: "", attachments: [oneFile] });
+  const [create, data] = h.reqs;
+  assert.equal(create!.method, "POST"); assert.equal(create!.headers["x-test"], "1");
+  assert.equal(data!.method, "PATCH"); assert.equal(data!.headers["x-test"], "1", "the data request would be refused with 401 without it");
+  assert.equal(data!.headers["Upload-Offset"], "0");
 });
