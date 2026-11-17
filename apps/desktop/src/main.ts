@@ -4,7 +4,9 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, se
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { startBackend, DataKeyMismatchError, type KeyWrap } from "@unimsg/host";
+import { applyAutostart, HIDDEN_FLAG, type AutostartEnv } from "./autostart.js";
 import { createDialogs } from "./dialogs.js";
+import { createSettingsStore, type SettingsStore } from "./settings.js";
 import { appVersion, desktopAsset, readPackageType, replaceAppImage } from "./updater.js";
 
 // Chromium flags; they must be set before `ready`.
@@ -31,6 +33,20 @@ const dev = !!process.env.ELECTRON_RENDERER_URL;
 let win: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let quitting = false;
+let settings: SettingsStore | undefined;
+/** Started by the autostart entry / login item: come up in the tray only. Asked after `ready`, the login-item API wants that. */
+function startHidden(): boolean {
+  if (process.argv.includes(HIDDEN_FLAG)) return true;
+  try { return app.getLoginItemSettings().wasOpenedAtLogin; } catch { return false; } // macOS/Windows only
+}
+
+/** What the autostart entry has to launch. Not `process.execPath` when running as an AppImage: that is the binary unpacked in /tmp. */
+function autostartEnv(): AutostartEnv {
+  // A dev/unpackaged run is `electron <app path>`, so the entry must repeat the app path; the packaged app needs the flag alone.
+  const args = app.isPackaged ? [HIDDEN_FLAG] : [app.getAppPath(), HIDDEN_FLAG];
+  return { platform: process.platform, dir: join(app.getPath("home"), ".config", "autostart"), exec: process.env.APPIMAGE || process.execPath, args,
+    setLoginItemSettings: (s) => app.setLoginItemSettings(s) };
+}
 
 /** Pick the key protection. Returns the wrap (if the OS keychain is really usable) and a user-facing warning otherwise. Uses the async safeStorage API (the sync one is deprecated). */
 async function chooseKeyWrap(): Promise<{ keyWrap?: KeyWrap; warning?: string }> {
@@ -73,7 +89,7 @@ function createTray() {
     tray = new Tray(img);
     tray.setToolTip("UniChat");
     tray.setContextMenu(Menu.buildFromTemplate([
-      { label: "Show UniChat", click: showWindow },
+      { label: "Open UniChat", click: showWindow },
       { type: "separator" },
       { label: "Quit", click: () => { quitting = true; app.quit(); } },
     ]));
@@ -129,14 +145,20 @@ app.whenReady().then(async () => {
   }
   console.log(`[unimsg] data dir: ${dataDir}; key protection: ${keyWrap ? "OS keychain (safeStorage)" : "0600 key file"}`);
 
-  win = new BrowserWindow({ width: 1200, height: 800, minWidth: 420, minHeight: 500, title: "UniChat", backgroundColor: "#1e1f22", icon: join(import.meta.dirname, "../../build/icon.png"),
+  settings = createSettingsStore(dataDir);
+  // Re-applied on every start, because the entry holds the app's path and that moves with an updated or relocated AppImage.
+  // Only when it is on: writing the "off" case would delete an entry the user may have put there by hand.
+  if (settings.get().startAtLogin) applyAutostart(true, autostartEnv());
+
+  win = new BrowserWindow({ show: false, width: 1200, height: 800, minWidth: 420, minHeight: 500, title: "UniChat", backgroundColor: "#1e1f22", icon: join(import.meta.dirname, "../../build/icon.png"),
     webPreferences: { preload: join(import.meta.dirname, "../preload/preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false } });
   win.setMenuBarVisibility(false);
   // Never navigate the app window away or open child windows inside it; links go to the system browser.
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) void shell.openExternal(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (url !== win!.webContents.getURL()) { e.preventDefault(); if (/^https?:/i.test(url)) void shell.openExternal(url); } });
-  // Close to tray when there is one; the backend keeps syncing.
-  win.on("close", (e) => { if (!quitting && tray && !tray.isDestroyed()) { e.preventDefault(); win!.hide(); } });
+  // Close to tray when the user wants that and there is a tray to reach the window from again; the backend keeps syncing.
+  // `quitting` (before-quit, the tray's Quit, the updater's relaunch) always wins, so the app stays quittable.
+  win.on("close", (e) => { if (!quitting && settings!.get().keepRunningInBackground && tray && !tray.isDestroyed()) { e.preventDefault(); win!.hide(); } });
 
   // Backup paths come from native dialogs only: the renderer may not name files (see dialogs.ts).
   const dialogs = createDialogs({ dialog: { showSaveDialog: (o) => dialog.showSaveDialog(win!, o as Electron.SaveDialogOptions), showOpenDialog: (o) => dialog.showOpenDialog(win!, o as Electron.OpenDialogOptions) }, shell, home: () => app.getPath("documents") });
@@ -145,15 +167,25 @@ app.whenReady().then(async () => {
   ipcMain.handle("dialog:save", async (e, req: { suggestedName?: string }) => { if (!fromApp(e)) throw new Error("denied"); return dialogs.showSaveDialog(req); });
   ipcMain.handle("dialog:open", async (e) => { if (!fromApp(e)) throw new Error("denied"); return dialogs.showOpenDialog(); });
   ipcMain.handle("dialog:reveal", (e, path: unknown) => { if (!fromApp(e)) throw new Error("denied"); return dialogs.revealInFolder(path); });
+  ipcMain.handle("settings:get", (e) => { if (!fromApp(e)) throw new Error("denied"); return settings!.get(); });
+  ipcMain.handle("settings:set", (e, patch: unknown) => {
+    if (!fromApp(e)) throw new Error("denied");
+    const before = settings!.get().startAtLogin, now = settings!.set(patch);
+    if (now.startAtLogin !== before) applyAutostart(now.startAtLogin, autostartEnv());
+    return now;
+  });
   hub.subscribe((event, data) => { if (win && !win.isDestroyed()) win.webContents.send("core:event", { event, data }); });
 
   if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void win.loadFile(join(import.meta.dirname, "../renderer/index.html"));
   createTray();
+  // Hidden start is only honoured with a tray: without one the user would have no way to get the window back.
+  win.once("ready-to-show", () => { if (!startHidden() || !tray || tray.isDestroyed()) showWindow(); });
 
   if (warning) {
     console.warn("[unimsg] " + warning);
-    if (!process.env.UNIMSG_NO_DIALOG) void dialog.showMessageBox(win, { type: "warning", title: "UniChat: no OS keychain", message: "Your archive key is not protected by the OS keychain", detail: warning });
+    // Waits for the window: a box parented to a window nobody sees (hidden start) is a warning nobody reads.
+    if (!process.env.UNIMSG_NO_DIALOG) win.once("show", () => void dialog.showMessageBox(win!, { type: "warning", title: "UniChat: no OS keychain", message: "Your archive key is not protected by the OS keychain", detail: warning }));
   }
 });
 app.on("before-quit", () => { quitting = true; });
