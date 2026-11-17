@@ -7,6 +7,7 @@ import { startBackend, DataKeyMismatchError, type KeyWrap } from "@unimsg/host";
 import { applyAutostart, HIDDEN_FLAG, type AutostartEnv } from "./autostart.js";
 import { createDialogs } from "./dialogs.js";
 import { createSettingsStore, type SettingsStore } from "./settings.js";
+import { startFileLog } from "./log.js";
 import { appVersion, desktopAsset, readPackageType, replaceAppImage } from "./updater.js";
 
 // Chromium flags; they must be set before `ready`.
@@ -149,7 +150,9 @@ app.whenReady().then(async () => {
       dataDir = freshDir; app.setPath("userData", dataDir); // nothing is moved, deleted or overwritten in the old folder
     }
   }
+  const logFile = startFileLog(dataDir); // from here on everything printed also lands in <dataDir>/logs/desktop.log
   console.log(`[unimsg] data dir: ${dataDir}; key protection: ${keyWrap ? "OS keychain (safeStorage)" : "0600 key file"}`);
+  console.log(`[unimsg] log file: ${logFile}`);
 
   settings = createSettingsStore(dataDir);
   // Re-applied on every start, because the entry holds the app's path and that moves with an updated or relocated AppImage.
