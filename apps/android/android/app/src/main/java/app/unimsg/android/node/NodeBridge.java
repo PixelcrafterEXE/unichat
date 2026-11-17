@@ -104,10 +104,15 @@ public final class NodeBridge {
         main.postDelayed(once, maxMs);
     }
 
-    // ---- network addresses for the sync listener (see NetworkMonitor) ---------------------------------------------------------------
+    // ---- network addresses for the sync listener (see NetworkMonitor) and the power state (PowerMonitor) ------------------------------
     private volatile String lastNetwork = "[]";
-    /** Every IP address of every connected network, as a JSON array [{name,address,family,netmask}]. Sent to Node now and again on every (re)connect. */
-    public void sendNetwork(JSONArray list) { lastNetwork = list.toString(); sendControl("$network", "{\"interfaces\":" + lastNetwork + "}"); }
+    private volatile boolean lastMetered = false;
+    private volatile String lastPower; // null until PowerMonitor read the battery state
+    /** Every IP address of every connected network, as a JSON array [{name,address,family,netmask}], plus whether the active network is metered. Sent to Node now and again on every (re)connect. */
+    public void sendNetwork(JSONArray list, boolean metered) { lastNetwork = list.toString(); lastMetered = metered; sendControl("$network", networkParams()); }
+    private String networkParams() { return "{\"interfaces\":" + lastNetwork + ",\"metered\":" + lastMetered + "}"; }
+    /** Battery saver / low battery, so the backend can stop work that is only nice to have (avatar pre-warming). */
+    public void sendPower(boolean saver, boolean low) { lastPower = "{\"saver\":" + saver + ",\"low\":" + low + "}"; sendControl("$power", lastPower); }
 
     public boolean uiAttached() { return ui != null; }
 
@@ -367,7 +372,8 @@ public final class NodeBridge {
                     Log.i(TAG, "backend ready: node " + o.optString("node") + ", sqlite " + o.optString("sqlite"));
                     sendControl("$foreground", "{\"value\":" + uiForeground + "}");
                     sendControl("$config", "{\"notifyContent\":" + JSONObject.quote(notifyContent) + "}");
-                    sendControl("$network", "{\"interfaces\":" + lastNetwork + "}");
+                    sendControl("$network", networkParams());
+                    if (lastPower != null) sendControl("$power", lastPower); // a restarted backend starts unpaused: tell it again
                     lastOkAt = SystemClock.elapsedRealtime(); pingMisses = 0;
                     String q; while ((q = queued.poll()) != null) write(q);
                     pushToUi("{\"event\":\"core-connection\",\"data\":{\"state\":\"up\"}}");

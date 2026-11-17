@@ -19,7 +19,8 @@ import app.unimsg.android.BuildConfig;
 /**
  * Foreground service that keeps the app process, and with it the Node runtime and the messenger sockets, alive while the UI is
  * closed. The runtime is started here, not in the activity, so that a START_STICKY restart after the system killed the process brings
- * the backend back without any UI.
+ * the backend back without any UI. That pair (NodeRuntime kills the process when Node exits, START_STICKY brings it back) is a
+ * restart loop when Node cannot run at all, so the start is delayed by NodeRuntime.restartDelayMs and finally given up on.
  *
  * Service type (see README "Foreground service type"): `specialUse` by default, `remoteMessaging` with -Punimsg.fgsType=remoteMessaging.
  * Both exist from API 34 and neither has the Android 15 time limit that dataSync has. Below API 34 the type argument does not exist
@@ -30,8 +31,18 @@ public class NodeService extends Service {
     public static final String EXTRA_FROM_BOOT = "fromBoot", EXTRA_RESTART = "restartAfterTimeout";
     private final Handler main = new Handler(Looper.getMainLooper());
     private NetworkMonitor network;
+    private PowerMonitor power;
     private android.net.wifi.WifiManager.MulticastLock multicast;
     private android.net.wifi.WifiManager.WifiLock wifi; // keeps the Wi-Fi radio out of power save so the PC can reach the sync listener while the screen is off
+    /** Starting the Node runtime; a field so that a start delayed by the crash backoff can be cancelled in onDestroy. */
+    private final Runnable startRuntime = () -> {
+        try {
+            NodeRuntime.ensureStarted(this);
+        } catch (Throwable e) { // includes UnsatisfiedLinkError (missing/ABI-mismatched native libs), which is an Error
+            Log.e(TAG, "backend failed to start", e);
+            getSystemService(NotificationManager.class).notify(Notifier.SERVICE_ID, Notifier.serviceNotification(this, "Backend failed to start (see logcat: UnimsgService)"));
+        }
+    };
 
     static int fgsType() {
         if (Build.VERSION.SDK_INT < 34) return 0;
@@ -50,13 +61,16 @@ public class NodeService extends Service {
             Notifier.showReconnectNeeded(this, "Android did not allow UniChat to stay connected in the background. Tap to open it.");
             stopSelf(); return START_NOT_STICKY;
         }
-        try {
-            NodeRuntime.ensureStarted(this);
-        } catch (Throwable e) { // includes UnsatisfiedLinkError (missing/ABI-mismatched native libs), which is an Error
-            Log.e(TAG, "backend failed to start", e);
-            getSystemService(NotificationManager.class).notify(Notifier.SERVICE_ID, Notifier.serviceNotification(this, "Backend failed to start (see logcat: UnimsgService)"));
+        long wait = NodeRuntime.restartDelayMs(this);
+        if (wait < 0) { // Node died again and again: stop the restart loop instead of emptying the battery with it
+            Log.e(TAG, "backend crash loop: not starting Node again");
+            Notifier.showReconnectNeeded(this, "UniChat's backend stopped several times in a row, so it is not being restarted automatically any more. Tap to open the app and try again.");
+            stopSelf(); return START_NOT_STICKY;
         }
+        if (wait == 0) startRuntime.run();
+        else { Log.w(TAG, "backend start delayed by " + wait + " ms (recent crashes)"); main.postDelayed(startRuntime, wait); }
         if (network == null) { network = new NetworkMonitor(this); network.start(); }
+        if (power == null) { power = new PowerMonitor(this); power.start(); }
         updateMulticast();
         return START_STICKY;
     }
@@ -99,6 +113,8 @@ public class NodeService extends Service {
 
     @Override public void onDestroy() {
         if (network != null) network.stop();
+        if (power != null) power.stop();
+        main.removeCallbacks(startRuntime);
         try { if (multicast != null && multicast.isHeld()) multicast.release(); } catch (Exception ignored) { }
         try { if (wifi != null && wifi.isHeld()) wifi.release(); } catch (Exception ignored) { }
         instance = null; super.onDestroy();

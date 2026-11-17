@@ -23,6 +23,7 @@ Protocol: `src/bridge-protocol.ts` (requests `{id,method,params}`, replies `{id,
 | `src/backend-entry.ts` | backend entry: Hub + socket server + notifications decision (runs in Node) |
 | `src/sqlite-shim.ts` | `node:sqlite` replacement (see "SQLite") |
 | `src/notify.ts`, `src/bridge-protocol.ts` | notification rules, wire protocol |
+| `src/warm-pause.ts` | turns the host's metered / battery signals into `setAvatarWarmPaused` (see "Battery / Doze") |
 | `scripts/build-backend-bundle.mjs` | esbuild bundle → `build/nodejs-project/` and copy into Android assets |
 | `scripts/smoke-test.mjs` | protocol end-to-end test under plain Node (also with real Node 18.20.4) |
 | `scripts/fetch-nodejs-mobile.mjs` | downloads libnode.so + headers into `android/app/libnode/`, sha256 pinned in `scripts/nodejs-mobile.sha256` |
@@ -31,7 +32,7 @@ Protocol: `src/bridge-protocol.ts` (requests `{id,method,params}`, replies `{id,
 | `scripts/persist-test.mjs`, `src/sqljs-persist.ts` | crash-safe sql.js persistence + its unit tests |
 | `scripts/build-hyperdht-android.sh`, `src/dht-native-loader.cjs`, `src/dht-smoke-entry.ts` | HyperDHT add-ons for "Reach my devices from anywhere" (prebuilds + patchelf, unverified on a device), loader, Node 18 smoke entry, see "HyperDHT" |
 | `scripts/build-libsignal-android.sh` | libsignal cross-compile (x86_64 verified on the emulator, arm64 built only), see "libsignal" |
-| `android/` | Capacitor Gradle project: `MainActivity`, `UnimsgPlugin`, `node/{NodeService,NodeRuntime,NodeBridge,DataKey,Notifier}`, `cpp/` (CMake + JNI), manifest |
+| `android/` | Capacitor Gradle project: `MainActivity`, `UnimsgPlugin`, `node/{NodeService,NodeRuntime,NodeBridge,NetworkMonitor,PowerMonitor,DataKey,Notifier}`, `cpp/` (CMake + JNI), manifest |
 
 ## Prerequisites
 JDK 21 (`JAVA_HOME`; JDK 22+ breaks AGP 8.13), Android SDK with `platforms;android-36`, `build-tools;36.0.0`, **`ndk;27.2.12479018`**, `cmake;3.22.1`,
@@ -76,9 +77,30 @@ application id or uninstalling destroys the Keystore data key and with it the ar
 
 ## nodejs-mobile download
 Asset: `https://github.com/nodejs-mobile/nodejs-mobile/releases/download/v18.20.4/nodejs-mobile-v18.20.4-android.zip` (57,287,354 bytes; name confirmed from the release
-API). Upstream publishes **no checksums**. `scripts/nodejs-mobile.sha256` pins `bd7321ea...c2af` which was computed here by trust-on-first-use (not compared with an independent source:
-please verify it once yourself). The script refuses to unpack without an expected hash (`--sha256`, `--sha256-file`, or the pin file), and aborts on mismatch.
-`--pin` records a new hash for another `--version`.
+API). Upstream publishes **no checksums**. `scripts/nodejs-mobile.sha256` pins
+`bd7321eaa1a7602fbe0bb87302df2d79d87835cf4363fbdd17c350dbb485c2af`, which was computed here by trust-on-first-use and is **still not confirmed by any independent source**.
+`scripts/fetch-nodejs-mobile.mjs` refuses to unpack without an expected hash (`--sha256`, `--sha256-file`, or the pin file), prints the computed **and** the expected hash in
+full on every run (`sha256 computed … / sha256 expected … (from …)`) so they can be compared without reading the pin file, and aborts on mismatch. `--pin` records a new hash
+for another `--version`; `--zip <file>` hashes a copy downloaded elsewhere.
+
+**What the GitHub API offers (checked 2026-11-17, `gh api repos/nodejs-mobile/nodejs-mobile/releases/tags/v18.20.4`): no digest.** The release has exactly two assets (the
+android and the ios zip), there is no checksum file among them and the release body contains only dependency versions, no hashes. The asset objects *do* have a `digest`
+field, but it is `null` for both (the assets are from 2024-10-07, uploader `staltz`, i.e. older than that field). So the API independently confirms the asset **name and
+size (57,287,354 bytes)** and nothing more: it cannot be used to verify the pin today.
+
+**How to verify the pin** (worth doing from a different machine and network than the one that created it, since trust-on-first-use only fails if the download was tampered
+with *at that moment*):
+1. `gh api repos/nodejs-mobile/nodejs-mobile/releases/tags/v18.20.4 --jq '.assets[] | {name, size, digest}'` — the android zip must still be 57287354 bytes. If `digest`
+   is no longer `null` (GitHub backfills, or a newer release), compare it with the pin directly and record the result here.
+2. Hash the asset yourself: `curl -fL -o n.zip https://github.com/nodejs-mobile/nodejs-mobile/releases/download/v18.20.4/nodejs-mobile-v18.20.4-android.zip && sha256sum n.zip`
+   must print `bd7321eaa1a7602fbe0bb87302df2d79d87835cf4363fbdd17c350dbb485c2af`. `node scripts/fetch-nodejs-mobile.mjs --zip n.zip` then verifies the same file against the
+   pin and unpacks it.
+3. Compare with a third party that ships or mirrors the same archive (another project that vendors nodejs-mobile prebuilts, a distribution package, a CI cache). Any hash
+   that is not derived from our own download counts; none has been looked for yet.
+4. Nothing upstream is signed: there is no detached signature among the assets, and
+   `gh api repos/nodejs-mobile/nodejs-mobile/attestations/sha256:bd7321ea…c2af` answers 404 (no provenance attestation, checked 2026-11-17). An upstream-signed
+   confirmation therefore does not exist; asking in the nodejs-mobile repo for published checksums is the only way to improve on that.
+Whatever is checked, write the result (and the date) into this section — "verified" means a hash from a source other than our own download agreed.
 
 ## Foreground service type (Android 14/15)
 `dataSync` services get ~6 h per 24 h on Android 15 (targetSdk 35+, `onTimeout`) and cannot be started from BOOT_COMPLETED: unusable for a 24/7 messenger. Options:
@@ -115,6 +137,12 @@ LOCKED_BOOT_COMPLETED (direct boot) is not handled on purpose: data and Keystore
   lock screen shows a generic public version. Privacy `$config {notifyContent}`: `full` (chat + text), `sender` (chat name only), `hidden` (one generic "UniChat / New message" notification, no chat identity, **no actions**).
   `$foreground`, `$flush` are sent on UI start/stop; the service/activity also flush on `onTrimMemory` / low memory / task removed.
 - No push: while the process is dead messages arrive only when the app runs again.
+- **Metered connection / low battery:** `NetworkMonitor` adds `metered` (active network without `NET_CAPABILITY_NOT_METERED`) to every `$network` call and `PowerMonitor`
+  (`node/PowerMonitor.java`) reports `$power {saver,low}` from `ACTION_POWER_SAVE_MODE_CHANGED` / `ACTION_BATTERY_LOW` / `ACTION_BATTERY_OKAY` — broadcasts, so nothing is
+  polled; the state at service start is read once from the sticky `ACTION_BATTERY_CHANGED` (<= 15 % and not charging). The backend ORs the three (`src/warm-pause.ts`) and
+  calls the Hub's `setAvatarWarmPaused` only when the answer changes, so avatar pre-warming (`Hub.warmAvatars`, hundreds of provider requests) stops on mobile data and on a
+  nearly empty battery and resumes afterwards. `metered` also stops background update checks. Both calls are re-sent after a bridge reconnect (a restarted backend is unpaused).
+  Not the same as the sync media policy, which the UI reports from `navigator.connection` (`syncSetMetered`).
 
 ## SQLite on Android
 nodejs-mobile is Node 18 without `node:sqlite`; `src/sqlite-shim.ts` is aliased in by the bundle. `UNIMSG_SQLITE=auto|node|better|sqljs` (Java sets `auto`; sql.js is the effective default).
@@ -191,7 +219,8 @@ backend as `UNIMSG_DB_KEY`. A key that cannot be unsealed is an error, never reg
 `RECORD_AUDIO`/`MODIFY_AUDIO_SETTINGS`/`CAMERA` (runtime, on first use). Back button: cancelable `unimsg-back` window event, else history, else `moveTaskToBack`. Notification tap: `unimsg-open-chat {detail:{chatId}}`.
 
 ## Verified (this machine)
-- `pnpm --filter @unimsg/android smoke`: 9 persistence unit tests + 18 bridge checks on Node 26 and real Node 18.20.4 (adds `{ctl:state}`, `$config keepAlive`, `$reply`/`$markRead` validation + Hub errors, no `\p{}` in the bundle).
+- `pnpm --filter @unimsg/android smoke`: 9 persistence unit tests + 19 bridge checks on Node 26 and real Node 18.20.4 (adds `{ctl:state}`, `$config keepAlive`, `$power`/`$network {metered}`, `$reply`/`$markRead` validation + Hub errors, no `\p{}` in the bundle).
+- `pnpm --filter @unimsg/android test:unit`: notification rules and the metered/battery -> `setAvatarWarmPaused` decision (`src/warm-pause.test.ts`).
 - Gradle: `assembleDebug`, `bundleRelease` (R8, unsigned AAB 73 MB with debug symbols) and signed `assembleRelease` (throwaway key) succeed; CMake/JNI link against the real nodejs-mobile 18.20.4 for arm64-v8a and x86_64.
 - APK static check (aapt2/apkanalyzer-equivalent): permissions, `foregroundServiceType=0x40000000` (specialUse) + subtype property, receivers (boot exported, action receiver not), ABIs arm64-v8a+x86_64, libnode/libc++_shared/libunimsg-node, bundle + shim + UI assets.
 - **Emulator** (android-35 google_apis x86_64, KVM, headless): app starts, node 18.20.4 boots from the extracted bundle, "backend ready", bridge handshake (`UnimsgBridge: backend ready`), UI loads over the Android transport
@@ -202,13 +231,15 @@ Bugs found by running it and fixed: missing `libc++_shared.so`, `\p{L}` SyntaxEr
 ## NOT verified (needs a phone / real accounts)
 Notification posting with real messages, Reply and Mark as read actions, `$requestBatteryExemption` dialog, the UI button calling `$config`/`$requestBatteryExemption` (UI not changed here), real reboot (BOOT_COMPLETED),
 Android 15 behaviour on a physical device and OEM killers, arm64 execution (only x86_64 ran; arm64 libsignal add-on not executed), getUserMedia/file chooser, Doze, a real WhatsApp/Signal/Matrix account (providers were exercised against fakes, see the probe table), memory use of sql.js with a big archive,
-StrongBox, better-sqlite3 (not built).
+StrongBox, better-sqlite3 (not built), and the new host signals: that `metered` flips on real mobile data, that `ACTION_BATTERY_LOW` / battery saver reach `PowerMonitor`
+and pause the avatar warm-up, and that the crash-loop backoff waits and gives up as described (only the TypeScript decision and the control calls are tested).
 
 ## Known gaps / follow-ups
 1. UI (`apps/ui/src`): settings toggles for keep-running (`$config {keepAlive}`), notification privacy, a "battery optimization" button (`$requestBatteryExemption`), handle `unimsg-open-chat` / `unimsg-back`.
-2. Crash loop: if Node dies at start (e.g. bad bundle) the process is killed and START_STICKY restarts it forever; add a backoff/circuit breaker.
-3. Node `exit()` inside nodejs-mobile ends in a segfault of the whole process (seen when the bundle failed to parse): always exit via the supervised path.
-4. Pin the sha256 independently; set `webContentsDebuggingEnabled` false for release (default).
+2. Node `exit()` inside nodejs-mobile ends in a segfault of the whole process (seen when the bundle failed to parse): always exit via the supervised path.
+3. The sha256 pin is still trust-on-first-use (see "nodejs-mobile download" for what the GitHub API does and does not confirm, and how to verify it); set
+   `webContentsDebuggingEnabled` false for release (default).
+4. The crash-loop backoff (see "Backend crash-loop backoff") was never seen working on a device: the timings and the give-up notification are untested.
 
 ## Device sync on the phone (packages/sync)
 - **Engine:** the Android bundle aliases `node:sqlite` to `src/sqlite-shim.ts` (sql.js); `sync.db` uses the same shim as the message store (no extra work). All primitives sync needs exist in Node 18 (X25519, ChaCha20-Poly1305 with AAD, HKDF, scrypt, HMAC). `pnpm --filter @unimsg/sync test:node18` (needs `SMOKE_NODE=/path/to/node18`) runs the whole sync suite, including two Hubs pairing over loopback and a snapshot transfer, under Node 18 with sql.js.
@@ -241,6 +272,16 @@ Failure modes found by reading the code (user report: Sync devices spinner for h
 4. **Foreground service**: notification text now says why it runs (accounts / sync), `stopWithTask=false`, restart alarm on task removal, multicast lock held by the service while a sync group exists, `keepAlive` defaults to true, the boot receiver and the keep-alive logic count a sync group (`{ctl:"state",sync:true}`) like an account, and a one-time dialog (4 s after the UI opens, only if there is something to keep) leads to the system "ignore battery optimisations" screen. (Also fixed: the Settings row read `exempt` while native answers `ignoring`, so it always claimed "not exempt".)
 Tests: `apps/ui/src/heartbeat.test.ts` (`npx tsx --test`), `apps/ui/e2e/tests/bridge.ts`, `packages/sync/src/netchange.test.ts` + the migration test in `dht.test.ts`, `pnpm --filter @unimsg/android smoke`; Java compiles (`./gradlew --offline :app:compileDebugJavaWithJavac`).
 **Only verifiable on the phone:** that the alarm/sticky restart really brings the service back after `killProcess` (and its time), that the exemption dialog appears once, that `NetworkMonitor` fires on a real Wi-Fi switch and the wildcard socket accepts on the new IP, that the multicast lock keeps mDNS answers coming with the screen off, behaviour under OEM task killers, and that Doze (with and without the exemption) keeps the 45045 listener reachable overnight.
+
+## Backend crash-loop backoff
+`NodeRuntime` kills the process whenever Node exits (node::Start runs once per process) and `NodeService` is START_STICKY, so a backend that cannot run at all — unparsable
+bundle, unreadable archive, missing add-on — used to restart as fast as the runtime could fail. The exits are now counted in SharedPreferences (`nodeExits`, written with
+`commit()` because the process dies immediately afterwards; the watchdog's own `restarts` list is separate) and `NodeRuntime.restartDelayMs` turns them into a delay:
+0 after a clean run, then 5 s / 10 s / 20 s / 40 s / 80 s (doubling, capped at 5 min, minus the time the restart itself already took), and `-1` after the 6th exit in
+10 minutes. On `-1` the service posts the "Connection problems" alert ("…not being restarted automatically any more. Tap to open the app and try again."), calls `stopSelf()`
+and returns `START_NOT_STICKY`, so nothing restarts it. Exits older than 10 minutes are forgotten, and opening the app (`MainActivity` -> `NodeRuntime.forgetExits`) clears
+the count, because the user tapping the icon *is* the retry. A deliberate restart (`NodeRuntime.restartProcess`, UI/native watchdog) kills the process without Node exiting,
+so it is not counted here; it keeps its own limit of 3 per 10 minutes.
 
 ## Self-update (APK)
 `updateCheck/Download` run in the Node backend (packages/core/src/updater.ts); the verified APK lands in `<filesDir>/unimsg-data/updates/`. The UI then calls `$installApk {path}` (answered natively in `NodeBridge`): only files below that folder are accepted, without the "install unknown apps" permission (`REQUEST_INSTALL_PACKAGES`) the system page for UniChat opens and `{needsPermission:true}` comes back, otherwise `ACTION_VIEW application/vnd.android.package-archive` with a FileProvider URI (`res/xml/file_paths.xml`, entry `unimsg_updates`). `$apkInstallState` reports `canInstall`.

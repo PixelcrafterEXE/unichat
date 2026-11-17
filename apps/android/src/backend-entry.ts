@@ -17,6 +17,7 @@ import { startBackend, backendReady } from "@unimsg/host";
 import { prepareSqlite, flushSqlite } from "./sqlite-shim.js";
 import { LineReader, encode, PROTOCOL_VERSION, type Frame, type NotifyContent, type Request } from "./bridge-protocol.js";
 import { buildNotification, cachedSnapshot, withAvatar, type Snapshot } from "./notify.js";
+import { WarmPause, type HostConditions } from "./warm-pause.js";
 
 declare const __UNICHAT_VERSION__: string; // esbuild define (scripts/build-backend-bundle.mjs)
 const dataDir: string = process.argv[2] || process.env.UNIMSG_DATA || "";
@@ -71,6 +72,13 @@ function reportState(now = false) {
   if (now) run(); else stateTimer = setTimeout(run, 500);
 }
 
+// Avatar pre-warming follows the phone's connection and battery (see warm-pause.ts).
+const warm = new WarmPause();
+function warmFrom(p: Partial<HostConditions>) {
+  const paused = warm.update(p);
+  if (paused !== undefined) void up.then(() => hub.call("setAvatarWarmPaused", { paused })).catch(() => {});
+}
+
 async function control(method: string, p: any): Promise<unknown> {
   switch (method) {
     case "$ping": return { pong: true, node: process.version, pid: process.pid, uptime: process.uptime(), ready: initDone };
@@ -88,10 +96,11 @@ async function control(method: string, p: any): Promise<unknown> {
       await up; await hub.call("markRead", { chatId: p.chatId, messageId: p.messageId }); return {};
     }
     case "$network": { // see bridge-protocol.ts
-      if (typeof p?.metered === "boolean") hub.updater.setMetered(p.metered); // no background update check on a metered connection
+      if (typeof p?.metered === "boolean") { hub.updater.setMetered(p.metered); warmFrom({ metered: p.metered }); } // no background update check and no avatar pre-warming on a metered connection
       const list = Array.isArray(p?.interfaces) ? p.interfaces : [];
       await up; return await hub.call("syncNetworkChanged", { interfaces: list }).catch((e: any) => ({ error: String(e?.message ?? e) }));
     }
+    case "$power": warmFrom({ saver: !!p?.saver, low: !!p?.low }); return {}; // battery saver / low battery: no avatar pre-warming
     case "$flush": flushSqlite(); return {};
     case "$shutdown": setImmediate(() => void shutdown()); return {};
     default: throw new Error("unknown control method " + method);

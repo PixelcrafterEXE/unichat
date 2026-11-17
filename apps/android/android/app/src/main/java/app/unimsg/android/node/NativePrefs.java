@@ -26,6 +26,10 @@ public final class NativePrefs {
     /** timestamps (ms) of the last watchdog restarts: a restart loop must stop after a few tries */
     public String restarts() { return p.getString("restarts", ""); }
     public void setRestarts(String v) { p.edit().putString("restarts", v).apply(); }
+    /** timestamps (ms) of the recent Node exits, comma separated and pruned on write; the crash backoff reads them (NodeRuntime.restartDelayMs) */
+    public String nodeExits() { return p.getString("nodeExits", ""); }
+    /** commit(), not apply(): the caller kills the process right afterwards, and an async write would be lost */
+    public void setNodeExits(String v) { p.edit().putString("nodeExits", v).commit(); }
     public int accountCount() { return p.getInt("accountCount", 0); }
     public void setAccountCount(int n) { p.edit().putInt("accountCount", n).apply(); }
     public String notifyContent() {
