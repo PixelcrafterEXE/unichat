@@ -14,6 +14,9 @@ export default defineConfig({
   renderer: {
     root: "../ui",
     plugins: [react()],
+    // The UI reads __UNICHAT_VERSION__ (apps/ui/vite.config.ts defines it for the web build). Without it here the packaged
+    // desktop app called itself "dev" and refused to self-update, however it was released (issue #90).
+    define: { __UNICHAT_VERSION__: JSON.stringify(process.env.UNICHAT_VERSION || "dev") },
     build: { outDir: "../desktop/out/renderer", emptyOutDir: true, rollupOptions: { input: "../ui/index.html" } },
   },
 });
