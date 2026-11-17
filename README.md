@@ -94,10 +94,10 @@ How to read it:
 | Disappearing / view-once messages | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ⛔ Unsupported | ⛔ Unsupported | 🛠️ Unimplemented | ⛔ Unsupported | ⛔ Unsupported | 🛠️ Unimplemented |
 | **Media** | | | | | | | | |
 | Receive images, video, files | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Send images, video, files | ✅ Verified (live 2026-11-16) | ❌ Failing (live 2026-11-16: Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again lat) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Send images, video, files | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-17) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Play voice messages | ✅ Verified | 🧪 Untested | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🛠️ Unimplemented |
-| Send voice messages | ✅ Verified (live 2026-11-16) | ❌ Failing (live 2026-11-16: Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again lat) | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🛠️ Unimplemented |
-| GIFs | ❌ Failing (live 2026-11-16: uploads and comes back byte-identical, but WhatsApp shows it as a still image (needs MP4 +) | ❌ Failing (live 2026-11-16: Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again lat) | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported |
+| Send voice messages | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-17) | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🛠️ Unimplemented |
+| GIFs | ❌ Failing (live 2026-11-16: uploads and comes back byte-identical, but WhatsApp shows it as a still image (needs MP4 +) | ❌ Failing (live 2026-11-17: uploaded and came back as image/gif, but not marked as an animation, so it is shown as a s) | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported |
 | Stickers (receive) | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |
 | **Rich content** | | | | | | | | |
 | Polls: show and vote | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | ⛔ Unsupported | 🛠️ Unimplemented | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |

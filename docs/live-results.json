@@ -194,9 +194,9 @@
   },
   "send-media": {
    "signal": {
-    "status": "failed",
-    "at": "2026-11-17T00:06:48.937Z",
-    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400: Bad Request | x-signal-timestamp=<number> content-length=0). Try again later."
+    "status": "verified",
+    "at": "2026-11-17T08:37:22.662Z",
+    "note": "image image/jpeg, 9056 B up, 9056 B down (identical)"
    },
    "whatsapp": {
     "status": "verified",
@@ -206,9 +206,9 @@
   },
   "send-file": {
    "signal": {
-    "status": "failed",
-    "at": "2026-11-17T00:06:48.937Z",
-    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400: Bad Request | x-signal-timestamp=<number> content-length=0). Try again later."
+    "status": "verified",
+    "at": "2026-11-17T08:37:22.662Z",
+    "note": "file text/plain, 23 B up, 23 B down (identical)"
    },
    "whatsapp": {
     "status": "verified",
@@ -218,9 +218,9 @@
   },
   "send-video": {
    "signal": {
-    "status": "failed",
-    "at": "2026-11-16T22:29:48.333Z",
-    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again later."
+    "status": "verified",
+    "at": "2026-11-17T08:37:22.662Z",
+    "note": "video video/mp4, 18455 B up, 18455 B down (identical)"
    },
    "whatsapp": {
     "status": "verified",
@@ -230,9 +230,9 @@
   },
   "send-voice": {
    "signal": {
-    "status": "failed",
-    "at": "2026-11-17T00:06:48.937Z",
-    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400: Bad Request | x-signal-timestamp=<number> content-length=0). Try again later."
+    "status": "verified",
+    "at": "2026-11-17T08:37:22.662Z",
+    "note": "voice audio/ogg, 8119 B up, 8119 B down (identical)"
    },
    "whatsapp": {
     "status": "verified",
@@ -243,8 +243,8 @@
   "gif": {
    "signal": {
     "status": "failed",
-    "at": "2026-11-17T00:06:48.937Z",
-    "note": "Error: Signal refused the attachment upload request (upload form, HTTP 400: Bad Request | x-signal-timestamp=<number> content-length=0). Try again later."
+    "at": "2026-11-17T08:37:22.662Z",
+    "note": "uploaded and came back as image/gif, but not marked as an animation, so it is shown as a still image"
    },
    "whatsapp": {
     "status": "failed",
@@ -267,7 +267,7 @@
   "location": {
    "signal": {
     "status": "unsupported",
-    "at": "2026-11-17T00:06:48.937Z",
+    "at": "2026-11-17T08:37:22.662Z",
     "note": "capability location is off"
    },
    "whatsapp": {
@@ -291,7 +291,7 @@
   "events": {
    "signal": {
     "status": "unsupported",
-    "at": "2026-11-17T00:06:48.937Z",
+    "at": "2026-11-17T08:37:22.662Z",
     "note": "capability events is off"
    },
    "whatsapp": {
@@ -363,7 +363,7 @@
   "refresh-chat": {
    "signal": {
     "status": "unsupported",
-    "at": "2026-11-17T00:06:48.937Z",
+    "at": "2026-11-17T08:37:22.662Z",
     "note": "capability refreshChat is off"
    },
    "whatsapp": {
@@ -375,7 +375,7 @@
   "fetch-history": {
    "signal": {
     "status": "unsupported",
-    "at": "2026-11-17T00:06:48.937Z",
+    "at": "2026-11-17T08:37:22.662Z",
     "note": "capability fetchHistory is off"
    },
    "whatsapp": {
@@ -442,7 +442,7 @@
   "members": {
    "signal": {
     "status": "skipped",
-    "at": "2026-11-17T00:06:48.937Z",
+    "at": "2026-11-17T08:37:22.662Z",
     "note": "adding / removing other people is not done by the live test"
    },
    "whatsapp": {
@@ -499,6 +499,34 @@
   },
   {
    "at": "2026-11-17T00:06:48.937Z",
+   "transport": "android",
+   "accounts": [
+    "signal"
+   ]
+  },
+  {
+   "at": "2026-11-17T08:27:36.636Z",
+   "transport": "android",
+   "accounts": [
+    "signal"
+   ]
+  },
+  {
+   "at": "2026-11-17T08:30:43.715Z",
+   "transport": "android",
+   "accounts": [
+    "signal"
+   ]
+  },
+  {
+   "at": "2026-11-17T08:34:44.415Z",
+   "transport": "android",
+   "accounts": [
+    "signal"
+   ]
+  },
+  {
+   "at": "2026-11-17T08:37:22.662Z",
    "transport": "android",
    "accounts": [
     "signal"

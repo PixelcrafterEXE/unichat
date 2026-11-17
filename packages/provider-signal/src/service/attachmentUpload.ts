@@ -97,6 +97,8 @@ async function withRetry<T>(fn: () => Promise<T>, retries = uploadRetry.delaysMs
 }
 
 const FORM_PATH = "/v4/attachments/form/upload";
+/** The service refuses the form unless it is told how many bytes will be uploaded (the ENCRYPTED size, which is what goes to the CDN). */
+const formPath = (uploadLength: number) => `${FORM_PATH}?uploadLength=${Math.max(1, Math.round(uploadLength))}`;
 const parseForm = (body?: Uint8Array): UploadForm | undefined => {
   try { return JSON.parse(Buffer.from(body ?? new Uint8Array()).toString("utf8")) as UploadForm; } catch { return undefined; }
 };
@@ -108,9 +110,9 @@ const usable = (f?: UploadForm): f is UploadForm =>
  * credentials. Signal's own clients fetch the upload form this way; the chat connection answers 400 for this path on
  * some accounts/servers (issue #85), and then this is what gets the attachment sent.
  */
-async function fetchFormOverHttps(http: CdnHttp, auth: ServiceAuth): Promise<{ status: number; body?: Buffer }> {
+async function fetchFormOverHttps(http: CdnHttp, auth: ServiceAuth, uploadLength: number): Promise<{ status: number; body?: Buffer }> {
   const r = await http({
-    method: "GET", url: new URL(FORM_PATH, SERVICE_URL),
+    method: "GET", url: new URL(formPath(uploadLength), SERVICE_URL),
     headers: { authorization: "Basic " + Buffer.from(`${auth.username}:${auth.password}`).toString("base64"), accept: "application/json" },
   });
   return { status: r.status, body: r.body };
@@ -130,19 +132,19 @@ async function fetchForm(chat: AuthChat, bytes: number, https?: { http: CdnHttp;
   if (https && httpsFormWorks) { // this account already needed HTTPS; the chat connection stays the fallback
     triedHttps = true;
     try {
-      const r = await fetchFormOverHttps(https.http, https.auth);
+      const r = await fetchFormOverHttps(https.http, https.auth, bytes);
       if (r.status >= 200 && r.status < 300 && usable(parseForm(r.body))) { attachDebug("form", bytes, 0, "https:ok"); return form(parseForm(r.body)!, bytes); }
       attachDebug("form", bytes, 0, `https:http-${r.status}:back-to-chat`);
     } catch (e) { attachDebug("form", bytes, 0, `https:${errClassOf(e)}:back-to-chat`); }
   }
-  try { res = await chat.fetch({ verb: "GET", path: FORM_PATH, headers: [] }); }
+  try { res = await chat.fetch({ verb: "GET", path: formPath(bytes), headers: [] }); }
   catch (e) { attachDebug("form", bytes, 0, `error:${errClassOf(e)}`); throw new AttachmentUploadError("Couldn't reach Signal to send the attachment. Check your connection and try again.", stage, errClassOf(e), true); }
   // A 4xx that is not about this file (400 "the chat connection does not serve this path", 401/403/404) is retried over
   // HTTPS. Only a usable form counts: anything else leaves the original answer in place, so the error still names it.
   if (https && !triedHttps && res.status >= 400 && res.status < 500 && res.status !== 413 && res.status !== 429) {
     attachDebug("form", bytes, 0, `chat-${res.status}:retry-https`);
     try {
-      const r = await fetchFormOverHttps(https.http, https.auth);
+      const r = await fetchFormOverHttps(https.http, https.auth, bytes);
       if (r.status >= 200 && r.status < 300 && usable(parseForm(r.body))) { attachDebug("form", bytes, 0, "https:ok"); httpsFormWorks = true; res = r; }
       else attachDebug("form", bytes, 0, `https:http-${r.status}`);
     } catch (e) { attachDebug("form", bytes, 0, `https:${errClassOf(e)}`); }
@@ -180,14 +182,16 @@ async function upload(http: CdnHttp, form: UploadForm, blob: Buffer): Promise<vo
     ? { method: "POST", url: base, headers: { ...form.headers, "Tus-Resumable": "1.0.0", "Upload-Length": String(blob.length), "Upload-Metadata": `filename ${Buffer.from(form.key).toString("base64")}`, "Content-Type": "application/offset+octet-stream" } }
     : { method: "POST", url: base, headers: { ...gcsHeaders, "Content-Type": "application/octet-stream" } };
   const r1 = await http(create);
-  if (r1.status < 200 || r1.status >= 300) throw uploadErr("session (attributes rejected)", r1.status);
+  if (r1.status < 200 || r1.status >= 300) { attachDebug("upload", blob.length, form.cdn, `session:http-${r1.status}`); throw uploadErr("session (attributes rejected)", r1.status); }
   const loc = first(r1.headers["location"]);
   if (!loc) throw new AttachmentUploadError("The attachment could not be uploaded to Signal (the CDN gave no upload location).", "upload", "no-location");
   const target = safeCdnUrl(loc, base);
   const r2 = await http(tus
-    ? { method: "PATCH", url: target, headers: { "Tus-Resumable": "1.0.0", "Upload-Offset": "0", "Content-Type": "application/offset+octet-stream" }, body: blob }
+    // cdn3 (Signal's own TUS endpoint) authorises every request of the session, not just the one that opens it: without the
+    // form's headers the PATCH is refused with 401 and nothing is uploaded.
+    ? { method: "PATCH", url: target, headers: { ...form.headers, "Tus-Resumable": "1.0.0", "Upload-Offset": "0", "Content-Type": "application/offset+octet-stream" }, body: blob }
     : { method: "PUT", url: target, headers: { "Content-Type": "application/octet-stream" }, body: blob });
-  if (r2.status < 200 || r2.status >= 300) throw uploadErr("data transfer", r2.status);
+  if (r2.status < 200 || r2.status >= 300) { attachDebug("upload", blob.length, form.cdn, `data:http-${r2.status}`); throw uploadErr("data transfer", r2.status); }
 }
 const uploadMsg = (status: number, stage: string) => status === 413
   ? "This file is too large for Signal (the limit is 100 MB)."
@@ -228,7 +232,7 @@ export async function uploadAttachment(chat: AuthChat, http: CdnHttp, a: SignalO
     attachDebug("encrypt", size, 0, `error:${errClassOf(e)}`);
     throw new AttachmentUploadError("The attachment could not be prepared for sending.", "encrypt", errClassOf(e));
   }
-  const form = await withRetry(() => fetchForm(chat, size, opts.auth ? { http, auth: opts.auth } : undefined), opts.retries);
+  const form = await withRetry(() => fetchForm(chat, enc.blob.length, opts.auth ? { http, auth: opts.auth } : undefined), opts.retries);
   try {
     await withRetry(() => upload(http, form, enc.blob), opts.retries);
     attachDebug("upload", enc.blob.length, form.cdn, "ok");

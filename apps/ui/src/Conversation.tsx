@@ -38,15 +38,17 @@ export interface RowCb {
   jump: (messageId: string, chatId?: string) => void; person: (senderId: string, name: string) => void; getMessages: () => Message[];
   reply: (m: Message) => void; edit: (m: Message) => void; forward: (m: Message) => void; react: (m: Message, e: string) => void; pin: (m: Message, pinned: boolean, durationSec?: number) => void;
   retry: (m: Message) => void; discard: (m: Message) => void; image: (i: { url: string; name?: string; video?: boolean }) => void; handle: (h: string, own: Chat) => void;
+  /** multi-select (see SelectionBar): toggles this message and, from the first one, puts the timeline into selection mode */
+  select: (m: Message) => void;
 }
 const sameChatBits = (a: Chat, b: Chat) => a === b || (a.id === b.id && a.name === b.name && a.kind === b.kind && a.provider === b.provider && a.accountId === b.accountId && a.avatarUrl === b.avatarUrl);
 /** One timeline row. Re-renders only when ITS message (or what it shows from the chat) changed: an incoming message re-renders one row, not thousands. */
-const MessageRow = memo(function MessageRow(p: { cb: RowCb; m: Message; grouped: boolean; chat: Chat; own: Chat; net?: { provider: string; name: string; account: string; title: string }; showNet?: boolean; caps?: Capabilities; settings: Settings }) {
+const MessageRow = memo(function MessageRow(p: { cb: RowCb; m: Message; grouped: boolean; chat: Chat; own: Chat; net?: { provider: string; name: string; account: string; title: string }; showNet?: boolean; caps?: Capabilities; settings: Settings; selected?: boolean; selMode?: boolean }) {
   const { cb, m } = p;
   return <MessageView onJump={cb.jump} onPerson={cb.person} m={m} grouped={p.grouped} chat={p.chat} own={p.own} net={p.net} showNet={p.showNet} caps={p.caps} settings={p.settings} getMessages={cb.getMessages}
     onReply={() => cb.reply(m)} onEdit={() => cb.edit(m)} onForward={() => cb.forward(m)} onReact={(e) => cb.react(m, e)} onPin={(pinned, d) => cb.pin(m, pinned, d)} onRetry={() => cb.retry(m)} onDiscard={() => cb.discard(m)}
-    onImage={cb.image} onMessageHandle={(h) => cb.handle(h, p.own)} />;
-}, (a, b) => a.m === b.m && a.grouped === b.grouped && a.caps === b.caps && a.settings === b.settings && a.cb === b.cb && a.net === b.net && a.showNet === b.showNet && sameChatBits(a.chat, b.chat) && sameChatBits(a.own, b.own));
+    onImage={cb.image} onMessageHandle={(h) => cb.handle(h, p.own)} selected={p.selected} selMode={p.selMode} onSelect={() => cb.select(m)} />;
+}, (a, b) => a.m === b.m && a.grouped === b.grouped && a.caps === b.caps && a.settings === b.settings && a.cb === b.cb && a.net === b.net && a.showNet === b.showNet && a.selected === b.selected && a.selMode === b.selMode && sameChatBits(a.chat, b.chat) && sameChatBits(a.own, b.own));
 interface Pending { id: number; blob: Blob; name: string; mime: string; kind: Attachment["kind"]; preview?: string }
 const err = (e: any) => alert(e?.message ?? String(e));
 /** Payloads of sends that failed, keyed by the local placeholder message id, so they can be retried. */
@@ -59,7 +61,10 @@ export default function Conversation(p: Props) {
   const { chat, messages, settings } = p;
   const [reply, setReply] = useState<Message>();
   const [editing, setEditing] = useState<Message>();
-  const [forwarding, setForwarding] = useState<Message>();
+  const [forwarding, setForwarding] = useState<Message>(); const [fwdMany, setFwdMany] = useState(false);
+  // multi-select: the keys of the picked messages (chat id + message id, because a merged chat can repeat native ids).
+  // An empty set means the timeline is in its normal mode; the first pick turns every row into a checkbox.
+  const [sel, setSel] = useState<ReadonlySet<string>>(new Set());
   const [lightbox, setLightbox] = useState<{ url: string; name?: string; video?: boolean }>();
   const [drag, setDrag] = useState(false);
   const end = useRef<HTMLDivElement>(null);
@@ -220,6 +225,31 @@ export default function Conversation(p: Props) {
     core.call("react", { chatId: m.chatId, messageId: m.id, emoji: mine ? null : emoji }).catch(err);
   };
   const forward = async (to: Chat) => { const m = forwarding!; setForwarding(undefined); try { await core.call("forward", { message: m, toChatId: to.id }); p.onOpenChat(to.id); } catch (e) { err(e); } };
+  // ---- multi-select actions (issue #81). The picked messages are always handled oldest first, whatever order they were ticked in.
+  const selKey = (m: Message) => m.chatId + "|" + m.id;
+  const picked = () => messages.filter((m) => sel.has(selKey(m))).sort((a, b) => a.time.localeCompare(b.time));
+  const toggleSel = (m: Message) => setSel((cur) => { const next = new Set(cur); const k = selKey(m); next.has(k) ? next.delete(k) : next.add(k); return next; });
+  const clearSel = () => setSel(new Set());
+  const forwardMany = async (to: Chat) => {
+    const list = picked(); setFwdMany(false);
+    let ok = 0, failed = "";
+    for (const m of list) { try { await core.call("forward", { message: m, toChatId: to.id }); ok++; } catch (e: any) { failed ||= e?.message ?? String(e); } }
+    clearSel();
+    if (ok === list.length) p.onOpenChat(to.id);  // all of them went: follow them to the chat, like a single forward does
+    else { setNote(`Forwarded ${ok} of ${list.length} messages to ${to.name}. ${failed}`); setTimeout(() => setNote(undefined), 8000); }
+  };
+  const copySel = async () => {
+    const list = picked(), dm = chat.kind === "dm";
+    const text = list.map((m) => { const body = m.text || placeholderOf(m.text) || (m.attachments?.length ? "[Attachment]" : ""); return body && !dm ? `${m.fromMe ? "You" : m.sender || m.senderId}: ${body}` : body; }).filter(Boolean).join("\n");
+    if (!text) return;
+    try { await navigator.clipboard.writeText(text); clearSel(); } catch { setNote("This browser did not allow copying."); setTimeout(() => setNote(undefined), 5000); }
+  };
+  const deleteSel = async () => {
+    const list = picked().filter((m) => m.fromMe && !m.deleted);
+    if (!list.length || !confirm(`Delete ${list.length} message${list.length === 1 ? "" : "s"} for everyone?`)) return;
+    for (const m of list) { try { await core.call("delete", { chatId: m.chatId, messageId: m.id }); } catch (e) { err(e); break; } }
+    clearSel();
+  };
   const known: Contact[] = p.chats.filter((c) => c.kind === "dm").map((c) => ({ id: c.id, name: c.name }));
 
   // ---- stable callbacks for the memoised rows (members are always the latest closures)
@@ -231,7 +261,7 @@ export default function Conversation(p: Props) {
     forward: (m: Message) => setForwarding(m), react,
     pin: (m: Message, pinned: boolean, durationSec?: number) => { core.call("pin", { chatId: m.chatId, messageId: m.id, pinned, ...(durationSec !== undefined ? { durationSec } : {}) }).catch(err); },
     retry: async (m: Message) => { const f = failedSends.get(m.id); if (!f) return; failedSends.delete(m.id); p.onRemove(m.id); await composerRef.current?.resend(f.payload); },
-    discard: (m: Message) => { failedSends.delete(m.id); p.onRemove(m.id); }, image: setLightbox,
+    discard: (m: Message) => { failedSends.delete(m.id); p.onRemove(m.id); }, image: setLightbox, select: toggleSel,
     handle: async (h: string, own: Chat) => { try { const c = await core.call("startChat", { accountId: own.accountId, handle: h }); p.onOpenChat(c.id); } catch (e) { err(e); } },
   } satisfies RowCb);
   const nets = useMemo(() => new Map((members ?? []).map((c) => [c.id, netOf(c, p.providers, p.accounts)])), [members, p.providers, p.accounts]);
@@ -249,7 +279,7 @@ export default function Conversation(p: Props) {
           return (
             <div key={mkey} data-k={mkey}>
               {newDay && <div className="daysep"><span>{dayLabel(m.time)}</span></div>}
-              <MessageRow cb={cb} m={m} grouped={grouped} chat={chat} own={own} net={merged ? nets.get(own.id) : undefined} showNet={showNet} caps={capsOfMsg(m)} settings={settings} />
+              <MessageRow cb={cb} m={m} grouped={grouped} chat={chat} own={own} net={merged ? nets.get(own.id) : undefined} showNet={showNet} caps={capsOfMsg(m)} settings={settings} selMode={sel.size > 0} selected={sel.has(m.chatId + "|" + m.id)} />
             </div>
           );
   };
@@ -296,11 +326,25 @@ export default function Conversation(p: Props) {
           <span><b>Message request</b><small>{chat.name} wrote to you first. Accept to keep the conversation, or decline to remove it. Replying also accepts.</small></span>
           {caps?.requests && <><button className="primary inline" onClick={() => p.onRequest(true)}>Accept</button><button className="secondary" onClick={() => p.onRequest(false)}>Decline</button></>}
         </div>)}
+      {sel.size > 0 && (() => {
+        const list = picked();
+        const canCopy = list.some((m) => m.text || m.attachments?.length);
+        const canDelete = !!caps?.deletes && list.length > 0 && list.every((m) => m.fromMe && !m.deleted);
+        return (
+          <div className="selbar msgselbar" role="toolbar" aria-label="Selected messages" data-sel={sel.size}>
+            <b>{sel.size} message{sel.size === 1 ? "" : "s"} selected</b>
+            <button data-act="msgsel-forward" onClick={() => setFwdMany(true)}><Forward size={14} /> Forward</button>
+            {canCopy && <button data-act="msgsel-copy" onClick={() => void copySel()}><Copy size={14} /> Copy</button>}
+            {canDelete && <button data-act="msgsel-delete" onClick={() => void deleteSel()}><Trash2 size={14} /> Delete</button>}
+            <button className="icon" data-act="msgsel-clear" aria-label="Clear the selection" onClick={clearSel}><X size={16} /></button>
+          </div>);
+      })()}
       <ScheduledNote ids={[chat.id, ...(members?.map((c) => c.id) ?? [])]} />
       <Composer ref={composerRef} viaInfo={p.accounts.find((a) => a.id === via.accountId)?.via} onSignIn={() => p.onSignIn(via.accountId)} chat={chat} target={via} viaSelect={viaSelect} caps={caps} settings={settings} reply={reply} editing={editing} known={known}
         onCancel={() => { setReply(undefined); setEditing(undefined); }} onSent={(m, r) => { setReply(undefined); setEditing(undefined); p.onSent(m, r); }} />
 
       {forwarding && <ForwardModal chats={p.chats} onPick={forward} onClose={() => setForwarding(undefined)} />}
+      {fwdMany && <ForwardModal chats={p.chats} onPick={forwardMany} onClose={() => setFwdMany(false)} />}
       {lightbox && <Lightbox {...lightbox} onClose={() => setLightbox(undefined)} />}
     </div>
   );
@@ -553,7 +597,8 @@ function MessageView(p: {
   own: Chat; net?: { provider: string; name: string; account: string; title: string }; showNet?: boolean;
   m: Message; grouped: boolean; chat: Chat; caps?: Capabilities; settings: Settings; getMessages: () => Message[];
   onRetry: () => void; onDiscard: () => void;
-  onReply: () => void; onEdit: () => void; onForward: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onImage: (i: { url: string; name?: string; video?: boolean }) => void; onMessageHandle: (h: string) => void;
+  onReply: () => void; onEdit: () => void; onForward: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onImage: (i: { url: string; name?: string; video?: boolean }) => void;
+  selected?: boolean; selMode?: boolean; onSelect: () => void; onMessageHandle: (h: string) => void;
 }) {
   const { m, chat, caps } = p;
   const [picker, setPicker] = useState(false);
@@ -568,6 +613,19 @@ function MessageView(p: {
   const lastLong = useRef(0); // touch: a long press opens the same menu as a right click (the browser's own contextmenu event that follows is ignored)
   const lp = useLongPress((x, y) => { lastLong.current = Date.now(); setMenu({ x, y, sel: "" }); });
   const del = () => { if (confirm("Delete this message for everyone?")) core.call("delete", { chatId: m.chatId, messageId: m.id }).catch(err); };
+  // Android only: hand the message to the system share sheet. An attachment has to travel as bytes, because the archive is
+  // encrypted and no other app can read it; the native side writes the copy and shares it as a content:// URI (issue #82).
+  const canShare = !!(window as any).UnimsgNative && !m.deleted && (!!m.text || !!m.attachments?.length);
+  const share = async () => {
+    try {
+      const a = m.attachments?.[0];
+      const payload = a
+        ? { text: m.text || "", file: { ...(await core.call("attachment", { chatId: m.chatId, messageId: m.id, attachmentId: a.id })), name: a.name || `attachment.${(a.mime.split("/")[1] ?? "bin").replace(/[^a-z0-9]/gi, "")}` } }
+        : { text: m.text };
+      const r = await core.call("$share", payload);
+      if (r && r.started === false) err(new Error(r.error ?? "Sharing did not start."));
+    } catch (e) { err(e); }
+  };
   const badge = p.net && p.showNet && <span className="netbadge" title={p.net.title}><ProviderIcon provider={p.net.provider} size={14} title={p.net.title} /></span>;
   const name = m.fromMe ? "You" : chat.kind === "dm" ? chat.name : m.sender || m.senderId; // your alias wins in 1:1 chats
   // "[Photo]"-style stand-in text: hidden when the real media is there, a proper "not available" card when it is not
@@ -584,10 +642,13 @@ function MessageView(p: {
   const attsEl = !!atts.length && <div className="atts">{atts.map((a) => <AttachmentView key={a.id} size={atts.filter((x) => x.kind === "image" || x.kind === "video" || x.gif).length > 1 ? 148 : 300} chat={p.own} m={m} a={a} auto={p.settings.autoDownloadMedia} onImage={p.onImage} />)}{metaPos === "overlay" && meta("ov")}</div>;
   const textEl = !!text && <p className="tx"><Linkified text={text} emojiScope={caps?.customEmoji ? p.own.accountId : undefined} />{m.editedAt && <small className="edited"> (edited)</small>}{metaPos === "inline" && meta("inl")}</p>;
   return (
-    <div data-mid={m.id} data-mkey={m.chatId + "|" + m.id} className={"msg k-" + chat.kind + (p.grouped ? " grouped" : "") + (m.fromMe ? " mine" : "") + (pend ? " pend" : "") + (p.net ? " merged" : "") + (!m.deleted && reactions.length ? " hasreact" : "")}
-      onClickCapture={(e) => { if (lp.swallow()) { e.stopPropagation(); e.preventDefault(); } }}
+    <div data-mid={m.id} data-mkey={m.chatId + "|" + m.id} className={"msg k-" + chat.kind + (p.grouped ? " grouped" : "") + (m.fromMe ? " mine" : "") + (pend ? " pend" : "") + (p.net ? " merged" : "") + (p.selMode ? " selmode" : "") + (p.selected ? " sel" : "") + (!m.deleted && reactions.length ? " hasreact" : "")}
+      onClickCapture={(e) => { // while selecting, the whole row is one big checkbox: links, players and action buttons must not fire
+        if (p.selMode) { e.stopPropagation(); e.preventDefault(); p.onSelect(); return; }
+        if (lp.swallow()) { e.stopPropagation(); e.preventDefault(); } }}
       onTouchStart={(e) => { if (!(e.target as HTMLElement).closest("a, audio, video, input, textarea, .vidctrls")) lp.onTouchStart(e); }} onTouchMove={lp.onTouchMove} onTouchEnd={lp.onTouchEnd} onTouchCancel={lp.onTouchCancel}
       onContextMenu={(e) => { if ((e.target as HTMLElement).closest("a, audio, video, input, textarea")) return; e.preventDefault(); if (pend || Date.now() - lastLong.current < 1200) return; setMenu({ x: e.clientX, y: e.clientY, sel: window.getSelection()?.toString() ?? "" }); }}>
+      {p.selMode && <span className="selmark" data-selected={p.selected ? "1" : "0"} aria-hidden>{p.selected ? <CheckSquare size={16} /> : <Square size={16} />}</span>}
       {p.grouped ? <time className="gtime">{fmtTime(m.time)}</time>
         : (() => { const av = <Avatar name={name} size={40} of={m.fromMe ? undefined : chat.kind === "dm" ? { kind: "chat", id: chat.id } : { kind: "contact", id: `${chat.accountId}:${m.senderId}` }} />;
             return chat.kind !== "dm" && !m.fromMe && chat.provider !== "mesh" ? <button className="avbtn" title={`Show ${name}`} onClick={() => p.onPerson(m.senderId, name)}>{av}</button> : av; })()}
@@ -614,8 +675,8 @@ function MessageView(p: {
             {caps?.reactions && <button className="chip add" title="Add reaction" onClick={() => setFullPicker(!fullPicker)}><SmilePlus size={12} /></button>}</div>)}
         {m.status === "failed" && !m.deleted && <div className="foot"><span className="failrow">{failedSends.get(m.id)?.error ?? "Failed to send"} <button className="linkbtn" onClick={p.onRetry}><RotateCcw size={12} /> Retry</button> <button className="linkbtn" onClick={p.onDiscard}>Discard</button></span></div>}
       </div>
-      {!m.deleted && !pend && <button className="msgmore" aria-label="Message options" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left, y: r.bottom, sel: "" }); }}><MoreHorizontal size={16} /></button>}
-      {!m.deleted && !pend && (
+      {!m.deleted && !pend && !p.selMode && <button className="msgmore" aria-label="Message options" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left, y: r.bottom, sel: "" }); }}><MoreHorizontal size={16} /></button>}
+      {!m.deleted && !pend && !p.selMode && (
         <div className="actions">
           {caps?.reactions && <button title="React" onClick={() => setPicker(!picker)}><SmilePlus size={16} /></button>}
           {caps?.replies && <button title="Reply" onClick={p.onReply}><Reply size={16} /></button>}
@@ -626,7 +687,7 @@ function MessageView(p: {
         </div>)}
       {reactors && createPortal(<ReactorsModal chat={p.own} m={m} messages={p.getMessages()} onClose={() => setReactors(false)} />, document.body)}
       {info && createPortal(<Suspense fallback={null}><MessageInfoModal chat={p.own} m={m} messages={p.getMessages()} details={!!caps?.receiptDetails} onClose={() => setInfo(false)} /></Suspense>, document.body)}
-      {menu && <MessageMenu {...menu} onReactors={() => setReactors(true)} m={m} caps={caps} onClose={() => setMenu(undefined)} onMore={() => setFullPicker(true)} onReact={p.onReact} onPin={p.onPin} onReply={p.onReply} onForward={p.onForward} onEdit={p.onEdit} onDelete={del} onRetry={p.onRetry} onDiscard={p.onDiscard} />}
+      {menu && <MessageMenu {...menu} onReactors={() => setReactors(true)} m={m} caps={caps} onClose={() => setMenu(undefined)} onSelect={p.onSelect} canShare={canShare} onShare={() => void share()} onMore={() => setFullPicker(true)} onReact={p.onReact} onPin={p.onPin} onReply={p.onReply} onForward={p.onForward} onEdit={p.onEdit} onDelete={del} onRetry={p.onRetry} onDiscard={p.onDiscard} />}
       {fullPicker && <EmojiPopover onClose={() => setFullPicker(false)} onPick={(e) => p.onReact(e)} />}
       {picker && (
         <div className="reactpick" onMouseLeave={() => { pickTimer.current = setTimeout(() => setPicker(false), 600); }} onMouseEnter={() => clearTimeout(pickTimer.current)}>
@@ -754,7 +815,7 @@ function SystemRow({ m }: { m: Message }) {
 }
 
 /** Right-click menu for a message (replaces the browser's own menu; selected text still gets "Copy selection"). */
-function MessageMenu(p: { onMore: () => void; onReactors: () => void; x: number; y: number; sel: string; m: Message; caps?: Capabilities; onClose: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onReply: () => void; onForward: () => void; onEdit: () => void; onDelete: () => void; onRetry: () => void; onDiscard: () => void }) {
+function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: () => void; canShare?: boolean; onShare: () => void; x: number; y: number; sel: string; m: Message; caps?: Capabilities; onClose: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onReply: () => void; onForward: () => void; onEdit: () => void; onDelete: () => void; onRetry: () => void; onDiscard: () => void }) {
   const { m, caps } = p;
   const [pinOpen, setPinOpen] = useState(false); // networks with expiring pins: the length is chosen right in the menu
   const ref = useRef<HTMLDivElement>(null);
@@ -779,6 +840,8 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; x: number;
       {!m.deleted && !failed && <>
         {caps?.replies && <Item icon={<Reply size={15} />} label="Reply" onClick={p.onReply} />}
         <Item icon={<Forward size={15} />} label="Forward" onClick={p.onForward} />
+        {p.canShare && <Item icon={<ExternalLink size={15} />} label="Share…" onClick={p.onShare} />}
+        <Item icon={<CheckSquare size={15} />} label="Select" onClick={p.onSelect} />
         {caps?.pinMessages && (m.pinned ? <Item icon={<PinOffIcon size={15} />} label="Unpin" onClick={() => p.onPin(false)} />
           : caps.pinDurations?.length ? <>
             <button data-pin-menu aria-expanded={pinOpen} onClick={() => setPinOpen(!pinOpen)}><PinIcon size={15} />Pin…</button>

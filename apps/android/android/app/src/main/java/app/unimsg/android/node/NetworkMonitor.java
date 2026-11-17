@@ -22,6 +22,7 @@ import java.net.InetAddress;
  * Why: (1) os.networkInterfaces() inside nodejs-mobile can fail on newer Android versions, (2) the sync listener, the mDNS announcement and the addresses sent
  * to the other devices must follow the network at once, and Android tells us exactly when. The backend answers by rebinding its listener, re-announcing the
  * addresses over every live session / the DHT, and clearing the dial back-off ($network control call, see apps/android/src/bridge-protocol.ts).
+ * The same call carries whether the active network is metered, which stops background update checks and avatar pre-warming.
  * Debounced (a Wi-Fi switch fires several callbacks); registered by NodeService for as long as it runs.
  */
 final class NetworkMonitor extends ConnectivityManager.NetworkCallback {
@@ -63,6 +64,21 @@ final class NetworkMonitor extends ConnectivityManager.NetworkCallback {
                 }
             }
         } catch (Exception e) { Log.w(TAG, "reading the network failed: " + e); return; }
-        NodeBridge.get().sendNetwork(list);
+        NodeBridge.get().sendNetwork(list, metered());
+    }
+
+    /**
+     * Is what the phone currently uses paid for by the megabyte? Android answers this with the absence of
+     * NET_CAPABILITY_NOT_METERED (mobile data, a tethered hotspot, a Wi-Fi the user marked as metered).
+     * No network at all counts as not metered: nothing can be spent, and the backend must not stay paused when it comes back.
+     */
+    private boolean metered() {
+        try {
+            Network n = cm.getActiveNetwork();
+            if (n == null) return false;
+            NetworkCapabilities nc = cm.getNetworkCapabilities(n);
+            if (nc == null) return cm.isActiveNetworkMetered();
+            return !nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+        } catch (Exception e) { Log.w(TAG, "metered state unknown: " + e); return false; }
     }
 }

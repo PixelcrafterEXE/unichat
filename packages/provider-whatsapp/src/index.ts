@@ -15,7 +15,7 @@ import makeWASocket, {
 import {
   NO_CAPABILITIES,
   type Capabilities, type Chat, type Connector, type Contact, type CoreEvent, type HistoryQuery, type Message,
-  type MessagePatch, type OutgoingMessage, type ProviderFactory, type Reaction, type Space,
+  type MessagePatch, type OutgoingAttachment, type OutgoingMessage, type ProviderFactory, type Reaction, type Space,
 } from "@unimsg/core";
 import {
   betterStatus, canon, chatKindOf, extract, unwrap, handleOf, handleToJid, isGroupJid, isLidJid, isMuted,
@@ -153,6 +153,20 @@ export function quotedContent(m: Message): proto.IMessage {
     return cs.length === 1 ? { contactMessage: cs[0]! } : { contactsArrayMessage: { displayName: `${cs.length} contacts`, contacts: cs } };
   }
   return { conversation: m.text || m.poll?.question || "[attachment]" };
+}
+
+const startsWith = (d: Buffer, at: number, magic: string) => d.length >= at + magic.length && d.toString("latin1", at, at + magic.length) === magic;
+
+/** The image/video content Baileys gets for an outgoing attachment.
+ *  WhatsApp animates exactly one thing: a `videoMessage` with `gifPlayback` (an mp4). So an mp4 the UI marked as a
+ *  GIF is sent as that, while real GIF bytes would need transcoding, which we cannot do (no ffmpeg on Android or the
+ *  desktop, and Baileys' jimp writes images only): they go out as the still image the recipient will really see, so
+ *  the echoed `Attachment.gif` (set from `gifPlayback`, see map.ts) does not claim an animation that is not there. */
+export function visualContent(a: OutgoingAttachment, data: Buffer, cap: { caption?: string }): AnyMessageContent {
+  const gifBytes = /^image\/gif\b/i.test(a.mime) || startsWith(data, 0, "GIF8");
+  if (a.gif === true && !gifBytes && (/^video\/mp4\b/i.test(a.mime) || startsWith(data, 4, "ftyp")))
+    return { video: data, mimetype: "video/mp4", gifPlayback: true, ...cap };
+  return a.kind === "video" && !gifBytes ? { video: data, mimetype: a.mime, ...cap } : { image: data, mimetype: a.mime, ...cap };
 }
 
 class WhatsAppConnector implements Connector {
@@ -1995,8 +2009,7 @@ class WhatsAppConnector implements Connector {
       const data = Buffer.from(a.data);
       const cap = captionLeft ? { caption: captionLeft } : {};
       switch (a.kind) {
-        case "image": contents.push({ image: data, mimetype: a.mime, ...cap }); captionLeft = ""; break;
-        case "video": contents.push({ video: data, mimetype: a.mime, ...cap }); captionLeft = ""; break;
+        case "image": case "video": contents.push(visualContent(a, data, cap)); captionLeft = ""; break;
         case "audio": contents.push({ audio: data, mimetype: a.mime, ...(a.durationMs ? { seconds: Math.round(a.durationMs / 1000) } : {}) }); break;
         case "voice": contents.push({ audio: data, mimetype: /ogg/i.test(a.mime) ? "audio/ogg; codecs=opus" : a.mime, ptt: true,
           ...(a.durationMs ? { seconds: Math.max(1, Math.round(a.durationMs / 1000)) } : {}),

@@ -52,6 +52,7 @@ public class MainActivity extends BridgeActivity {
 
         current = new java.lang.ref.WeakReference<>(this);
         askNotificationPermissionOnce();
+        app.unimsg.android.node.NodeRuntime.forgetExits(this); // the user opening the app is the retry after a backend crash loop
         ContextCompat.startForegroundService(this, new Intent(this, NodeService.class)); // allowed: we are in the foreground
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -147,6 +148,11 @@ public class MainActivity extends BridgeActivity {
     }
 
     private static java.lang.ref.WeakReference<MainActivity> current;
+    /** The activity while it is alive, else null (only the service runs). Callers that start an activity need it: a start from an application context is dropped silently in the background. */
+    public static android.app.Activity onScreen() {
+        MainActivity a = current == null ? null : current.get();
+        return a == null || a.isFinishing() || a.isDestroyed() ? null : a;
+    }
     public static boolean notificationsGranted(android.content.Context c) {
         return Build.VERSION.SDK_INT < 33 || c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
     }

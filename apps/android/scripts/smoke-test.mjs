@@ -102,6 +102,13 @@ try {
   { const t = Date.now(); while (!b.native.states.length && Date.now() - t < 5000) await new Promise((r) => setTimeout(r, 20));
     assert.deepEqual(b.native.states[0], { ctl: "state", accounts: 0, sync: false }); ok("backend reports the account count ({ctl:state}) after ready"); }
   assert.deepEqual((await b.native.control$("$config", { keepAlive: true, notifyContent: "sender" })).result, {}); ok("$config accepts keepAlive + notifyContent");
+  // metered / battery saver / low battery pause the avatar warm-up (setAvatarWarmPaused): the Hub must accept every combination the host can report
+  for (const p of [{ saver: true, low: false }, { saver: false, low: true }, {}]) {
+    const r = await b.native.control$("$power", p); assert.deepEqual(r.result, {}, "$power " + JSON.stringify(p) + ": " + JSON.stringify(r)); }
+  const nm = await b.native.control$("$network", { interfaces: [], metered: true });
+  assert.ok(!nm.error, "$network with metered: " + JSON.stringify(nm));
+  assert.deepEqual((await b.native.control$("$power", { saver: false, low: false })).result, {});
+  ok("$power and $network {metered} accepted (avatar warm-up pause)");
   for (const [m, p] of [["$reply", { chatId: "x" }], ["$reply", { chatId: "x", text: "  " }], ["$markRead", { chatId: "x" }]]) {
     const r = await b.native.control$(m, p); assert.equal(typeof r.error, "string", m + " validates its params"); }
   const rr = await b.native.control$("$reply", { chatId: "nope:1", text: "hi" }); assert.ok(rr.error, "reply to an unknown chat is an error, not a crash");

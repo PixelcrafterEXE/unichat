@@ -104,10 +104,15 @@ public final class NodeBridge {
         main.postDelayed(once, maxMs);
     }
 
-    // ---- network addresses for the sync listener (see NetworkMonitor) ---------------------------------------------------------------
+    // ---- network addresses for the sync listener (see NetworkMonitor) and the power state (PowerMonitor) ------------------------------
     private volatile String lastNetwork = "[]";
-    /** Every IP address of every connected network, as a JSON array [{name,address,family,netmask}]. Sent to Node now and again on every (re)connect. */
-    public void sendNetwork(JSONArray list) { lastNetwork = list.toString(); sendControl("$network", "{\"interfaces\":" + lastNetwork + "}"); }
+    private volatile boolean lastMetered = false;
+    private volatile String lastPower; // null until PowerMonitor read the battery state
+    /** Every IP address of every connected network, as a JSON array [{name,address,family,netmask}], plus whether the active network is metered. Sent to Node now and again on every (re)connect. */
+    public void sendNetwork(JSONArray list, boolean metered) { lastNetwork = list.toString(); lastMetered = metered; sendControl("$network", networkParams()); }
+    private String networkParams() { return "{\"interfaces\":" + lastNetwork + ",\"metered\":" + lastMetered + "}"; }
+    /** Battery saver / low battery, so the backend can stop work that is only nice to have (avatar pre-warming). */
+    public void sendPower(boolean saver, boolean low) { lastPower = "{\"saver\":" + saver + ",\"low\":" + low + "}"; sendControl("$power", lastPower); }
 
     public boolean uiAttached() { return ui != null; }
 
@@ -163,6 +168,9 @@ public final class NodeBridge {
                     return true;
                 case "$installApk": // must follow a user tap ("Update"): the UI passes the path of the verified file from the updater
                     replyToUi(id, installApk(c, p.optString("path", "")));
+                    return true;
+                case "$share": // {text?, file?:{name,mime,dataBase64}}: hand a message to Android's share sheet (issue #82)
+                    replyToUi(id, share(c, p));
                     return true;
                 case "$notificationState":
                     replyToUi(id, new JSONObject().put("granted", MainActivity.notificationsGranted(c)).put("sdk", Build.VERSION.SDK_INT));
@@ -224,24 +232,152 @@ public final class NodeBridge {
     }
 
     /**
-     * Hands a downloaded update to the system package installer. Only files the updater wrote (<filesDir>/unimsg-data/updates/*.apk, SHA-256
-     * already verified by the backend) are accepted; the system itself refuses an APK not signed with this app's key.
-     * Without the "install unknown apps" permission the settings page for this app opens instead and {needsPermission:true} is returned.
+     * Where the backend's updater writes the verified APK, relative to filesDir. The Hub nests its own data directory one
+     * level deeper than UNIMSG_DATA (startBackend does `new Hub(join(dataDir, "accounts"), ...)`, packages/host/src/index.ts)
+     * and the updater uses the Hub's directory, so the file lands in unimsg-data/accounts/updates - NOT in unimsg-data/updates.
+     * Must stay in sync with the `unimsg_updates` entry of res/xml/file_paths.xml, or FileProvider refuses to share the file.
+     */
+    private static final String UPDATES_DIR = "unimsg-data/accounts/updates";
+
+    /**
+     * Hands a downloaded update to the system package installer. Only files the updater wrote (UPDATES_DIR/*.apk, SHA-256
+     * already verified by the backend) are accepted. Without the "install unknown apps" permission the settings page for this
+     * app opens instead and {needsPermission:true} is returned.
+     * Every refusal comes back as {started:false, error:"<sentence>"}: the UI shows it. Nothing here may end without an answer -
+     * a dialog that just closes is what issue #91 was about.
      */
     private static JSONObject installApk(Context c, String path) throws Exception {
-        java.io.File dir = new java.io.File(new java.io.File(c.getFilesDir(), "unimsg-data"), "updates").getCanonicalFile();
-        java.io.File f = new java.io.File(path).getCanonicalFile();
-        if (!f.getPath().startsWith(dir.getPath() + java.io.File.separator) || !f.getName().endsWith(".apk") || !f.isFile())
-            return new JSONObject().put("started", false).put("error", "This is not a downloaded update file.");
+        java.io.File dir, f;
+        try { dir = new java.io.File(c.getFilesDir(), UPDATES_DIR).getCanonicalFile(); f = new java.io.File(path).getCanonicalFile(); }
+        catch (IOException e) { Log.w(TAG, "cannot resolve " + path, e); return fail("The downloaded update file cannot be read. Download it again."); }
+        if (!f.getPath().startsWith(dir.getPath() + java.io.File.separator) || !f.getName().endsWith(".apk") || !f.isFile()) {
+            Log.w(TAG, "refusing to install " + f.getPath() + ": not an APK below " + dir.getPath());
+            return fail("The downloaded update is not where the app expects it, so it was not installed. Please report this.");
+        }
         if (!canInstallPackages(c)) {
-            c.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + c.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            try { c.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + c.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
+            catch (Exception e) { Log.w(TAG, "no unknown-sources settings screen", e); return fail("Android does not allow UniChat to install apps, and this phone has no screen to change that. Install the downloaded file with a file manager."); }
             return new JSONObject().put("started", false).put("needsPermission", true);
         }
-        Uri uri = androidx.core.content.FileProvider.getUriForFile(c, c.getPackageName() + ".fileprovider", f);
+        String conflict = signingConflict(c, f);
+        if (conflict != null) return fail(conflict);
+        Uri uri;
+        try { uri = androidx.core.content.FileProvider.getUriForFile(c, c.getPackageName() + ".fileprovider", f); }
+        catch (IllegalArgumentException e) { // the folder is not in file_paths.xml: nothing can be shared with the installer
+            Log.w(TAG, "FileProvider has no root for " + f.getPath(), e);
+            return fail("This build cannot pass the update to the installer. Please report this.");
+        }
         Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-        c.startActivity(view);
+        // From the activity while it is on screen: an activity start from an application context is dropped SILENTLY once the
+        // app counts as backgrounded (Android 10+), which looks exactly like "the dialog closed and nothing happened".
+        android.app.Activity a = MainActivity.onScreen();
+        try { if (a != null) a.startActivity(view); else c.startActivity(view); }
+        catch (Exception e) {
+            Log.w(TAG, "no activity for the install intent", e);
+            return fail("This phone has nothing that can install app files: " + e.getClass().getSimpleName() + ".");
+        }
         return new JSONObject().put("started", true);
+    }
+
+    /** Cache folder the share sheet reads from. Covered by the cache-path root of res/xml/file_paths.xml. */
+    private static final String SHARE_DIR = "share";
+    private static final int MAX_SHARE_BYTES = 64 * 1024 * 1024;
+
+    /**
+     * Android's share sheet for one message (issue #82): its text, or an attachment the UI has already downloaded.
+     * The bytes are written into the cache and handed over as a content:// URI, because another app cannot read our files.
+     */
+    private static JSONObject share(Context c, JSONObject p) throws Exception {
+        final String text = p.optString("text", "");
+        final JSONObject file = p.optJSONObject("file");
+        Intent send = new Intent(Intent.ACTION_SEND);
+        if (file != null) {
+            byte[] bytes;
+            try { bytes = android.util.Base64.decode(file.optString("dataBase64", ""), android.util.Base64.DEFAULT); }
+            catch (IllegalArgumentException e) { Log.w(TAG, "share: undecodable attachment", e); return fail("This attachment could not be read, so it was not shared."); }
+            if (bytes.length == 0) return fail("This attachment is empty, so there is nothing to share.");
+            if (bytes.length > MAX_SHARE_BYTES) return fail("This file is too large to share from UniChat (the limit is 64 MB).");
+            java.io.File dir = new java.io.File(c.getCacheDir(), SHARE_DIR);
+            sweepShared(dir);
+            if (!dir.isDirectory() && !dir.mkdirs()) return fail("UniChat cannot prepare the file for sharing on this phone.");
+            java.io.File f = new java.io.File(dir, shareName(file.optString("name", "")));
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(f)) { out.write(bytes); }
+            Uri uri;
+            try { uri = androidx.core.content.FileProvider.getUriForFile(c, c.getPackageName() + ".fileprovider", f); }
+            catch (IllegalArgumentException e) { Log.w(TAG, "FileProvider has no root for " + f.getPath(), e); return fail("This build cannot share files. Please report this."); }
+            send.setType(mimeOf(file.optString("mime", ""))).putExtra(Intent.EXTRA_STREAM, uri);
+            if (!text.isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
+        } else {
+            if (text.isEmpty()) return fail("There is nothing to share in this message.");
+            send.setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
+        }
+        Intent chooser = Intent.createChooser(send, null)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        // Like the installer handoff: started from the activity, because a background activity start is dropped silently.
+        android.app.Activity a = MainActivity.onScreen();
+        try { if (a != null) a.startActivity(chooser); else c.startActivity(chooser); }
+        catch (Exception e) { Log.w(TAG, "no activity for the share intent", e); return fail("This phone has nothing to share with: " + e.getClass().getSimpleName() + "."); }
+        return new JSONObject().put("started", true);
+    }
+
+    /** A file name another app will see: no path, no surprises, never empty. */
+    private static String shareName(String raw) {
+        String n = raw.replace('\\', '/');
+        n = n.substring(n.lastIndexOf('/') + 1).replaceAll("[^A-Za-z0-9._-]", "_");
+        while (n.startsWith(".")) n = n.substring(1);
+        if (n.isEmpty()) n = "attachment";
+        return n.length() > 80 ? n.substring(n.length() - 80) : n;
+    }
+    private static String mimeOf(String raw) {
+        String m = raw.split(";")[0].trim();
+        return m.matches("[\\w.+-]+/[\\w.+-]+") ? m : "application/octet-stream";
+    }
+    /** The receiving app reads the file after this call returns, so shared copies are cleared on the NEXT share, not now. */
+    private static void sweepShared(java.io.File dir) {
+        java.io.File[] old = dir.listFiles();
+        if (old == null) return;
+        long cutoff = System.currentTimeMillis() - 10 * 60_000L;
+        for (java.io.File f : old) if (f.isFile() && f.lastModified() < cutoff && !f.delete()) Log.w(TAG, "could not clear " + f.getName());
+    }
+
+    private static JSONObject fail(String message) throws Exception { return new JSONObject().put("started", false).put("error", message); }
+
+    /**
+     * The sentence to show when this APK cannot replace the installed app, or null when it can (or when we cannot tell).
+     * Android refuses an update signed with another key ("a package with the same id already exists") and reports nothing back
+     * to the app that handed it over, so the mismatch is detected here (issue #92: a CI APK over a local `pnpm run debug` build).
+     * A check that itself fails must never block an install, so every problem means "cannot tell".
+     */
+    private static String signingConflict(Context c, java.io.File apk) {
+        try {
+            android.content.pm.PackageManager pm = c.getPackageManager();
+            int flag = Build.VERSION.SDK_INT >= 28 ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES : android.content.pm.PackageManager.GET_SIGNATURES;
+            android.content.pm.PackageInfo now = pm.getPackageInfo(c.getPackageName(), flag);
+            android.content.pm.PackageInfo next = pm.getPackageArchiveInfo(apk.getPath(), flag);
+            if (next == null || !c.getPackageName().equals(next.packageName)) return null;
+            Set<String> mine = certHashes(now), theirs = certHashes(next);
+            if (mine.isEmpty() || theirs.isEmpty() || !java.util.Collections.disjoint(mine, theirs)) return null;
+            Log.w(TAG, "update signed with another key: installed " + mine + ", update " + theirs);
+            return "This update was signed with a different key than the installed app, so Android refuses it. Only a fresh install works, and uninstalling UniChat first would delete the app's data on this phone.";
+        } catch (Exception e) { Log.w(TAG, "signing check skipped", e); return null; }
+    }
+
+    /** SHA-256 of every signing certificate. For the installed app that is the whole history, so a rotated key still matches. */
+    private static Set<String> certHashes(android.content.pm.PackageInfo pi) throws Exception {
+        Set<String> out = new java.util.HashSet<>();
+        android.content.pm.Signature[] sigs = pi.signatures;
+        if (Build.VERSION.SDK_INT >= 28 && pi.signingInfo != null)
+            sigs = pi.signingInfo.hasMultipleSigners() ? pi.signingInfo.getApkContentsSigners() : pi.signingInfo.getSigningCertificateHistory();
+        if (sigs == null) return out;
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        for (android.content.pm.Signature s : sigs) {
+            if (s == null) continue;
+            StringBuilder b = new StringBuilder();
+            for (byte x : md.digest(s.toByteArray())) b.append(Character.forDigit((x >> 4) & 0xf, 16)).append(Character.forDigit(x & 0xf, 16));
+            out.add(b.toString());
+        }
+        return out;
     }
 
     private static boolean isIgnoringBatteryOptimizations(Context c) {
@@ -367,7 +503,8 @@ public final class NodeBridge {
                     Log.i(TAG, "backend ready: node " + o.optString("node") + ", sqlite " + o.optString("sqlite"));
                     sendControl("$foreground", "{\"value\":" + uiForeground + "}");
                     sendControl("$config", "{\"notifyContent\":" + JSONObject.quote(notifyContent) + "}");
-                    sendControl("$network", "{\"interfaces\":" + lastNetwork + "}");
+                    sendControl("$network", networkParams());
+                    if (lastPower != null) sendControl("$power", lastPower); // a restarted backend starts unpaused: tell it again
                     lastOkAt = SystemClock.elapsedRealtime(); pingMisses = 0;
                     String q; while ((q = queued.poll()) != null) write(q);
                     pushToUi("{\"event\":\"core-connection\",\"data\":{\"state\":\"up\"}}");

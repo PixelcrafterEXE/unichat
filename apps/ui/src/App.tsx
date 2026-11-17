@@ -447,7 +447,9 @@ export default function App() {
   const loadChat = (id: string, quiet = false) => {
     const mine = (loadSeq.current[id] = (loadSeq.current[id] ?? 0) + 1), live = () => loadSeq.current[id] === mine;
     const src = sourceFor(id);
+    let settled = false;
     const apply = (h: Message[], note?: string) => {
+      settled = true;
       setMsgs((m) => ({ ...m, [id]: h ?? [] })); setMore((m) => ({ ...m, [id]: (h ?? []).length >= 100 }));
       setHist((s) => { const n = { ...s }; delete n[id]; return n; });
       setLoadNote((n) => { const x = { ...n }; if (note) x[id] = note; else delete x[id]; return x; });
@@ -456,6 +458,9 @@ export default function App() {
     if (!quiet) { setHist((h) => ({ ...h, [id]: { status: "loading", since: Date.now() } })); setLoadNote((n) => { const x = { ...n }; delete x[id]; return x; }); }
     // the device that holds this account is off: nothing will answer, so read what is saved here at once
     if (src?.kind === "offline") return local().then((h: Message[]) => live() && apply(h, offlineLine(src)), (e) => setHist((s) => ({ ...s, [id]: { status: "error", since: Date.now(), error: e?.message ?? String(e) } })));
+    // First paint from the local archive. A chat opened from a notification must show that message at once; waiting for the
+    // messenger's own answer left the chat looking empty for as long as it took (issue #94). The answer replaces this when it comes.
+    if (!quiet) local().then((h: Message[]) => { if (live() && !settled && h?.length) setMsgs((m) => (m[id] ? m : { ...m, [id]: h })); }, () => {});
     let timedOut = false;
     const timer = setTimeout(() => { // no answer in time: show the archive, keep waiting in the background
       timedOut = true; if (!live()) return;

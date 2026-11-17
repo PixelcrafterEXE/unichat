@@ -159,6 +159,12 @@ jobs:
       - name: Build the app
         working-directory: apps/android
         run: pnpm run debug
+      - name: "Signing certificate of the APK (compare with: keytool -list -v -keystore ~/.android/debug.keystore -storepass android)"
+        # An APK signed with a different key than the installed app cannot update it ("a package with the same id exists"),
+        # so the fingerprint is printed on every release instead of being found out on a phone (issue #92).
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          "$APKSIGNER" verify --print-certs apps/android/android/app/build/outputs/apk/debug/app-debug.apk | grep -i "SHA-256 digest" || true
       - name: Collect
         run: |
           mkdir -p artifacts

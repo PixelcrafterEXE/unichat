@@ -49,7 +49,7 @@ export function useUpdate() {
       if (r.action === "handoff" && r.file) {
         try {
           const x = await core.call("$installApk", { path: r.file });
-          if (x?.needsPermission) setMsg("Android first needs your OK to install apps from UniChat. Allow it on the page that just opened, come back and tap Install again.");
+          if (x?.needsPermission) setMsg("Android first needs your OK to install apps from UniChat. Allow it on the page that just opened, come back and tap “Restart to update” again.");
           else if (x?.started) setMsg("Android is asking you to confirm the update. The app restarts when it is done.");
           else setMsg(x?.error ?? "Could not start the installer.");
         } catch (e: any) { setMsg(e?.message ?? "Could not start the installer."); }
@@ -60,7 +60,7 @@ export function useUpdate() {
         const cut = text.indexOf("Install it with: ");
         setMsg("");
         setManual({ file: r.file ?? "", message: cut >= 0 ? text.slice(0, cut).trim() : text, command: cut >= 0 ? text.slice(cut + 17).trim() : (r.file ?? "") });
-      }
+      } else setMsg(r.message ?? "The update could not be installed. Please check for updates again."); // an answer we do not know must still say something: the confirmation closing in silence was issue #91
     },
   };
 }

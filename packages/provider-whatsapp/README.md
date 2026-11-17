@@ -151,6 +151,7 @@ retried message arrives later under the same id). Unmapped stubs are counted by 
   replace it in place if their sequence number is not older. 6.7.24 shows no explicit "stopped sharing" signal and the duration is not in the message, so a share
   without updates for 30 minutes is marked ended (`live:false`). How WhatsApp really delivers updates is unverified.
 - GIFs (`videoMessage.gifPlayback`) are videos with `Attachment.gif`. Reactions on deleted messages are refused/ignored. Community covers fall back to the announcement group.
+- **Sending GIFs:** only an mp4 sent as `{video, gifPlayback:true}` animates on WhatsApp, so an attachment marked `gif` whose bytes are an mp4 goes out that way; a real `image/gif` cannot animate (WhatsApp would have to be given mp4, and there is no ffmpeg on Android or the desktop; Baileys' jimp writes images only), so it is sent as the still image the recipient sees and is never echoed with `Attachment.gif` (`src/gif.test.ts`).
 
 ## Undecryptable messages ("Waiting for this message")
 After a (re)link some messages cannot be decrypted yet (`CIPHERTEXT` stub, "No matching sessions found"). Baileys 6.7.24 already sends a retry receipt
