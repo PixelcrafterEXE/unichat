@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { advertisable, bindsFor, lanBindAddresses, markAddr, orderAddrs, raceConnect, rendezvousId, tcpConnect, type Iface } from "./addrs.js";
+import { advertisable, bindsFor, lanBindAddresses, markAddr, orderAddrs, publicLanInterfaces, raceConnect, rendezvousId, tcpConnect, type Iface } from "./addrs.js";
 import { BigAssembler, sendBig, BigTooLarge } from "./bulk.js";
 import { cleanAddrs, noteAddr, type Dev } from "./group.js";
 import { sasOf } from "./code.js";
@@ -16,12 +16,27 @@ const ifs: Iface[] = [{ name: "lo", address: "127.0.0.1", family: 4, internal: t
   { name: "tailscale0", address: "100.101.102.103", family: 4, internal: false }, { name: "ppp0", address: "203.0.113.9", family: 4, internal: false }, { name: "docker0", address: "172.17.0.1", family: 4, internal: false }];
 test("listener scopes: loopback / LAN (private ranges only) / one specific address; no wildcard", () => {
   assert.deepEqual(bindsFor({ enabled: true, scope: "loopback" }, ifs).hosts, ["127.0.0.1"]);
-  assert.deepEqual(lanBindAddresses(ifs).sort(), ["10.0.0.7", "172.17.0.1", "192.168.1.5"], "public and VPN addresses are not part of 'LAN'");
+  assert.deepEqual(lanBindAddresses(ifs).sort(), ["10.0.0.7", "192.168.1.5"], "public, VPN and container-bridge addresses are not part of 'LAN'");
   assert.deepEqual(bindsFor({ enabled: true, scope: "address", address: "100.101.102.103" }, ifs).hosts, ["100.101.102.103"]);
   assert.match(bindsFor({ enabled: true, scope: "address", address: "0.0.0.0" }, ifs).error!, /every interface/);
   assert.match(bindsFor({ enabled: true, scope: "address", address: "10.9.9.9" }, ifs).error!, /no network interface/);
   assert.match(bindsFor({ enabled: true, scope: "address", address: "" }, ifs).error!, /Enter/);
   assert.deepEqual(advertisable(["127.0.0.1", "192.168.1.5", "0.0.0.0"]), ["192.168.1.5"]);
+});
+
+test("a network with public addresses (campus, hotel): no silent bind to a container bridge, and the error says what to do", () => {
+  // what the laptop that could not be paired really had: Wi-Fi and Ethernet on public addresses, Tailscale, and a Docker bridge
+  const campus: Iface[] = [{ name: "lo", address: "127.0.0.1", family: 4, internal: true },
+    { name: "wlan0", address: "134.28.179.183", family: 4, internal: false }, { name: "enp0s13f0u1u4", address: "134.28.72.241", family: 4, internal: false },
+    { name: "tailscale0", address: "100.104.150.90", family: 4, internal: false }, { name: "br-9631b7d2268d", address: "172.21.0.1", family: 4, internal: false }];
+  assert.deepEqual(lanBindAddresses(campus), [], "the Docker bridge is not somewhere another device can reach us");
+  const r = bindsFor({ enabled: true, scope: "lan" }, campus);
+  assert.deepEqual(r.hosts, []);
+  assert.equal(r.error, undefined, "a note, not an error: choosing 'my local network' here must not fail the call");
+  assert.match(r.note!, /public address/);
+  assert.match(r.note!, /wlan0: 134\.28\.179\.183/, "names the interface to pick");
+  assert.deepEqual(publicLanInterfaces(campus).map((i) => i.name), ["wlan0", "enp0s13f0u1u4"]);
+  assert.deepEqual(bindsFor({ enabled: true, scope: "address", address: "134.28.179.183" }, campus).hosts, ["134.28.179.183"], "picking it explicitly still works");
 });
 test("addresses: validated, deduplicated, best first, last good remembered", () => {
   assert.equal(cleanAddrs([{ kind: "tcp", host: "nas.example.org", port: 43210, src: "manual" }, { kind: "tcp", host: "a b", port: 1 }, { kind: "tcp", host: "x", port: 70000 }, { kind: "relay", url: "wss://r.example/relay/" }, { kind: "relay", url: "http://nope" }, "junk"]).length, 2);

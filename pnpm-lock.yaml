@@ -54,6 +54,9 @@ importers:
       '@signalapp/libsignal-client':
         specifier: 0.106.2
         version: 0.106.2
+      hyperdht:
+        specifier: 6.35.0
+        version: 6.35.0(bare-buffer@3.7.2)(bare-url@2.5.7)
     devDependencies:
       '@unimsg/host':
         specifier: workspace:*

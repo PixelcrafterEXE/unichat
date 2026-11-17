@@ -9,6 +9,8 @@ files:
 # Native add-ons must live outside app.asar so dlopen() can load the .node prebuilds.
 asarUnpack:
   - "**/node_modules/@signalapp/libsignal-client/**"
+  - "**/node_modules/udx-native/**"
+  - "**/node_modules/sodium-native/**"
 npmRebuild: false   # libsignal ships N-API prebuilds; do not recompile against Electron headers
 linux:
   target: [AppImage, deb, pacman]

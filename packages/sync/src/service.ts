@@ -207,7 +207,7 @@ export class SyncService {
     if (this.o.bindHost) return [this.o.bindHost];
     const setting: ListenSetting = this.listen.enabled ? this.listen : { enabled: true, scope: "lan" }; // pairing alone: the local network, for as long as the code is open
     if (this.o.wildcardLan && setting.scope === "lan") { this.listenErr = ""; return ["0.0.0.0"]; } // see SyncOptions.wildcardLan; inbound sockets are filtered in acceptTcp()
-    const r = bindsFor(setting, interfaces()); this.listenErr = r.error ?? (r.hosts.length ? "" : "No local network address found: connect to Wi-Fi or Ethernet, or choose a specific address.");
+    const r = bindsFor(setting, interfaces()); this.listenErr = r.error ?? r.note ?? (r.hosts.length ? "" : "No local network address found: connect to Wi-Fi or Ethernet, or choose a specific address.");
     return r.hosts;
   }
   /** Make the open sockets match what is wanted right now. Serialised: callers may fire it at any time. */
@@ -378,6 +378,8 @@ export class SyncService {
   private async setListen(p: any) {
     const scope = ["loopback", "lan", "address"].includes(p.scope) ? p.scope : this.listen.scope;
     const next: ListenSetting = { enabled: p.enabled === undefined ? this.listen.enabled : !!p.enabled, scope, ...(scope === "address" ? { address: String(p.address ?? this.listen.address ?? "").trim() } : {}) };
+    // Only a setting that cannot work at all is refused (`error`). A `note` -- "your network has no private address" -- is a
+    // status, not a reason to fail the call: throwing it turned choosing "my local network" into an error dialog.
     if (next.enabled && !this.o.bindHost) { const r = bindsFor(next, interfaces()); if (r.error) throw new Error(r.error); }
     this.listen = next; this.ledger.kvSet("listen", next);
     await this.syncListeners(); return { ...next };
@@ -495,7 +497,10 @@ export class SyncService {
     const pr: Pairing = { code, psk: pairingPsk(code), expiresAt: this.now() + ttl, failures: 0, nearbyPrompts: 0, keepListening: !!p?.keepListening, timer: setTimeout(() => this.stopPairing("expired"), ttl) };
     pr.timer.unref?.(); this.pairing = pr;
     await this.activate(); await this.syncListeners();
-    if (!this.servers.size) { this.stopPairing("no network"); throw new Error(this.listenErr || "This device has no network address to listen on."); }
+    // No TCP listener is not the end of pairing: while a code is shown this device also waits on the code's DHT rendezvous
+    // (startPairDht below), which is exactly how two devices on networks that cannot reach each other pair. Refusing here left
+    // a laptop whose network has no private address -- a campus Wi-Fi, say -- unable to even show a code.
+    if (!this.servers.size && !this.dhtSet.enabled) { this.stopPairing("no network"); throw new Error(this.listenErr || "This device has no network address to listen on."); }
     this.advertise(); this.changedDevices();
     this.startPairDht(pr);
     return { code, expiresAt: pr.expiresAt, maxFailures: this.o.maxPairingGlobal ?? 20, ...this.pairingLink(pr) };

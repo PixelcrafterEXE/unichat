@@ -10,7 +10,7 @@ import createTestnet from "hyperdht/testnet";
 import DHT from "hyperdht";
 import { cleanBootstrap, cleanDhtSetting, dhtSeed, DhtTransport, DhtUnavailable } from "./dht.js";
 import { cleanAddrs, mergeMembership, newGroup, newIdentity, type Dev } from "./group.js";
-import { orderAddrs, raceConnect } from "./addrs.js";
+import { orderAddrs, raceConnect, setInterfaceOverride } from "./addrs.js";
 import { msg, node, pairUp, until, type Node } from "./testkit.js";
 
 const testnets: any[] = [];
@@ -208,6 +208,24 @@ test("an address announced over a live DHT session moves the session to the dire
   await until(() => sess(A, B)?.via === "dht" && sess(B, A)?.via === "dht", "fell back to the DHT", 30_000);
   assert.equal((A.svc as any).sessions.size, 1);
   for (const n of [A, B]) await n.stop();
+});
+
+test("a network with no private address (campus Wi-Fi): nothing is bound, choosing 'local network' is no error, and a code can still be shown", async () => {
+  const t = await net(), A = await node("campus", "memory", undefined, undefined, undefined, { opts: { bindHost: undefined } });
+  await enable(t, A);
+  // what the machine that could not be paired had: public addresses on the real interfaces, and a Docker bridge
+  setInterfaceOverride([{ name: "wlan0", address: "134.28.179.183", family: 4, internal: false, netmask: "255.255.240.0" },
+    { name: "br-9631b7d2268d", address: "172.21.0.1", family: 4, internal: false, netmask: "255.255.0.0" }]);
+  try {
+    const st = await A.call("syncSetListen", { enabled: true, scope: "lan" }); // used to throw the explanation at the caller
+    assert.equal(st.scope, "lan");
+    const p = await A.call("syncStartPairing", { deviceName: "campus" }); // used to fail with "no network address to listen on"
+    assert.ok(p.code, "a code is shown anyway: the DHT rendezvous carries the pairing");
+    const s0 = await A.call("syncStatus"); // the listener is only evaluated once there is a group, i.e. from here on
+    assert.equal(s0.listening, false, "a public address is never opened by itself, and the Docker bridge is not the local network");
+    assert.match(s0.listen.error ?? "", /public address/, "the reason is shown next to the setting");
+    await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "pairing DHT ready without any listener");
+  } finally { setInterfaceOverride(undefined); await A.stop(); }
 });
 
 test("pairing across networks: with no address at all, the code alone finds the other device through the DHT and the full ceremony (digits, approval, confirmation) works", async () => {

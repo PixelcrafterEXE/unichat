@@ -4,7 +4,8 @@
   "type": "module",
   "main": "out/main/main.js",
   "dependencies": {
-    "@signalapp/libsignal-client": "0.106.2"
+    "@signalapp/libsignal-client": "0.106.2",
+    "hyperdht": "6.35.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",
