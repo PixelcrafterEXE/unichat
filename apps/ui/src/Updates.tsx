@@ -1,6 +1,7 @@
 // Updates: Settings > About > Updates, and the small "Update 0.1.N available" banner. The backend (packages/core/src/updater.ts) does the work.
 import { useCallback, useEffect, useState } from "react";
 import { core, fmtBytes, fmtDateTime, fmtDate } from "./util";
+import { settingsNav } from "./StatusDots";
 import "./updates.css";
 
 export const APP_VERSION: string = typeof __UNICHAT_VERSION__ === "string" ? __UNICHAT_VERSION__ : "dev";
@@ -124,7 +125,7 @@ export function UpdateBanner({ onOpen }: { onOpen: () => void }) {
   return (
     <div id="upd-banner" className="updbanner" role="status">
       <span>Update {v} available{st.state === "downloading" ? " · downloading…" : st.state === "ready" ? " · ready" : ""}{st.latest.asset ? <small> ({fmtBytes(st.latest.asset.size)})</small> : null}</span>
-      <button id="upd-banner-go" onClick={() => { updatesNav.pending = true; onOpen(); }}>Update</button>
+      <button id="upd-banner-go" onClick={() => { settingsNav.section = "updates"; updatesNav.pending = true; onOpen(); }}>Update</button>
       <button id="upd-banner-later" className="secondary" onClick={() => { try { localStorage.setItem(LATER_KEY, v); } catch { /* private mode */ } setLater(v); }}>Later</button>
     </div>
   );
