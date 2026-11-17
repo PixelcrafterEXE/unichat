@@ -211,6 +211,7 @@ export function Pairing({ p, onStop, onCopy, copied }: { p: any; onStop: () => v
           <small className="sub">{left > 0 ? `Valid for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Expired"}</small>
           <div className="btns"><button className="secondary" id="sync-copy" onClick={() => onCopy(p.link)}>{copied ? "Copied" : "Copy link"}</button></div></div></div>
       <p className="sub" id="sync-waiting"><span className="spin" /> Waiting for the other device…</p>
+      {p.failures > 0 && <p className="err" id="sync-pair-wrong">A device tried to pair with a code that is not this one ({p.failures} attempt{p.failures === 1 ? "" : "s"}). If that was your other device, it is reading an old code: let it scan or type the code above as it is now.</p>}
       {p.dht && p.dht !== "off" && <p className="sub" id="sync-pair-net">{p.dht === "ready" ? "Also reachable through the internet: the other device can be on a different network (university, mobile data)." : p.dht === "starting" ? "Opening the internet route for devices on other networks…" : "The internet route is not available here; only devices on the same Wi-Fi can pair."}</p>}
       <div className="btns"><button className="secondary" id="sync-stop" onClick={onStop}>Cancel</button></div></div>);
 }

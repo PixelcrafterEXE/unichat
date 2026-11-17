@@ -600,7 +600,7 @@ export class SyncService {
         // What the dial actually did, in the log of the device that tried: "the code was not accepted" and "nobody answered"
         // look the same from the outside, and without these numbers a pairing complaint cannot be told apart from a typo.
         const st = e.stats;
-        console.warn(`[sync] pairing failed: reason=${e.reason} candidates=${st.tried} answered=${st.connected} refusedTheCode=${st.rejected} connectionRefused=${st.refused} timedOut=${st.timedOut}${pin ? " link=yes" : ""}${nearby ? " nearby=yes" : ""}`);
+        console.warn(`[sync] pairing failed: reason=${e.reason} candidates=${st.tried} answered=${st.connected} refusedTheCode=${st.rejected} connectionRefused=${st.refused} timedOut=${st.timedOut}${st.rejectedBy ? ` refusedBy=${st.rejectedBy}` : ""}${pin ? " link=yes" : ""}${nearby ? " nearby=yes" : ""}`);
         const msg = nearby && e.reason !== "other" ? "Couldn't reach that device. Make sure both are on the same Wi-Fi and it still shows \"Add a device\"." : e.reason === "code" ? "The pairing code was not accepted (wrong code, expired, or too many attempts)." + (pin ? " If you scanned a QR code, check that it is the one on the other device's screen." : "")
           : e.reason === "unreachable" ? "Couldn't reach a device showing that code. Both the local network and the internet (HyperDHT hole punching) were tried. If the other device is on a very restrictive network (symmetric NAT, UDP blocked), try the other direction: show a code on this device instead and type it there." : e.message;
         this.joinResult = { state: "failed", error: msg, reason: e.reason }; this.changedDevices(); throw new Error(msg);
@@ -752,8 +752,14 @@ export class SyncService {
       if (viaRelay) return;
       if ((mode === "pair" || mode === "nearby") && this.pairing && !(e instanceof ChannelError && (e.code === "closed" || e.soft))) { // a wrong code (or garbage): counts against THIS source, the pairing stays open for others
         this.srcFail(ip);
+        // The other device is told "that code was not accepted"; without this line the device that SHOWS the code stays
+        // silent, and the two sides cannot be told apart: a code that does not match, or one nobody ever brought here.
+        console.warn(`[sync] refused a pairing attempt from ${ip}: ${e instanceof ChannelError ? e.code : "error"} (this device is showing a code; ${this.pairing.failures + 1} attempt(s) did not match it)`);
         if (++this.pairing.failures >= (this.o.maxPairingGlobal ?? 20)) this.stopPairing("too many wrong attempts"); else this.changedDevices();
-      } else if (!(e instanceof ChannelError && ((e.code === "closed" && !mode) || e.soft))) this.srcFail(ip, 6); // soft = a known kind of mismatch (old key, revoked member), not a guessing attempt
+      } else if (!(e instanceof ChannelError && ((e.code === "closed" && !mode) || e.soft))) {
+        if (mode === "pair" || mode === "nearby") console.warn(`[sync] a pairing attempt arrived from ${ip} while no code is open here (it expired, was cancelled, or a new one was started)`);
+        this.srcFail(ip, 6); // soft = a known kind of mismatch (old key, revoked member), not a guessing attempt
+      }
     });
   }
   /** This device's group DHT public key without starting a node (derived, see dhtSeed): pairing hands it to the other device, which has no session to learn it from yet. */
