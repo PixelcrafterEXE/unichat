@@ -37,8 +37,12 @@ export const lanBindAddresses = (ifs = interfaces()) => ifs.filter((i) => i.fami
 export const publicLanInterfaces = (ifs = interfaces()) => ifs.filter((i) => i.family === 4 && !i.internal && !RFC1918(i.address) && !CGNAT(i.address) && !VIRTUAL_IF.test(i.name));
 /** Addresses worth telling a peer about for the given bind set. */
 export const advertisable = (binds: string[]) => binds.filter((h) => h !== "0.0.0.0" && h !== "::" && !/^127\./.test(h) && h !== "::1");
-/** The addresses the listener should be bound to for a setting, or an error text. */
-export function bindsFor(s: ListenSetting, ifs = interfaces()): { hosts: string[]; error?: string } {
+/**
+ * The addresses the listener should be bound to for a setting.
+ * `error` = the setting itself cannot be used (the caller rejects it); `note` = the setting is fine but there is nothing to
+ * bind on this network right now, which is a status to show, never a reason to refuse the call.
+ */
+export function bindsFor(s: ListenSetting, ifs = interfaces()): { hosts: string[]; error?: string; note?: string } {
   if (s.scope === "loopback") return { hosts: ["127.0.0.1"] };
   if (s.scope === "lan") {
     const hosts = lanBindAddresses(ifs);
@@ -46,7 +50,7 @@ export function bindsFor(s: ListenSetting, ifs = interfaces()): { hosts: string[
     // Not every local network is an RFC1918 one: universities and some ISPs hand out public addresses. Opening a port there is
     // the user's call (see "Exposure"), so say what is going on instead of listening on nothing and failing every pairing.
     const pub = publicLanInterfaces(ifs);
-    if (pub.length) return { hosts: [], error: `This network gives this device a public address (${pub.map((i) => `${i.name}: ${i.address}`).join(", ")}), so UniChat does not open a port on it by itself. Choose "One specific address" and pick that address to let your other devices reach this one, or use a VPN address such as Tailscale's.` };
+    if (pub.length) return { hosts: [], note: `This network gives this device a public address (${pub.map((i) => `${i.name}: ${i.address}`).join(", ")}), so UniChat does not open a port on it by itself. Choose "One specific address" and pick that address to let your other devices reach this one, or use a VPN address such as Tailscale's.` };
     return { hosts: [] };
   }
   const a = (s.address ?? "").trim().replace(/^\[|\]$/g, "");

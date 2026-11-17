@@ -32,8 +32,9 @@ test("a network with public addresses (campus, hotel): no silent bind to a conta
   assert.deepEqual(lanBindAddresses(campus), [], "the Docker bridge is not somewhere another device can reach us");
   const r = bindsFor({ enabled: true, scope: "lan" }, campus);
   assert.deepEqual(r.hosts, []);
-  assert.match(r.error!, /public address/);
-  assert.match(r.error!, /wlan0: 134\.28\.179\.183/, "names the interface to pick");
+  assert.equal(r.error, undefined, "a note, not an error: choosing 'my local network' here must not fail the call");
+  assert.match(r.note!, /public address/);
+  assert.match(r.note!, /wlan0: 134\.28\.179\.183/, "names the interface to pick");
   assert.deepEqual(publicLanInterfaces(campus).map((i) => i.name), ["wlan0", "enp0s13f0u1u4"]);
   assert.deepEqual(bindsFor({ enabled: true, scope: "address", address: "134.28.179.183" }, campus).hosts, ["134.28.179.183"], "picking it explicitly still works");
 });
