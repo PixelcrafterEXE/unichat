@@ -23,7 +23,7 @@
     "dist:win": "electron-vite build && electron-builder --win",
     "start": "electron-vite preview",
     "typecheck": "tsc -p .",
-    "test": "tsx --test src/dialogs.test.ts src/updater.test.ts"
+    "test": "tsx --test src/autostart.test.ts src/dialogs.test.ts src/settings.test.ts src/updater.test.ts"
   },
   "description": "UniChat desktop app (Electron)",
   "author": "UniChat",
