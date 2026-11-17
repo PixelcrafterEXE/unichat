@@ -20,7 +20,16 @@ export default [
     await t.eq("notification uses the sender and chat tag", `[window.__notes[0]?.[0], window.__notes[0]?.[1]]`, ["Chris", "wa-1:a24"]);
     await t.eq("unread of a plain chat counts up", unread, "3");
     await t.openRow("A24");
-    await t.not("opening clears unread", `__e2e.row('A24').querySelector('.unread')`);
+    await t.not("opening clears unread", `__e2e.row('A24')?.querySelector('.unread')`);
+    await t.ok("and takes the notification off the system shade", `window.__closed.includes('wa-1:a24')`);
+  }, { init: NOTIFY_INIT }),
+
+  test("a chat read somewhere else (phone, other device) takes its notification down too", async (t) => {
+    await t.open("", { settle: true });
+    await t.ev(`window.__notes.length=0; window.__closed.length=0; globalThis.__mockInject('wa-1:a24','Chris','ping')`);
+    await t.eq("notification shown", `window.__notes.length`, 1);
+    await t.ev(`globalThis.__mockSetChat('wa-1:a24',{unread:0})`); // what a read receipt from another device looks like here
+    await t.ok("the notification is closed without opening the chat", `window.__closed.includes('wa-1:a24')`);
   }, { init: NOTIFY_INIT }),
 
   test("mute removes the unread colour and silences notifications", async (t) => {

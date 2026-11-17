@@ -225,6 +225,14 @@ export default function App() {
   const resolvedRef = useRef(new Map<string, string>()); // provisional chat id -> real chat id
   const liveNotes = useRef(new Map<string, Notification>()); // shown desktop notifications by chat: dismissed again once that chat is opened
   useEffect(() => { const seen = () => { if (chatId && document.hasFocus()) { liveNotes.current.get(chatId)?.close(); liveNotes.current.delete(chatId); } }; seen(); addEventListener("focus", seen); return () => removeEventListener("focus", seen); }, [chatId]);
+  // A notification whose chat is not unread any more has been read: here, through "Mark as read", or on another device (sync).
+  // Leaving it standing is what made them pile up; the list is the authority, so this covers every way a chat can become read.
+  useEffect(() => {
+    for (const [id, note] of [...liveNotes.current]) {
+      const c = chats.find((x) => x.id === id);
+      if (c && !c.unread && !c.unreadMark) { note.close(); liveNotes.current.delete(id); }
+    }
+  }, [chats]);
   const listReadyRef = useMemoRef(listReady); // no notification before the chat list (and with it the mute / archive state) has loaded
   const chatsRef = useMemoRef(chats), settingsRef = useMemoRef(settings), mutedRef = useMemoRef(quiet), openRef = useMemoRef(chatId);
 

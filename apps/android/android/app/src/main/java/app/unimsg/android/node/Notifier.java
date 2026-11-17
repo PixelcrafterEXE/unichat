@@ -119,6 +119,20 @@ final class Notifier {
         NotificationManagerCompat.from(c).notify(tag, MESSAGE_ID, b.build());
     }
 
+    /** The chat was read: take its notification off the shade (tag = chat id, or "hidden" when the content is hidden). */
+    static void clearChat(Context c, String chatId) {
+        if (chatId == null || chatId.isEmpty()) return;
+        NotificationManagerCompat m = NotificationManagerCompat.from(c);
+        m.cancel(chatId, MESSAGE_ID);
+        if ("hidden".equals(new NativePrefs(c).notifyContent())) m.cancel("hidden", MESSAGE_ID); // one shared notification, no chat identity
+    }
+
+    /**
+     * The message notification that carries no chat id ("hidden" content mode). Never cancelAll(): that would take the
+     * foreground-service notification with it, and the service must keep one.
+     */
+    static void clearMessages(Context c) { NotificationManagerCompat.from(c).cancel("hidden", MESSAGE_ID); }
+
     /** Alert shown when the system stopped/refused our foreground service (timeout, boot restriction). Tap opens the app, which can always restart it. */
     static void showReconnectNeeded(Context c, String text) {
         if (Build.VERSION.SDK_INT >= 33 && c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;

@@ -3,7 +3,7 @@
 import type { NotifyContent } from "./bridge-protocol.js";
 
 interface Msg { id: string; chatId: string; sender?: string; text?: string; fromMe?: boolean; historical?: boolean; time?: string; deleted?: boolean; system?: unknown; attachments?: { kind?: string }[]; location?: unknown; poll?: unknown }
-interface ChatInfo { id: string; name?: string; kind?: string; muted?: boolean; archived?: boolean; spaceId?: string }
+interface ChatInfo { id: string; name?: string; kind?: string; muted?: boolean; archived?: boolean; spaceId?: string; unread?: number }
 interface SpaceInfo { id: string; muted?: boolean }
 export interface Snapshot { chats?: ChatInfo[]; spaces?: SpaceInfo[] }
 
@@ -26,6 +26,27 @@ export function buildNotification(m: Msg, snap: Snapshot | undefined, mode: Noti
   const title = mode === "hidden" ? "UniChat" : (chat?.name || m.sender || "New message");
   const body = mode === "hidden" ? "New message" : mode === "sender" ? "New message" : group && m.sender ? `${m.sender}: ${summarize(m)}` : summarize(m);
   return { chatId: m.chatId, messageId: m.id, title, body };
+}
+
+/**
+ * Which posted notifications a chat list makes obsolete. A notification stays on the phone until it is tapped, so a chat read
+ * anywhere else -- in the app, by the "Mark as read" action, or on another device through sync -- used to leave it standing.
+ * `posted` records what was shown, `readNow` answers with the chats that are no longer unread (and forgets them).
+ */
+export class PostedNotifications {
+  private readonly open = new Set<string>();
+  posted(chatId: string) { if (chatId) this.open.add(chatId); }
+  /** The chats whose notification can go: no longer unread, or gone from the list entirely. */
+  readNow(snap: Snapshot | undefined): string[] {
+    if (!this.open.size || !snap?.chats) return [];
+    const unread = new Map(snap.chats.map((c) => [c.id, c.unread ?? 0]));
+    const done = [...this.open].filter((id) => !unread.get(id));
+    for (const id of done) this.open.delete(id);
+    return done;
+  }
+  /** The UI came to the foreground / the backend stops: everything shown so far is the user's problem no more. */
+  clear(): string[] { const all = [...this.open]; this.open.clear(); return all; }
+  get size() { return this.open.size; }
 }
 
 /** Wraps an (expensive) snapshot fetch so notifications never trigger more than one per `ttlMs`. */

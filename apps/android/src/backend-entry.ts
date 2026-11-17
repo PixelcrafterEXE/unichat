@@ -17,7 +17,7 @@ import "./libsignal-modules.js";
 import { startBackend, backendReady } from "@unimsg/host";
 import { prepareSqlite, flushSqlite } from "./sqlite-shim.js";
 import { LineReader, encode, PROTOCOL_VERSION, type Frame, type NotifyContent, type Request } from "./bridge-protocol.js";
-import { buildNotification, cachedSnapshot, withAvatar, type Snapshot } from "./notify.js";
+import { buildNotification, cachedSnapshot, PostedNotifications, withAvatar, type Snapshot } from "./notify.js";
 import { WarmPause, type HostConditions } from "./warm-pause.js";
 
 declare const __UNICHAT_VERSION__: string; // esbuild define (scripts/build-backend-bundle.mjs)
@@ -46,15 +46,26 @@ let uiForeground = true, notifyContent: NotifyContent = "full", keepAlive = fals
 const send = (f: Frame) => { if (client && !client.destroyed) client.write(encode(f)); };
 const avatarCache = new Map<string, { at: number; v?: string }>();
 const snapshot = cachedSnapshot(() => hub.call("snapshot", {}) as Promise<Snapshot>);
+const posted = new PostedNotifications(); // what is on the phone's notification shade right now
+
+/** A chat that is no longer unread has been read somewhere: take its notification down (fresh snapshot, the cached one may predate the read). */
+function clearReadNotifications() {
+  if (!posted.size) return;
+  (hub.call("snapshot", {}) as Promise<Snapshot>).then((snap) => {
+    const done = posted.readNow(snap);
+    if (done.length) send({ ctl: "notify-clear", chatIds: done });
+  }).catch(() => {});
+}
 
 hub.subscribe((event, data: any) => {
   send({ event, data });
   if (event === "message" && !uiForeground) {
     snapshot().then((snap) => {
       const n = buildNotification(data, snap, notifyContent);
-      if (n) return withAvatar(n, notifyContent, (id) => hub.call("avatar", { kind: "chat", id }) as Promise<{ dataBase64?: string; mime?: string } | null>, avatarCache).then((m) => send({ ctl: "notify", ...m }));
+      if (n) return withAvatar(n, notifyContent, (id) => hub.call("avatar", { kind: "chat", id }) as Promise<{ dataBase64?: string; mime?: string } | null>, avatarCache).then((m) => { posted.posted(m.chatId); send({ ctl: "notify", ...m }); });
     }).catch(() => {});
   }
+  if (event === "chats-changed") clearReadNotifications(); // read here, by the notification action, or on another device through sync
   if (event === "accounts-changed" || event === "account" || event === "sync-devices") reportState();
   if (event === "error") console.warn("[unimsg] error", JSON.stringify({ account: data?.id ?? data?.accountId, code: data?.code, message: data?.message, fatal: data?.fatal }));
   if (event === "account") console.log("[unimsg] account", data?.id, data?.state, data?.detail ?? "");
@@ -83,7 +94,11 @@ function warmFrom(p: Partial<HostConditions>) {
 async function control(method: string, p: any): Promise<unknown> {
   switch (method) {
     case "$ping": return { pong: true, node: process.version, pid: process.pid, uptime: process.uptime(), ready: initDone };
-    case "$foreground": uiForeground = !!p?.value; return {};
+    case "$foreground": {
+      uiForeground = !!p?.value;
+      if (uiForeground) { const all = posted.clear(); if (all.length) send({ ctl: "notify-clear", chatIds: all }); } // the user is in the app now
+      return {};
+    }
     case "$config":
       if (["full", "sender", "hidden"].includes(p?.notifyContent)) notifyContent = p.notifyContent;
       if (typeof p?.keepAlive === "boolean") keepAlive = p.keepAlive; // informational here; the native side acts on it

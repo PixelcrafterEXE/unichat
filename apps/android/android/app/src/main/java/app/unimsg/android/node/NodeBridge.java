@@ -513,6 +513,14 @@ public final class NodeBridge {
                     if (!uiForeground && app != null)
                         Notifier.showMessage(app, o.optString("chatId"), o.optString("messageId"), o.optString("title"), o.optString("body"), notifyContent, o.optString("avatar", null));
                     break;
+                case "notify-clear": {
+                    // The chats were read (here, through the notification action, or on another device): their notifications go away.
+                    if (app == null) break;
+                    JSONArray ids = o.optJSONArray("chatIds");
+                    if (ids == null || ids.length() == 0) { Notifier.clearMessages(app); break; }
+                    for (int i = 0; i < ids.length(); i++) Notifier.clearChat(app, ids.optString(i));
+                    break;
+                }
                 case "state":
                     if (prefs != null) { prefs.setAccountCount(o.optInt("accounts", 0)); prefs.setSyncGroup(o.optBoolean("sync", false)); }
                     if (app != null) NodeService.refreshNotification(app);
