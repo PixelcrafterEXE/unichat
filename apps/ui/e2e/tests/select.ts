@@ -3,7 +3,7 @@ import { test } from "../lib/test.ts";
 import { btn, clickMod, dragAt, look, mergeAnna, rowEl, spaceEl } from "../lib/ui.ts";
 
 const DEV = "dc-1:g1";
-// list order in UniChat Dev: welcome, rules | Text Channels: dev-talk, general | Projects: bugs, roadmap
+// list order in UniChat Dev (newest first inside each category): welcome, rules | Text Channels: general, dev-talk | Projects: bugs, roadmap
 const id = (n: string) => `dc-1:${n}`;
 const selected = `[...document.querySelectorAll('.chats li.selected')].map(e=>e.dataset.chat.split(':')[1]).join()`;
 
@@ -15,12 +15,13 @@ export default [
     await t.click('.chats li[data-chat="dc-1:rules"]');
     await t.not("a plain click selects nothing", `document.querySelector('.chats li.selected')`);
     await t.ok("…and opens the chat", `document.querySelector('main header .titlebtn')?.textContent.includes('rules')`);
-    await clickMod(t, rowEl(id("dev-talk")), { shift: true });
-    await t.eq("shift+click selects the range from the last clicked chat", selected, "rules,dev-talk");
+    // "Text Channels" holds general and dev-talk, newest first, so the row after `rules` (across the category head) is general
+    await clickMod(t, rowEl(id("general")), { shift: true });
+    await t.eq("shift+click selects the range from the last clicked chat", selected, "rules,general");
     await t.eq("selection bar counts them", `document.querySelector('.selbar b').textContent`, "2 selected");
     await clickMod(t, rowEl(id("roadmap")), { ctrl: true });
-    await t.eq("ctrl+click adds a single chat", selected, "rules,dev-talk,roadmap");
-    await clickMod(t, rowEl(id("dev-talk")), { ctrl: true });
+    await t.eq("ctrl+click adds a single chat", selected, "rules,general,roadmap");
+    await clickMod(t, rowEl(id("general")), { ctrl: true });
     await t.eq("ctrl+click again removes it", selected, "rules,roadmap");
     await look(t, "select-bar");
     await t.ok("selection bar actions", `['Move to folder','Archive','Mute'].every(x=>document.querySelector('.selbar').textContent.includes(x)) && !!document.querySelector('.selbar [aria-label="Clear selection"]')`);
