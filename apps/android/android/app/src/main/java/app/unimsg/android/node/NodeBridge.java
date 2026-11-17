@@ -224,24 +224,91 @@ public final class NodeBridge {
     }
 
     /**
-     * Hands a downloaded update to the system package installer. Only files the updater wrote (<filesDir>/unimsg-data/updates/*.apk, SHA-256
-     * already verified by the backend) are accepted; the system itself refuses an APK not signed with this app's key.
-     * Without the "install unknown apps" permission the settings page for this app opens instead and {needsPermission:true} is returned.
+     * Where the backend's updater writes the verified APK, relative to filesDir. The Hub nests its own data directory one
+     * level deeper than UNIMSG_DATA (startBackend does `new Hub(join(dataDir, "accounts"), ...)`, packages/host/src/index.ts)
+     * and the updater uses the Hub's directory, so the file lands in unimsg-data/accounts/updates - NOT in unimsg-data/updates.
+     * Must stay in sync with the `unimsg_updates` entry of res/xml/file_paths.xml, or FileProvider refuses to share the file.
+     */
+    private static final String UPDATES_DIR = "unimsg-data/accounts/updates";
+
+    /**
+     * Hands a downloaded update to the system package installer. Only files the updater wrote (UPDATES_DIR/*.apk, SHA-256
+     * already verified by the backend) are accepted. Without the "install unknown apps" permission the settings page for this
+     * app opens instead and {needsPermission:true} is returned.
+     * Every refusal comes back as {started:false, error:"<sentence>"}: the UI shows it. Nothing here may end without an answer -
+     * a dialog that just closes is what issue #91 was about.
      */
     private static JSONObject installApk(Context c, String path) throws Exception {
-        java.io.File dir = new java.io.File(new java.io.File(c.getFilesDir(), "unimsg-data"), "updates").getCanonicalFile();
-        java.io.File f = new java.io.File(path).getCanonicalFile();
-        if (!f.getPath().startsWith(dir.getPath() + java.io.File.separator) || !f.getName().endsWith(".apk") || !f.isFile())
-            return new JSONObject().put("started", false).put("error", "This is not a downloaded update file.");
+        java.io.File dir, f;
+        try { dir = new java.io.File(c.getFilesDir(), UPDATES_DIR).getCanonicalFile(); f = new java.io.File(path).getCanonicalFile(); }
+        catch (IOException e) { Log.w(TAG, "cannot resolve " + path, e); return fail("The downloaded update file cannot be read. Download it again."); }
+        if (!f.getPath().startsWith(dir.getPath() + java.io.File.separator) || !f.getName().endsWith(".apk") || !f.isFile()) {
+            Log.w(TAG, "refusing to install " + f.getPath() + ": not an APK below " + dir.getPath());
+            return fail("The downloaded update is not where the app expects it, so it was not installed. Please report this.");
+        }
         if (!canInstallPackages(c)) {
-            c.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + c.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            try { c.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + c.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
+            catch (Exception e) { Log.w(TAG, "no unknown-sources settings screen", e); return fail("Android does not allow UniChat to install apps, and this phone has no screen to change that. Install the downloaded file with a file manager."); }
             return new JSONObject().put("started", false).put("needsPermission", true);
         }
-        Uri uri = androidx.core.content.FileProvider.getUriForFile(c, c.getPackageName() + ".fileprovider", f);
+        String conflict = signingConflict(c, f);
+        if (conflict != null) return fail(conflict);
+        Uri uri;
+        try { uri = androidx.core.content.FileProvider.getUriForFile(c, c.getPackageName() + ".fileprovider", f); }
+        catch (IllegalArgumentException e) { // the folder is not in file_paths.xml: nothing can be shared with the installer
+            Log.w(TAG, "FileProvider has no root for " + f.getPath(), e);
+            return fail("This build cannot pass the update to the installer. Please report this.");
+        }
         Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-        c.startActivity(view);
+        // From the activity while it is on screen: an activity start from an application context is dropped SILENTLY once the
+        // app counts as backgrounded (Android 10+), which looks exactly like "the dialog closed and nothing happened".
+        android.app.Activity a = MainActivity.onScreen();
+        try { if (a != null) a.startActivity(view); else c.startActivity(view); }
+        catch (Exception e) {
+            Log.w(TAG, "no activity for the install intent", e);
+            return fail("This phone has nothing that can install app files: " + e.getClass().getSimpleName() + ".");
+        }
         return new JSONObject().put("started", true);
+    }
+
+    private static JSONObject fail(String message) throws Exception { return new JSONObject().put("started", false).put("error", message); }
+
+    /**
+     * The sentence to show when this APK cannot replace the installed app, or null when it can (or when we cannot tell).
+     * Android refuses an update signed with another key ("a package with the same id already exists") and reports nothing back
+     * to the app that handed it over, so the mismatch is detected here (issue #92: a CI APK over a local `pnpm run debug` build).
+     * A check that itself fails must never block an install, so every problem means "cannot tell".
+     */
+    private static String signingConflict(Context c, java.io.File apk) {
+        try {
+            android.content.pm.PackageManager pm = c.getPackageManager();
+            int flag = Build.VERSION.SDK_INT >= 28 ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES : android.content.pm.PackageManager.GET_SIGNATURES;
+            android.content.pm.PackageInfo now = pm.getPackageInfo(c.getPackageName(), flag);
+            android.content.pm.PackageInfo next = pm.getPackageArchiveInfo(apk.getPath(), flag);
+            if (next == null || !c.getPackageName().equals(next.packageName)) return null;
+            Set<String> mine = certHashes(now), theirs = certHashes(next);
+            if (mine.isEmpty() || theirs.isEmpty() || !java.util.Collections.disjoint(mine, theirs)) return null;
+            Log.w(TAG, "update signed with another key: installed " + mine + ", update " + theirs);
+            return "This update was signed with a different key than the installed app, so Android refuses it. Only a fresh install works, and uninstalling UniChat first would delete the app's data on this phone.";
+        } catch (Exception e) { Log.w(TAG, "signing check skipped", e); return null; }
+    }
+
+    /** SHA-256 of every signing certificate. For the installed app that is the whole history, so a rotated key still matches. */
+    private static Set<String> certHashes(android.content.pm.PackageInfo pi) throws Exception {
+        Set<String> out = new java.util.HashSet<>();
+        android.content.pm.Signature[] sigs = pi.signatures;
+        if (Build.VERSION.SDK_INT >= 28 && pi.signingInfo != null)
+            sigs = pi.signingInfo.hasMultipleSigners() ? pi.signingInfo.getApkContentsSigners() : pi.signingInfo.getSigningCertificateHistory();
+        if (sigs == null) return out;
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        for (android.content.pm.Signature s : sigs) {
+            if (s == null) continue;
+            StringBuilder b = new StringBuilder();
+            for (byte x : md.digest(s.toByteArray())) b.append(Character.forDigit((x >> 4) & 0xf, 16)).append(Character.forDigit(x & 0xf, 16));
+            out.add(b.toString());
+        }
+        return out;
     }
 
     private static boolean isIgnoringBatteryOptimizations(Context c) {
