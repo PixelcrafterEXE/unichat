@@ -99,25 +99,35 @@ export function SyncPanel() {
             <button className="secondary" onClick={() => run(() => core.call("syncConfirmCredentials", { accountId: c.accountId, accept: false }))}>Ignore</button></div></div>))}
 
       <div className="box" id="sync-add">
-        {!adding ? <><button className="primary inline big" id="sync-start" disabled={busy || st.revoked || !!st.unlinking} onClick={startAdd}>Add a device</button>
-          <p className="hint">Shows a code on this screen for your other device to scan or find.</p></>
+        {!adding ? <><h4 style={{ marginTop: 0 }}>Show QR code</h4>
+          <p className="hint">On this device. The other one scans it.</p>
+          <button className="primary inline big" id="sync-start" disabled={busy || st.revoked || !!st.unlinking} onClick={startAdd}>Show the code</button></>
           : <Pairing p={pair ?? st.pairing} copied={copied} onCopy={(l) => { navigator.clipboard?.writeText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={() => run(() => core.call("syncStopPairing"))} />}
       </div>
 
-      {!midJoin && !st.approval && <div className="box small" id="sync-join">
-        <h4>Connect to another device</h4>
-        {st.discovery?.available !== false && <div id="sync-nearby"><small className="sub">Nearby devices</small>
-          {nearby.map((d: any) => <div className="row2 nearby" key={d.instance} data-nearby={d.name}><span style={{ flex: 1 }}><b>{d.name}</b></span><button className="secondary" disabled={busy} onClick={() => joinNearby(d)}>Connect</button></div>)}
-          {!nearby.length && <p className="sub"><span className="spin" /> Looking for devices that show "Add a device"…</p>}</div>}
-        <div className="btns" style={{ marginTop: 6 }}>{typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && <button className="secondary" id="sync-scan" disabled={busy} onClick={() => setScan(true)}>Scan QR code</button>}</div>
-        {scan && <Scanner onClose={() => setScan(false)} onLink={(l) => { setScan(false); join({ link: l }); }} />}
-        <label className="sub">Or type its code<input type="text" id="sync-code" placeholder="bako-lemi-zuta-nosu" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} /></label>
-        <div className="btns"><button className="secondary" id="sync-joinbtn" disabled={busy || !code.trim()} onClick={() => join(isSyncLink(code.trim()) ? { link: code.trim() } : { code, host: host.trim() || undefined, port: port.trim() ? Number(port) : undefined })}>{busy && code ? "Looking for the other device…" : "Connect"}</button></div>
+      {!midJoin && !st.approval && <>
+        <div className="box" id="sync-join">
+          <h4 style={{ marginTop: 0 }}>Scan QR code</h4>
+          <p className="hint">Of the device that is showing one.</p>
+          {typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia
+            ? <div className="btns"><button className="primary inline big" id="sync-scan" disabled={busy} onClick={() => setScan(true)}>Scan the code</button></div>
+            : <p className="hint">This device has no camera UniChat may use. Type the code below instead.</p>}
+          {scan && <Scanner onClose={() => setScan(false)} onLink={(l) => { setScan(false); join({ link: l }); }} />}
+        </div>
+
+        <div className="box small" id="sync-bycode">
+          <h4 style={{ marginTop: 0 }}>Or pair with the code</h4>
+          <label className="sub">The code shown on the other device<input type="text" id="sync-code" placeholder="bako-lemi-zuta-nosu" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} /></label>
+          <div className="btns"><button className="secondary" id="sync-joinbtn" disabled={busy || !code.trim()} onClick={() => join(isSyncLink(code.trim()) ? { link: code.trim() } : { code, host: host.trim() || undefined, port: port.trim() ? Number(port) : undefined })}>{busy && code ? "Looking for the other device…" : "Connect"}</button></div>
+          {st.discovery?.available !== false && <div id="sync-nearby"><small className="sub">Nearby devices</small>
+            {nearby.map((d: any) => <div className="row2 nearby" key={d.instance} data-nearby={d.name}><span style={{ flex: 1 }}><b>{d.name}</b></span><button className="secondary" disabled={busy} onClick={() => joinNearby(d)}>Connect</button></div>)}
+            {!nearby.length && <p className="sub"><span className="spin" /> Looking for devices that are showing a code…</p>}</div>}
+        </div>
+
         {flip && <div className="warn" id="sync-flip"><b>Couldn't reach that device.</b> Some devices don't accept connections from others. Show a code here instead and enter it there.
-          <div className="btns"><button className="primary inline" id="sync-flip-btn" disabled={busy} onClick={startAdd}>Add a device here instead</button></div></div>}
+          <div className="btns"><button className="primary inline" id="sync-flip-btn" disabled={busy} onClick={startAdd}>Show a code here instead</button></div></div>}
         {st.joining?.state === "failed" && st.joining.reason === "code" && <p className="err" id="sync-join-badcode">A device answered but did not accept that code. Codes run out after a few minutes: check the letters, and that the other device is still showing <em>this</em> code (start a new one there if not).</p>}
-        {st.joining?.state === "failed" && !st.joining.reason && <p className="err" id="sync-join-failed">{st.joining.error}</p>}
-      </div>}
+        {st.joining?.state === "failed" && !st.joining.reason && <p className="err" id="sync-join-failed">{st.joining.error}</p>}</>}
       {err && !flip && <p className="err" id="sync-err">{err}</p>}
 
       <details id="sync-advanced" className="adv"><summary>Advanced</summary>

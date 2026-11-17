@@ -18,9 +18,12 @@ export default [
   test("simple page: Advanced is closed, no jargon in the main view, one primary button, no stray widgets next to this device", async (t) => {
     await open(t);
     await t.not("Advanced is collapsed by default", `document.querySelector('#sync-advanced').open`);
-    await t.ok("one primary action", `document.querySelectorAll('#sync-panel button.primary').length===0 || [...document.querySelectorAll('#sync-panel button.primary')].every(b=>/Add a device/.test(b.textContent))`);
+    await t.ok("the primary actions are the two ways to pair, nothing else", `document.querySelectorAll('#sync-panel button.primary').length===0 || [...document.querySelectorAll('#sync-panel button.primary')].every(b=>/Show the code|Scan the code/.test(b.textContent))`);
     await t.ok("the main view has no jargon", `!/\\b(group|listen\\w*|proxy|ledger|relay|HLC)\\b/i.test(${MAIN_TEXT})`);
-    await t.ok("'Connect to another device' is below it", `!!document.querySelector('#sync-add') && !!document.querySelector('#sync-join') && /Connect to another device/.test(document.querySelector('#sync-join').textContent)`);
+    // one device shows the code, the other scans it; typing the code is the fallback under both
+    await t.ok("show / scan / by code, in that order", `(()=>{const o=['sync-add','sync-join','sync-bycode'].map(id=>document.querySelector('#'+id)); if(o.some(e=>!e)) return false;
+      return /Show QR code/.test(o[0].textContent) && /Scan QR code/.test(o[1].textContent) && /pair with the code/i.test(o[2].textContent)
+        && o[0].compareDocumentPosition(o[1]) & Node.DOCUMENT_POSITION_FOLLOWING && o[1].compareDocumentPosition(o[2]) & Node.DOCUMENT_POSITION_FOLLOWING})()`);
     await t.click("#sync-start"); await t.waitSel("#sync-pairing");
     await t.ok("this device is listed with a name and no leftover bar/ellipse/dash", `(()=>{const r=document.querySelector('#sync-devices .devrow'); return !!r && /My laptop/.test(r.textContent) && !r.querySelector('.bar,.state')})()`);
   }),
@@ -81,8 +84,9 @@ export default [
 
   test("typing a code: wrong code gives one sentence, right code opens the confirm dialog", async (t) => {
     await open(t);
-    await t.setInput("#sync-code", "baba-baba-baba-baba"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-err");
-    await t.ok("clear error", `/not accepted/.test(document.querySelector('#sync-err').textContent)`);
+    await t.setInput("#sync-code", "baba-baba-baba-baba"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-join-badcode");
+    await t.ok("clear error", `/did not accept that code/.test(document.querySelector('#sync-join-badcode').textContent)`);
+    await t.not("and it is not repeated underneath", `document.querySelector('#sync-err')`);
     await t.setInput("#sync-code", "bako-lemi-zuta-nosu"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-confirm");
     await t.ok("it connected to the other device, no technical words", `!/firewall|TCP|port|multicast|mDNS|NAT/i.test(document.querySelector('#sync-confirm').textContent)`);
     await t.click("#sync-match"); await t.waitSel("#sync-devices .devrow", "Desktop");
@@ -112,10 +116,10 @@ export default [
     await t.click("#sync-scan-close"); await t.waitGone(`document.querySelector('#sync-scanner')`);
   }),
 
-  test("this device cannot reach the other one: one plain sentence and 'Add a device here instead'", async (t) => {
+  test("this device cannot reach the other one: one plain sentence and 'Show a code here instead'", async (t) => {
     await open(t); await t.ev(`window.__mockSyncBlockOut(true)`);
     await t.setInput("#sync-code", "bako-lemi-zuta-nosu"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-flip");
-    await t.ok("plain words, offers the other direction", `(()=>{const x=document.querySelector('#sync-flip').textContent;return /Couldn't reach that device/.test(x)&&/Add a device here instead/.test(x)&&!/firewall|TCP|port|multicast|mDNS|NAT/i.test(x)})()`);
+    await t.ok("plain words, offers the other direction", `(()=>{const x=document.querySelector('#sync-flip').textContent;return /Couldn't reach that device/.test(x)&&/Show a code here instead/.test(x)&&!/firewall|TCP|port|multicast|mDNS|NAT/i.test(x)})()`);
     await t.not("no second scary error", `document.querySelector('#sync-err')`);
     await t.click("#sync-flip-btn"); await t.waitSel("#sync-pairing");
     await t.ok("a code is shown here now", `/bako-lemi-zuta-nosu/.test(document.querySelector('#sync-code-shown').textContent) && !document.querySelector('#sync-flip')`);
