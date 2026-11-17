@@ -45,7 +45,10 @@ export function useUpdate() {
     save: (p: object) => run("updateSettings", p),
     /** desktop: replaces the app and restarts; Android: the verified file goes to the system installer */
     install: async () => {
-      const r = await run("updateInstall"); if (!r) return;
+      const manualHere = (file: string, message: string) => setManual({ file, message, command: manualCommand(st?.platform, file) });
+      const r = await run("updateInstall");
+      // The call failed (e.g. the file manager could not be opened). The verified file is still there, so say how to install it.
+      if (!r) { if (st?.installMode === "manual" && st.file) manualHere(st.file, `Version ${st.latest?.version ?? ""} is downloaded and checked.`); return; }
       if (r.action === "handoff" && r.file) {
         try {
           const x = await core.call("$installApk", { path: r.file });
@@ -58,12 +61,17 @@ export function useUpdate() {
         // the backend's message ends in "Install it with: <command>" (a .deb / pacman package needs root, so the user runs it)
         const text = r.message ?? "The update is downloaded.";
         const cut = text.indexOf("Install it with: ");
+        const file = r.file ?? st?.file ?? "";
         setMsg("");
-        setManual({ file: r.file ?? "", message: cut >= 0 ? text.slice(0, cut).trim() : text, command: cut >= 0 ? text.slice(cut + 17).trim() : (r.file ?? "") });
+        setManual({ file, message: cut >= 0 ? text.slice(0, cut).trim() : text, command: cut >= 0 ? text.slice(cut + 17).trim() : manualCommand(st?.platform, file) });
       } else setMsg(r.message ?? "The update could not be installed. Please check for updates again."); // an answer we do not know must still say something: the confirmation closing in silence was issue #91
     },
   };
 }
+
+/** A .deb / pacman package needs root, so the user runs this. Same wording as the desktop main process, and the fallback when it answers nothing. */
+export const manualCommand = (platform: string | undefined, file: string): string =>
+  `${platform === "desktop-linux-pacman" ? "sudo pacman -U" : "sudo apt install"} ${file}`;
 
 const when = (t?: number) => (t ? fmtDateTime(t, { dateStyle: "medium", timeStyle: "short" } as any) : "never");
 
@@ -95,7 +103,8 @@ export function UpdatesSection() {
         <button id="upd-check" className="secondary" disabled={busy} onClick={() => void u.check()}>Check now</button>
         {canSelf && st.state !== "ready" && st.state !== "downloading" && <button id="upd-download" className="primary inline" disabled={busy} onClick={() => void u.download()}>{st.installMode === "manual" ? `Download ${v}` : `Download & install ${v}`}</button>}
         {st?.state === "downloading" && <button className="secondary" onClick={() => void u.cancel()}>Cancel</button>}
-        {canSelf && st.state === "ready" && !confirm && <button id="upd-install" className="primary inline" onClick={() => setConfirm(true)}>{st.installMode === "manual" ? "Show the file" : "Restart to update"}</button>}
+        {canSelf && st.state === "ready" && !confirm && <button id="upd-install" className="primary inline"
+          onClick={() => (st.installMode === "manual" ? void u.install() : setConfirm(true))}>{st.installMode === "manual" ? "How to install it" : "Restart to update"}</button>}
       </div>
       {confirm && <div id="upd-confirm" className="confirm"><p><b>Update to {v}?</b> The app restarts.</p><div className="btns"><button id="upd-confirm-go" className="primary inline" onClick={() => { setConfirm(false); void u.install(); }}>Update</button><button className="secondary" onClick={() => setConfirm(false)}>Not now</button></div></div>}
       {st && st.installMode === "none" && st.available && <p className="hint">This version of UniChat is updated by whoever runs the server. Ask them to install {v}.</p>}
@@ -122,11 +131,12 @@ export function UpdateBanner({ onOpen }: { onOpen: () => void }) {
   const [later, setLater] = useState(() => { try { return localStorage.getItem(LATER_KEY) ?? ""; } catch { return ""; } });
   if (!st || !st.available || st.installMode === "none" || !st.latest || later === st.latest.version || st.state === "error" && !st.latest) return null;
   const v = st.latest.version;
+  const dismiss = () => { try { localStorage.setItem(LATER_KEY, v); } catch { /* private mode */ } setLater(v); }; // until a newer version shows up
   return (
     <div id="upd-banner" className="updbanner" role="status">
       <span>Update {v} available{st.state === "downloading" ? " · downloading…" : st.state === "ready" ? " · ready" : ""}{st.latest.asset ? <small> ({fmtBytes(st.latest.asset.size)})</small> : null}</span>
-      <button id="upd-banner-go" onClick={() => { settingsNav.section = "updates"; updatesNav.pending = true; onOpen(); }}>Update</button>
-      <button id="upd-banner-later" className="secondary" onClick={() => { try { localStorage.setItem(LATER_KEY, v); } catch { /* private mode */ } setLater(v); }}>Later</button>
+      <button id="upd-banner-go" onClick={() => { settingsNav.section = "updates"; updatesNav.pending = true; onOpen(); dismiss(); }}>Update</button>
+      <button id="upd-banner-later" className="secondary" onClick={dismiss}>Later</button>
     </div>
   );
 }

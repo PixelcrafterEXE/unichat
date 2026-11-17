@@ -16,6 +16,6 @@ export function test(name: string, fn: TestDef["fn"], opts: { timeout?: number; 
 }
 
 /** init script: records Notification calls in window.__notes and grants permission; auto-confirm() */
-export const NOTIFY_INIT = `window.__notes=[];window.Notification=function(t,o){window.__notes.push([t,(o||{}).tag,(o||{}).body])};Notification.permission='granted';Notification.requestPermission=async()=>'granted';window.confirm=()=>true;try{localStorage.setItem('unimsg.settings',JSON.stringify({notifications:true}))}catch(e){}`;
+export const NOTIFY_INIT = `window.__notes=[];window.__closed=[];window.Notification=function(t,o){var n=this;n.title=t;n.tag=(o||{}).tag;n.close=function(){if(!n.__gone){n.__gone=true;window.__closed.push(n.tag);if(typeof n.onclose==='function')n.onclose()}};window.__notes.push([t,n.tag,(o||{}).body])};Notification.permission='granted';Notification.requestPermission=async()=>'granted';window.confirm=()=>true;try{localStorage.setItem('unimsg.settings',JSON.stringify({notifications:true}))}catch(e){}`;
 /** init script: preset the UI settings stored in localStorage */
 export const settingsInit = (s: object) => `try{localStorage.setItem('unimsg.settings',JSON.stringify(${JSON.stringify(s)}))}catch(e){}`;

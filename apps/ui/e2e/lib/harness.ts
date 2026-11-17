@@ -309,6 +309,17 @@ export class Page {
     return await this.waitFor(`(()=>{const e=${expr}; if(!e) return false; e.scrollIntoView({block:'nearest'}); const r=e.getBoundingClientRect(); return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`, { desc: "touch target " + expr.slice(0, 100) });
   }
   async tap(expr: string) { const c = await this.centre(expr); await this.touch(c.x, c.y); }
+  /** One finger: down at (x,y), dragged by (dx,dy) in `steps` moves, then lifted. */
+  async swipe(x: number, y: number, dx: number, dy = 0, steps = 8) {
+    await this.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+    for (let i = 1; i <= steps; i++) {
+      await this.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: Math.round(x + (dx * i) / steps), y: Math.round(y + (dy * i) / steps) }] });
+      await sleep(16);
+    }
+    await this.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  }
+  /** Swipe starting at the centre of an element (expression). */
+  async swipeOn(expr: string, dx: number, dy = 0) { const c = await this.centre(expr); await this.swipe(c.x, c.y, dx, dy); }
   async longPress(expr: string, ms = 650) { const c = await this.centre(expr); await this.touch(c.x, c.y, ms); }
   /** set by the runner: where named screenshots go (undefined = do not take them) */
   shotDir?: string;

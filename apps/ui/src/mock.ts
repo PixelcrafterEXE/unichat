@@ -66,9 +66,10 @@ const chats: Chat[] = [
   mk("mx-1:!rust-help", "matrix", "mx-1", "help", "channel", { spaceId: "mx-1:!rust" }),
   mk("mx-1:!self-gen", "matrix", "mx-1", "chat", "channel", { spaceId: "mx-1:!self" }),
   mk("mx-1:!self-ops", "matrix", "mx-1", "ops", "channel", { spaceId: "mx-1:!self" }),
-  mk("wa-1:neigh-ann", "whatsapp", "wa-1", "Neighbours announcements", "channel", { spaceId: "wa-1:neigh", readOnly: true, preview: "Bins go out on Thursday", lastMessageAt: new Date(Date.now() - 3 * 3600_000).toISOString() }),
-  mk("mx-1:!old-gen", "matrix", "mx-1", "old-general", "channel", { spaceId: "mx-1:!old", preview: "Project archived", lastMessageAt: new Date(Date.now() - 90 * 86400_000).toISOString() }),
-  mk("wa-1:trail", "whatsapp", "wa-1", "Trail friends", "group", { preview: "Who has the map?", lastMessageAt: new Date(Date.now() - 5 * 3600_000).toISOString() }),
+  // preview and lastMessageAt come from the seeded messages below (the loop after the seeds): a chat must never preview a message it does not have
+  mk("wa-1:neigh-ann", "whatsapp", "wa-1", "Neighbours announcements", "channel", { spaceId: "wa-1:neigh", readOnly: true }),
+  mk("mx-1:!old-gen", "matrix", "mx-1", "old-general", "channel", { spaceId: "mx-1:!old" }),
+  mk("wa-1:trail", "whatsapp", "wa-1", "Trail friends", "group"),
   mk("mesh:1", "mesh", "", "Weekend crew", "group", { description: "Mesh group across WhatsApp + Matrix" }),
   // Discord server with categories (Chat.category); two channels without one stay on top
   mk("dc-1:welcome", "discord", "dc-1", "welcome", "channel", { spaceId: "dc-1:g1", description: "Start here" }),
@@ -147,14 +148,16 @@ m("wa-1:anna", "Anna Becker", "", 30, { contacts: [{ name: "Tom Hartmann", phone
   store["wa-1:anna"].push({ id, chatId: "wa-1:anna", sender: "Anna Becker", senderId: "Anna", text: "", time: ago(12), fromMe: false, attachments: [{ id: aid, kind: "voice", mime: "audio/wav", durationMs: 800, waveform: [10,25,60,90,40,70,100,55,30,45,80,35,20,65,50,15] }] }); }
 { const id = "m" + ++seq; const aid = "att" + ++seq; files.set(`${id}|${aid}`, { b64: b64("Packliste\n- Boots\n- Snacks"), mime: "text/plain", name: "packing-list.txt" });
   store["wa-1:anna"].push({ id, chatId: "wa-1:anna", sender: "Anna Becker", senderId: "Anna", text: "Packing list, see https://example.org/hike", time: ago(5), fromMe: false, attachments: [{ id: aid, kind: "file", mime: "text/plain", name: "packing-list.txt", size: 24_000 }] }); }
-{ const id = "m" + ++seq; const aid = "att" + ++seq; files.set(`${id}|${aid}`, { b64: b64("not really a video"), mime: "video/mp4", name: "funny.mp4" });
-  store["wa-1:ben"] = [...(store["wa-1:ben"] ?? []), { id, chatId: "wa-1:ben", sender: "Ben Fischer", senderId: "Ben", text: "", time: ago(620), fromMe: false, attachments: [{ id: aid, kind: "video", mime: "video/mp4", name: "funny.mp4", gif: true }] }]; }
-// Videos: a playable clip, two clips in one message (small tiles), and a QuickTime file the browser can't decode
+{ const id = "m" + ++seq; const aid = "att" + ++seq; files.set(`${id}|${aid}`, { b64: MOCK_WEBM_B64, mime: "video/webm", name: "funny.webm" }); // decodable bytes: a GIF plays inline, so the demo must not ship a blank one
+  store["wa-1:ben"] = [...(store["wa-1:ben"] ?? []), { id, chatId: "wa-1:ben", sender: "Ben Fischer", senderId: "Ben", text: "", time: ago(620), fromMe: false, attachments: [{ id: aid, kind: "video", mime: "video/webm", name: "funny.webm", gif: true }] }]; }
+// Videos: a playable clip and two clips in one message (small tiles). ?mock&badmedia=1 adds a QuickTime file the browser cannot decode
+// (the "Cannot play here" tile, see e2e/tests/video.ts); the plain demo shows only media that really plays.
 { const vid = (id: string, name: string, mime = "video/webm", data = MOCK_WEBM_B64, extra: Partial<Attachment> = {}): Attachment => { const aid = "att" + ++seq; files.set(`${id}|${aid}`, { b64: data, mime, name }); return { id: aid, kind: "video", mime, name, width: 128, height: 72, ...extra }; };
   const a = "m" + ++seq, b = "m" + ++seq, c = "m" + ++seq;
   store["wa-1:ben"].push({ id: a, chatId: "wa-1:ben", sender: "Ben Fischer", senderId: "Ben", text: "Clip from the trail", time: ago(616), fromMe: false, attachments: [vid(a, "trail.webm", "video/webm", MOCK_WEBM_B64, { durationMs: 1500 })] });
   store["wa-1:ben"].push({ id: b, chatId: "wa-1:ben", sender: "Ben Fischer", senderId: "Ben", text: "", time: ago(614), fromMe: false, attachments: [vid(b, "pair-1.webm"), vid(b, "pair-2.webm")] });
-  store["wa-1:ben"].push({ id: c, chatId: "wa-1:ben", sender: "Ben Fischer", senderId: "Ben", text: "", time: ago(612), fromMe: false, attachments: [vid(c, "IMG_0042.MOV", "video/quicktime", b64("not decodable"), { durationMs: 4000 })] }); }
+  if (typeof location !== "undefined" && new URLSearchParams(location.search).has("badmedia"))
+    store["wa-1:ben"].push({ id: c, chatId: "wa-1:ben", sender: "Ben Fischer", senderId: "Ben", text: "", time: ago(612), fromMe: false, attachments: [vid(c, "IMG_0042.MOV", "video/quicktime", b64("not decodable"), { durationMs: 4000 })] }); }
 m("wa-1:ben", "Ben Fischer", "", 610, { location: { lat: 52.5163, lng: 13.3777, name: "Walking to the station", live: true, updatedAt: new Date().toISOString(), liveUntil: new Date(Date.now() + 36e5).toISOString() } });
 m("wa-1:ben", "Ben Fischer", "Did you get my invoice?", 600); m("wa-1:a24", "Chris", "Only one of the two unread messages ever arrived", 90); m("wa-1:ben", "You", "Will pay tomorrow 👍", 580, { status: "delivered" });
 m("mx-1:@carl:matrix.org", "Carl", "Matrix bridge is up again", 90);
@@ -177,9 +180,32 @@ const ferrisMsg = m("mx-1:!rust-general", "ferris", "Async traits are finally ni
 m("mx-1:!rust-general", "dana", "Agreed, dyn-compatible ones landed too.", 110, { replyTo: { messageId: ferrisMsg.id, sender: "ferris", textPreview: "Async traits are finally nice…" }, reactions: [{ emoji: "👍", senderIds: ["a", "b", "c"] }] });
 m("mx-1:!rust-general", "carl", "+1 to what was said back then", 100, { replyTo: { messageId: "old3", sender: "ferris", textPreview: "Older message #4" } });
 m("mx-1:!rust-general", "You", "Anyone tried them with Tauri commands?", 20, { status: "delivered", editedAt: ago(19) });
+// the 12 unread of the Rust community's #general: a busy channel, and all of them after my own last message
+[["ferris", "Yes, they work with commands as long as the state is Send."], ["dana", "We ship that in production, no trouble so far."],
+ ["kit", "Careful with the lifetimes in the handler signature though."], ["ferris", "There is an example in the Tauri book, chapter 4."],
+ ["dana", "Does anyone have a crate recommendation for the JSON schema?"], ["kit", "schemars, it plays well with serde."],
+ ["ferris", "+1 for schemars."], ["dana", "Meeting notes from yesterday are in the pinned message."],
+ ["kit", "The CI image was bumped to 1.88 this morning."], ["ferris", "Nice, that fixes the sccache warning."],
+ ["dana", "Reminder: the office hours move to Thursday this week."], ["kit", "See you all there."]]
+  .forEach(([who, text], i) => m("mx-1:!rust-general", who!, text!, 18 - i * 1.5));
 m("wa-1:hike-trips", "Tom", "Proposal: Zugspitze, 14th", 300); m("wa-1:hike-trips", "Lea", "re: the ghost message", 280, { replyTo: { messageId: "ghost", sender: "Tom", textPreview: "(not in history)" } }); m("wa-1:hike-trips", "Lea", "I'm in", 290); m("wa-1:hike-trips", "Tom", "Message deleted", 200, { deleted: true });
 m("wa-1:hike-ann", "Admin", "Welcome to the Hiking Club! Be kind.", 5000);
 m("mesh:1", "Anna Becker", "Who's driving?", 15);
+// The announcement channel, the group and the channel of the archived community: real messages, so their previews are not promises
+m("wa-1:neigh-ann", "Caretaker", "The lift in block B is serviced on Monday morning, please use the stairs.", 1500);
+m("wa-1:neigh-ann", "Caretaker", "Bins go out on Thursday", 180);
+m("wa-1:trail", "Lea", "Parking at the trailhead is full, we are at the second lot", 340);
+m("wa-1:trail", "You", "On my way, ten minutes", 320, { status: "read" });
+m("wa-1:trail", "Tom", "Who has the map?", 300);
+m("mx-1:!old-gen", "Tom", "v2.3.0 is tagged and out, that was the last release.", 90 * 1440 + 120);
+m("mx-1:!old-gen", "You", "Thanks everyone, it was a good run 🙏", 90 * 1440 + 60, { status: "read" });
+m("mx-1:!old-gen", "Tom", "I have archived the repo and this community; nobody reads this room any more.", 90 * 1440);
+// A chat's unread count must be covered by unread messages it actually has, or the message view notes the ones it could not load
+// (wa-1:a24 keeps that mismatch on purpose: its one message says so).
+m("mx-1:@anna:matrix.org", "Anna Becker", "One more thing: I will bring the big thermos ☕", 7); // older than wa-1:anna's newest (5): the WhatsApp Anna stays the first of the two rows
+m("wa-1:hike-trips", "Tom", "Zugspitze it is then, I will book the hut tonight", 150);
+m("dc-1:general", "kit", "Thanks for the write-up!", 30);
+m("dc-1:bugs", "dana", "Same here, it only happens when the config file is empty", 45);
 
 // ---- Discord: several embeds with preview images, exact counts, poll counts ----
 function cardImg(msgId: string, label: string, c1: string, c2: string, w = 640, h = 320) {
@@ -213,7 +239,9 @@ m("dc-2:gdm", "Ben Fischer", "Who brings the rope?", 30); m("dc-2:dana", "dana",
 m("ig-1:alice", "Alice Anderson", "Did you see this?", 24); m("ig-1:mallory", "Mallory Fan", "Hi! Love your photos, can we talk collabs?", 120); m("ig-1:crew", "Alice Anderson", "Wall opens at 6", 90);
  m("mesh:1", "Carl", "I can, 3 seats", 14);
 if (new URLSearchParams(location.search).has("ux")) seedUx({ chats, store, files, b64, svg, wav, ago, nextId: () => ++seq }); // ?mock&ux: message-view fixture for screenshots/tests
-for (const c of chats) { const l = store[c.id]?.at(-1); if (l) { c.preview = l.deleted ? "Message deleted" : l.text || (l.location ? "Location" : l.contacts ? "Contact" : l.attachments?.[0]?.kind === "voice" ? "Voice message" : l.attachments ? "Photo" : ""); c.lastMessageAt = l.time; } }
+/** Every chat row previews the NEWEST message it really has (by time, not by the order the seeds were pushed): call it after the last seeder. */
+const derivePreviews = () => { for (const c of chats) { const l = (store[c.id] ?? []).reduce<Message | undefined>((a, x) => (!a || x.time > a.time ? x : a), undefined);
+  if (l) { c.preview = l.deleted ? "Message deleted" : l.text || (l.location ? "Location" : l.contacts ? "Contact" : l.attachments?.[0]?.kind === "voice" ? "Voice message" : l.attachments ? "Photo" : ""); c.lastMessageAt = l.time; } } };
 
 // older filler so "load earlier messages" has something to page through
 { const id = "mx-1:!rust-general"; const old: Message[] = [];
@@ -254,6 +282,10 @@ const presenceOf: Record<string, { online: boolean; lastSeen?: string }> = {
 const memberPresence: Record<string, { online: boolean; lastSeen?: string }> = { c0: { online: true }, c1: { online: false, lastSeen: new Date(Date.now() - 2 * 3600_000).toISOString() } };
 const membersOf = (id: string) => (groupMembers[id] ??= contacts.slice(0, 5).map((c) => ({ ...c, ...(memberPresence[c.id] ?? {}), id: id + "/" + c.id })));
 seedReceipts(store, m, membersOf); // sent messages with per-recipient receipts (Message info)
+// The Hub serves a chat's history in time order (SQLite) and the UI renders it as it comes, so the seeds above -- which are pushed in
+// whatever order reads best here -- are put in order once. BIG keeps its lazy store untouched (it builds its chats in order already).
+if (!BIG) for (const k of Object.keys(store)) store[k]!.sort((a, b) => a.time.localeCompare(b.time));
+derivePreviews(); // only now: every seeder above has run and the sort has put each chat's newest message last
 const original = new Map<string, string>(chats.map((c) => [c.id, c.name]));
 const events: Record<string, { kind: "linked" | "unlinked" | "signed-out"; time: string }[]> = {};
 const offlineOf = (c: Chat) => { const a = accounts.find((x) => x.id === c.accountId); return a?.state === "signed-out" ? { offline: "signed-out" as const, readOnly: true } : a?.state === "needs-login" && a.everLinked ? { offline: "needs-login" as const, readOnly: true } : {}; };

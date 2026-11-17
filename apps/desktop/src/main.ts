@@ -128,7 +128,10 @@ app.whenReady().then(async () => {
   for (;;) {
     try { hub = await startBackend(dataDir, { name: "desktop app", onProblem: (e) => { if (!process.env.UNIMSG_NO_DIALOG) void keyProblemDialog(e); }, keyWrap, backup: { paths: "any", dir: join(dataDir, "backups") }, appVersion: appVersion(app.getVersion()),
     update: asset && { platform: asset.key, installMode: asset.mode, install: async (c) => {
-      if (asset.key !== "desktop-linux-appimage") { shell.showItemInFolder(c.file); return { action: "manual", file: c.file, message: `Version ${c.version} is downloaded and checked. Install it with: ${asset.key === "desktop-linux-pacman" ? "sudo pacman -U" : "sudo apt install"} ${c.file}` }; }
+      // A .deb / pacman package needs root: nothing is installed here, the UI shows the command. Opening the folder is a nicety --
+      // on a desktop without a file manager it does nothing, and it must not take the instructions down with it.
+      if (asset.key !== "desktop-linux-appimage") { try { shell.showItemInFolder(c.file); } catch { /* no file manager */ }
+        return { action: "manual", file: c.file, message: `Version ${c.version} is downloaded and checked. Install it with: ${asset.key === "desktop-linux-pacman" ? "sudo pacman -U" : "sudo apt install"} ${c.file}` }; }
       const current = process.env.APPIMAGE!;
       replaceAppImage(current, c.file);
       setTimeout(() => { quitting = true; app.relaunch({ execPath: current, args: process.argv.slice(1).filter((a) => a !== "--updated") }); app.quit(); }, 600);

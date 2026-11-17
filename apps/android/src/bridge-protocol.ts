@@ -9,6 +9,8 @@
 //                    {"ctl":"ready","protocol":1,"node":"v18...","sqlite":"sqljs"}   the backend is up (never forwarded to the UI)
 //                    {"ctl":"notify","chatId","messageId","title","body","avatar"?}  show a local notification (only sent while the UI is in the background);
 //                                                                      avatar = optional base64 PNG/JPEG/WebP (<= ~64 KB) of the chat, shown as the large icon; never sent when notifyContent is "hidden"
+//                    {"ctl":"notify-clear","chatIds":[...]}           take those chats' notifications down again: they have been read (in the app, by the
+//                                                                      "Mark as read" action, or on another device). An empty list clears every message notification.
 //                    {"ctl":"state","accounts":N,"sync":bool}          number of configured accounts and whether this device is in a sync group (sent after "ready" and whenever it changes);
 //                                                                      the native side keeps it so the boot receiver knows whether to restart the service
 //
@@ -63,6 +65,7 @@ export type Frame =
   | { event: string; data: unknown }
   | { ctl: "ready"; protocol: number; node: string; sqlite: string }
   | { ctl: "notify"; chatId: string; messageId: string; title: string; body: string; avatar?: string }
+  | { ctl: "notify-clear"; chatIds: string[] }
   | { ctl: "state"; accounts: number; sync?: boolean };
 
 /** Methods the native side answers itself for UI requests (kept in sync with NodeBridge.java). */

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildNotification, summarize, withAvatar, MAX_AVATAR_B64 } from "./notify.js";
+import { buildNotification, PostedNotifications, summarize, withAvatar, MAX_AVATAR_B64 } from "./notify.js";
 
 const snap = { spaces: [{ id: "s1", muted: true }], chats: [{ id: "a:1", name: "Alice", kind: "dm" }, { id: "a:2", name: "Family", kind: "group" }, { id: "a:3", name: "Muted", kind: "dm", muted: true }, { id: "a:4", name: "InMutedSpace", kind: "group", spaceId: "s1" }] };
 
@@ -46,4 +46,24 @@ test("withAvatar caches answers (also misses) until the ttl", async () => {
   const miss = new Map<string, { at: number; v?: string }>(); let m = 0;
   await withAvatar(n, "full", async () => { m++; return null; }, miss); await withAvatar(n, "full", async () => { m++; return null; }, miss);
   assert.equal(m, 1);
+});
+
+test("PostedNotifications: a notification goes when its chat is no longer unread", () => {
+  const p = new PostedNotifications();
+  p.posted("a:1"); p.posted("a:2");
+  assert.deepEqual(p.readNow({ chats: [{ id: "a:1", unread: 2 }, { id: "a:2", unread: 1 }] }), []);
+  assert.deepEqual(p.readNow({ chats: [{ id: "a:1", unread: 0 }, { id: "a:2", unread: 1 }] }), ["a:1"]);
+  assert.deepEqual(p.readNow({ chats: [{ id: "a:1", unread: 0 }, { id: "a:2", unread: 1 }] }), [], "cleared once, not again");
+  assert.deepEqual(p.readNow({ chats: [{ id: "a:1", unread: 0 }] }), ["a:2"], "a chat that is gone counts as read");
+  assert.equal(p.size, 0);
+});
+
+test("PostedNotifications: no snapshot, no chats, nothing posted -> nothing to clear", () => {
+  const p = new PostedNotifications();
+  assert.deepEqual(p.readNow(undefined), []);
+  p.posted("a:1");
+  assert.deepEqual(p.readNow(undefined), [], "without a chat list nothing is assumed");
+  assert.deepEqual(p.readNow({}), []);
+  assert.deepEqual(p.clear(), ["a:1"]); // the UI came to the foreground
+  assert.deepEqual(p.clear(), []);
 });

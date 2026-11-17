@@ -3,7 +3,7 @@ import { test } from "../lib/test.ts";
 import { look } from "../lib/ui.ts";
 import type { Page } from "../lib/harness.ts";
 
-const BEN = "&chat=wa-1:ben";
+const BEN = "&badmedia=1&chat=wa-1:ben"; // badmedia: the undecodable QuickTime clip, which the plain demo does not show
 /** playable tiles in order: [0] single 300px clip, [1] and [2] the pair (148px) */
 const tile = (n: number) => `document.querySelectorAll('.messages .vidwrap:not(.vidbroken)')[${n}]`;
 const ready = (t: Page) => t.waitFor(`document.querySelectorAll('.vidwrap:not(.vidbroken) video').length===3 && [...document.querySelectorAll('.vidwrap video')].every(v=>v.readyState>=2)`, { desc: "videos loaded" });

@@ -123,6 +123,7 @@ jobs:
           mkdir -p ~/.android
           echo "$KS_B64" | base64 -d > ~/.android/debug.keystore
           test -s ~/.android/debug.keystore
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -130,6 +131,21 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      # Which key the SECRET actually carries. A phone refuses an update signed by another key ("the package conflicts with an
+      # existing app", issue #92) and that used to show up only on the phone, a release too late. Set the repository variable
+      # ANDROID_DEBUG_KEY_SHA256 to the fingerprint of the developer's key (keytool -list -v -keystore ~/.android/debug.keystore
+      # -storepass android, without the colons) and a wrong secret stops the build here instead.
+      - name: The signing key is the expected one
+        env:
+          WANT: ${{ vars.ANDROID_DEBUG_KEY_SHA256 }}
+        run: |
+          GOT=$(keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey \
+            | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | tr -d ':' | tr 'A-Z' 'a-z')
+          echo "secret keystore SHA-256: $GOT"
+          if [ -n "$WANT" ] && [ "$GOT" != "$(echo "$WANT" | tr -d ':' | tr 'A-Z' 'a-z')" ]; then
+            echo "::error::ANDROID_DEBUG_KEYSTORE_B64 holds the key $GOT, but ANDROID_DEBUG_KEY_SHA256 says the APK must be signed with $WANT. An APK signed with this key cannot update an installed app. Re-upload the keystore: base64 -w0 ~/.android/debug.keystore | gh secret set ANDROID_DEBUG_KEYSTORE_B64"
+            exit 1
+          fi
       # the ubuntu runner image already carries the Android SDK (ANDROID_HOME) and sdkmanager; the setup action failed on it
       - name: Android SDK / NDK
         run: |
@@ -159,7 +175,7 @@ jobs:
       - name: Build the app
         working-directory: apps/android
         run: pnpm run debug
-      - name: "Signing certificate of the APK (compare with: keytool -list -v -keystore ~/.android/debug.keystore -storepass android)"
+      - name: "Signing certificate of the APK (compare with the 'secret keystore SHA-256' line above and with: keytool -list -v -keystore ~/.android/debug.keystore -storepass android)"
         # An APK signed with a different key than the installed app cannot update it ("a package with the same id exists"),
         # so the fingerprint is printed on every release instead of being found out on a phone (issue #92).
         run: |
@@ -185,6 +201,12 @@ jobs:
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
       options: --privileged
+      # The runtimes ship inside the image, so they sit in a LOWER overlayfs layer. flatpak updates a runtime by renaming directories out
+      # of that layer, which returns EXDEV ("Invalid cross-device link") on runners whose overlayfs has redirect_dir off -- then
+      # flatpak-builder dies and xvfb-run reports the segfault (exit 139). Docker fills this volume from the image on first mount, so the
+      # installation lands on a real filesystem where those renames work. See flatpak/flatpak-github-actions#267.
+      volumes:
+        - flatpak-installation:/var/lib/flatpak
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -200,14 +222,14 @@ jobs:
         run: |
           rm -rf node_modules apps/*/node_modules packages/*/node_modules ~/.local/share/pnpm ~/.cache/pnpm ~/.cache/electron ~/.cache/electron-builder apps/desktop/out apps/ui/dist
           df -h / | tail -1
-      # ostree hardlinks the files it staged in TMPDIR into the flatpak installation. In this container HOME (where that
-      # installation lives) is bind-mounted from the host while /tmp belongs to the container, so the default TMPDIR made
-      # every runtime install fail with "Invalid cross-device link". Staging next to the installation keeps both on one device.
+      # ostree hardlinks what it staged in TMPDIR into the installation, so the staging area has to be on the same filesystem as
+      # /var/lib/flatpak (the volume above), not on the container's overlay. The listing shows which runtimes the image brought.
       - name: Stage flatpak downloads on the same filesystem as the flatpak installation
         run: |
-          mkdir -p "$HOME/flatpak-tmp"
-          echo "TMPDIR=$HOME/flatpak-tmp" >> "$GITHUB_ENV"
-          df -h "$HOME" /tmp | tail -2
+          mkdir -p /var/lib/flatpak/ci-tmp
+          echo "TMPDIR=/var/lib/flatpak/ci-tmp" >> "$GITHUB_ENV"
+          df -h /var/lib/flatpak /tmp | tail -2
+          flatpak --system list --columns=ref,branch,origin || true
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: unichat-desktop-${{ env.VERSION }}.flatpak

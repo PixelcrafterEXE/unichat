@@ -61,6 +61,13 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; posit
 .daysep::before, .daysep::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .searchnote { padding: 6px 16px; color: var(--muted); font-size: 13px; }
 .msg { display: flex; gap: 12px; padding: 2px 16px; position: relative; } .msg:hover { background: var(--bubble); }
+/* Swipe right on a message to reply (touch). pan-y lets the browser keep scrolling the timeline vertically while the
+   horizontal part of the gesture reaches the handlers; the row springs back with a transition once the finger is gone. */
+.msg { touch-action: pan-y pinch-zoom; transition: transform .18s ease-out; }
+.swipereply { position: absolute; left: 10px; top: 50%; margin-top: -14px; width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--bubble); color: var(--muted); pointer-events: none; }
+.msg[data-swipe="fire"] .swipereply { background: var(--accent); color: #fff; }
+@media (prefers-reduced-motion: reduce) { .msg { transition: none; } }
 .msg:not(.grouped) { margin-top: 12px; } .msg.grouped { padding-left: 16px; }
 .gtime { width: 40px; flex-shrink: 0; text-align: right; font-size: 10px; color: transparent; padding-top: 4px; } .msg:hover .gtime { color: var(--muted); }
 .compact .msg { gap: 8px; } .compact .msg:not(.grouped) { margin-top: 4px; } .compact { --avw: 28px; } .compact .msg .avatar { width: 28px !important; height: 28px !important; font-size: 11px !important; } .compact .gtime { width: 28px; }

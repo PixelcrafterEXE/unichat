@@ -18,7 +18,11 @@ export class WrongKeyError extends Error {
 }
 /** True for a wrong-key failure from this package or from node:crypto's GCM tag check. */
 export function isWrongKey(e: unknown): boolean {
-  return (e as { code?: string } | null)?.code === "WRONG_KEY" || /unable to authenticate data/i.test(String((e as Error | null)?.message ?? ""));
+  // node:crypto words a failed GCM tag check differently across versions: "Unsupported state or unable to authenticate data" up to
+  // Node 22, and OpenSSL's own "error:1C800064:Provider routines::bad decrypt" (code ERR_OSSL_BAD_DECRYPT) from Node 24 on.
+  const code = (e as { code?: string } | null)?.code;
+  if (code === "WRONG_KEY" || code === "ERR_OSSL_BAD_DECRYPT") return true;
+  return /unable to authenticate data|bad decrypt/i.test(String((e as Error | null)?.message ?? ""));
 }
 
 export class Ledger {

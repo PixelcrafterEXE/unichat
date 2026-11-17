@@ -39,13 +39,39 @@ export default [
     await t.ok("then starts the installer", `/asking you to confirm/.test(document.querySelector('#upd-msg')?.textContent||'')`);
   }),
 
-  test("banner: Update opens the Updates section, Later hides it for that version", async (t) => {
+  // A .deb / pacman install cannot install itself. It used to hide behind a confirmation that promised a restart and then,
+  // when the file manager did not open, said nothing at all (Arch: "downloads, then a dead end").
+  test("Linux package: the install command is shown, with no restart confirmation", async (t) => {
+    await t.open("&update=manual"); await settings(t, "Updates");
+    await t.click("#upd-check"); await t.click("#upd-download");
+    await t.ok("ready after the download", `document.querySelector('#upd-install')`, { timeout: 8000 });
+    await t.eq("the button says what it will do", `document.querySelector('#upd-install').textContent.trim()`, "How to install it");
+    await t.click("#upd-install");
+    await t.not("nothing promises a restart", `document.querySelector('#upd-confirm')`);
+    await t.ok("the command to run is shown", `/sudo pacman -U .*unichat-desktop-0\\.1\\.9\\.pkg\\.tar\\.zst/.test(document.querySelector('#upd-manual-cmd')?.textContent||'')`);
+    await t.ok("and can be copied", `!!document.querySelector('#upd-manual-copy')`);
+    await t.shot("update_manual");
+  }),
+
+  test("Linux package: a failing install call still leaves the command on screen", async (t) => {
+    await t.open("&update=manualfail"); await settings(t, "Updates");
+    await t.click("#upd-check"); await t.click("#upd-download");
+    await t.ok("ready after the download", `document.querySelector('#upd-install')`, { timeout: 8000 });
+    await t.click("#upd-install");
+    await t.ok("the failure is reported", `/Could not open the folder/.test(document.querySelector('#upd-msg')?.textContent||'')`);
+    await t.ok("and the command is there anyway", `/sudo pacman -U/.test(document.querySelector('#upd-manual-cmd')?.textContent||'')`);
+  }),
+
+  test("banner: Update opens the Updates section and takes the banner down, Later hides it for that version", async (t) => {
     await t.open("&update=avail");
     await settings(t, "Updates"); await t.click("#upd-check"); await t.click(".settings .closex");
     await t.ok("banner appears after a check found one", `/Update 0\\.1\\.9 available/.test(document.querySelector('#upd-banner')?.textContent||'')`);
     await t.click("#upd-banner-go");
     await t.ok("Update opens the Updates section", `document.querySelector('.settings #updates')`);
     await t.click(".settings .closex");
+    await t.not("acting on the banner takes it down (it used to stay behind the settings panel)", `document.querySelector('#upd-banner')`);
+    await t.ev(`localStorage.removeItem('unichat.update.later')`); await t.reload(); // offer the same version again
+    await settings(t, "Updates"); await t.click("#upd-check"); await t.click(".settings .closex");
     await t.click("#upd-banner-later");
     await t.not("Later hides the banner", `document.querySelector('#upd-banner')`);
   }),
