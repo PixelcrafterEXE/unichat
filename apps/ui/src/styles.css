@@ -515,6 +515,12 @@ html:not(.bubbles) .msg.merged:not(.grouped) .foot .netbadge { display: none; } 
 /* ---- chat multi-select ---- */
 .chats li.selected { background: color-mix(in srgb, var(--accent) 28%, transparent); color: var(--fg); box-shadow: inset 3px 0 0 var(--accent); }
 .chats li.selected:hover { background: color-mix(in srgb, var(--accent) 36%, transparent); }
+/* multi-select in a conversation: the bar sits above the composer, rows get a tick box and a tinted background */
+.msgselbar { margin: 0 8px 6px; }
+.msg.selmode { cursor: pointer; }
+.msg.selmode .selmark { align-self: center; color: var(--muted); flex-shrink: 0; display: flex; }
+.msg.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 8px; }
+.msg.sel .selmark { color: var(--accent); }
 .selbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 8px 8px 0; padding: 6px 8px; background: color-mix(in srgb, var(--accent) 22%, var(--bg3)); border: 1px solid var(--accent); border-radius: 8px; font-size: 12.5px; }
 .selbar > b { flex: 1 1 100%; font-size: 13px; }
 .selbar button:not(.icon) { display: inline-flex; align-items: center; gap: 4px; background: var(--bg3); border: 0; color: var(--fg); padding: 4px 8px; border-radius: 6px; font-size: 12.5px; } .selbar button:not(.icon):hover { background: var(--hover); }
