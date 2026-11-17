@@ -31,3 +31,5 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: pnpm -r test
+      - name: README feature table matches the live-test results (docs/live-results.json)
+        run: node scripts/feature-table.mjs --check

@@ -1,4 +1,4 @@
-// Threema key hierarchy (see PROTOCOL-NOTES.md section 2). All tags are public protocol constants.
+// Threema key hierarchy (see Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes) section 2). All tags are public protocol constants.
 import { blake2b } from "./blake2b.js";
 import { beforenm, publicKeyOf } from "./nacl.js";
 

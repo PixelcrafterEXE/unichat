@@ -1,5 +1,5 @@
 // Device Join Protocol, "ND requests to join" variant: UniChat is the new device (ND) and the rendezvous initiator (RID); the phone scans the QR.
-// Written from md-d2d-join.proto + url-payloads.proto (PROTOCOL-NOTES.md section 4).
+// Written from md-d2d-join.proto + url-payloads.proto (Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes) section 4).
 import { randomBytes } from "node:crypto";
 import { rendezvousBase } from "./config.js";
 import { rphEmoji } from "./emoji.js";

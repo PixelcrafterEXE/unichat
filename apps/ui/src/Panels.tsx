@@ -175,7 +175,7 @@ export function ContactPanel({ place, merge, onMerge, chat, caps, messages, mute
 }
 
 // ---------------- settings ----------------
-type Section = "accounts" | "appearance" | "notifications" | "privacy" | "scheduled" | "storage" | "backup" | "move" | "sync" | "about";
+type Section = "accounts" | "appearance" | "notifications" | "privacy" | "scheduled" | "storage" | "backup" | "move" | "sync" | "updates";
 export function SettingsPage({ loading, accounts, providers, settings, onChange, onAdd, onClose, onLogin, onAccountAction, chats, onMarkAllRead }: {
   /** the first snapshot has not arrived yet: the account list is unknown, not empty */ loading?: boolean;
   chats: Chat[]; onMarkAllRead?: (scope: string, label: string) => void;
@@ -183,8 +183,8 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
   accounts: Account[]; providers: ProviderInfo[]; settings: Settings; onChange: (s: Settings) => void; onAdd: () => void; onClose: () => void;
 }) {
   const recv = useSyncReceiving();
-  const [sec, setSec] = useState<Section>(() => { const w = settingsNav.section as Section | undefined; settingsNav.section = undefined; return w ?? (updatesNav.pending ? "about" : hasSyncLink() && !focusAccount.id ? "sync" : "accounts"); });
-  useEffect(() => { updatesNav.pending = false; const f = () => { updatesNav.pending = false; setSec("about"); setTimeout(() => document.getElementById("updates")?.scrollIntoView({ block: "start" }), 50); }; addEventListener("unichat-open-updates", f); return () => removeEventListener("unichat-open-updates", f); }, []);
+  const [sec, setSec] = useState<Section>(() => { const w = settingsNav.section as Section | undefined; settingsNav.section = undefined; return w ?? (updatesNav.pending ? "updates" : hasSyncLink() && !focusAccount.id ? "sync" : "accounts"); });
+  useEffect(() => { updatesNav.pending = false; const f = () => { updatesNav.pending = false; setSec("updates"); setTimeout(() => document.getElementById("updates")?.scrollIntoView({ block: "start" }), 50); }; addEventListener("unichat-open-updates", f); return () => removeEventListener("unichat-open-updates", f); }, []);
   useEffect(() => { // opened from a status ring in the chat list footer: show that account's card
     const id = focusAccount.id; if (!id) return; focusAccount.id = undefined;
     const t = setTimeout(() => { const el = document.querySelector(`.acard[data-account="${CSS.escape(id)}"]`); el?.scrollIntoView({ block: "center" }); el?.classList.add("flash"); setTimeout(() => el?.classList.remove("flash"), 1800); }, 60);
@@ -205,7 +205,7 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
     { title: "App", items: [["appearance", "Appearance"], ["notifications", "Notifications"], ["scheduled", "Scheduled messages"]] },
     { title: "Your data", items: [["storage", "Storage & downloads"], ["backup", "Backup & restore"]] },
     { title: "Other devices", items: [["sync", "Sync devices"], ["move", "Move to another device"]] },
-    { title: "", items: [["about", "About"]] },
+    { title: "", items: [["updates", "Updates"]] },
   ];
   return (
     <div className="settings">
@@ -262,7 +262,7 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
         {sec === "backup" && <BackupPanel part="backup" />}
         {sec === "move" && <BackupPanel part="move" />}
         {sec === "sync" && <SyncPanel />}
-        {sec === "about" && <><h2>About UniChat</h2><p>One app for all your messengers. Providers: {providers.map((p) => p.displayName).join(", ") || "none"}.</p><p className="hint">Messages stay on your device; accounts are linked as secondary devices.</p><UpdatesSection /></>}
+        {sec === "updates" && <><h2>Updates</h2><UpdatesSection /><section className="aboutapp"><h3>About UniChat</h3><p>One app for all your messengers. Providers: {providers.map((p) => p.displayName).join(", ") || "none"}.</p><p className="hint">Messages stay on your device; accounts are linked as secondary devices.</p></section></>}
       </section>
     </div>
   );

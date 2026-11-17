@@ -9,7 +9,7 @@ import { IdentityKeyPair } from "@signalapp/libsignal-client";
 import type { CoreEvent } from "@unimsg/core";
 import { ContentCodec, type Content } from "../protocol/codec.js";
 import { decryptAttachmentBlob } from "../service/attachments.js";
-import { paddedSize, uploadRetry, type CdnHttp, type HttpReq } from "../service/attachmentUpload.js";
+import { paddedSize, resetFormRoute, uploadRetry, type CdnHttp, type HttpReq } from "../service/attachmentUpload.js";
 import { SignalClient } from "../service/client.js";
 import { groupChatId, groupIdFromMasterKey } from "../service/groups.js";
 import { readFileSync } from "node:fs";
@@ -20,7 +20,8 @@ const B = "44444444-4444-4444-8444-444444444444";
 
 interface Call { aci: string; content: Content; ts: number; mode: string }
 
-async function setup(o: { cdn?: 2 | 3; form?: { status: number; body?: string }; cdnStatus?: number; group?: boolean } = {}) {
+async function setup(o: { cdn?: 2 | 3; form?: { status: number; body?: string }; httpsForm?: { status: number; body?: string }; cdnStatus?: number; group?: boolean } = {}) {
+  resetFormRoute(); // the route the last account learned (chat vs HTTPS upload form) must not leak between tests
   const client = new SignalClient({ accountId: "acc", dataDir: mkdtempSync(join(tmpdir(), "unimsg-signal-att-")) });
   await client.store.load();
   client.store.setAccount({ aci: ME, deviceId: 2, password: "pw", registrationId: 5, aciIdentity: Buffer.from(IdentityKeyPair.generate().serialize()).toString("base64"), readReceipts: true, linkedAt: 0 });
@@ -33,8 +34,13 @@ async function setup(o: { cdn?: 2 | 3; form?: { status: number; body?: string };
     if (o.form) return { status: o.form.status, body: Buffer.from(o.form.body ?? "") };
     return { status: 200, body: Buffer.from(JSON.stringify({ cdn, key: "ATT-KEY-1", headers: { "x-test": "1" }, signedUploadLocation: `https://cdn${cdn}.signal.org/attachments/upload/abc` })) };
   } };
-  const reqs: HttpReq[] = []; const stored: Buffer[] = [];
+  const reqs: HttpReq[] = []; const stored: Buffer[] = []; const formGets: HttpReq[] = [];
   const http: CdnHttp = async (r) => {
+    if (r.method === "GET") { // the upload form fetched as plain HTTPS from the service (the fallback, see issue #85)
+      formGets.push(r);
+      const body = o.httpsForm?.body ?? JSON.stringify({ cdn, key: "ATT-HTTPS-1", headers: { "x-test": "1" }, signedUploadLocation: `https://cdn${cdn}.signal.org/attachments/upload/abc` });
+      return { status: o.httpsForm?.status ?? 200, headers: {}, body: Buffer.from(body) };
+    }
     reqs.push(r);
     if (o.cdnStatus) return { status: o.cdnStatus, headers: {} };
     if (r.method === "POST") return { status: cdn === 3 ? 201 : 200, headers: { location: "/resumable/xyz" } };
@@ -54,7 +60,7 @@ async function setup(o: { cdn?: 2 | 3; form?: { status: number; body?: string };
   priv.makeInbound();
   const calls: Call[] = [];
   priv.sender = { deliver: async (aci: string, content: Content, ts: number, mode: string) => { calls.push({ aci, content, ts, mode }); } };
-  return { client, chatId, calls, reqs, stored, formCalls, events };
+  return { client, chatId, calls, reqs, stored, formCalls, formGets, events };
 }
 
 test("capabilities: attachments and voice notes are on; location stays off", () => {
@@ -185,9 +191,10 @@ uploadRetry.delaysMs = [0, 0, 0]; uploadRetry.sleep = async () => {};
 const oneFile = { kind: "file" as const, mime: "x/y", data: new Uint8Array(10) };
 
 test("form refused: the error names the stage and HTTP status", async () => {
-  const f = await setup({ form: { status: 403 } });
+  const f = await setup({ form: { status: 403 }, httpsForm: { status: 403 } }); // the service refuses both ways
   await assert.rejects(f.client.send(A, { text: "", attachments: [oneFile] }), /refused the attachment upload request \(upload form, HTTP 403\)/);
   assert.equal(f.formCalls.length, 1, "403 is not transient: no retry");
+  assert.equal(f.formGets.length, 1, "but it is tried once over HTTPS (#85)");
   assert.equal(f.calls.length, 0);
 });
 
@@ -234,7 +241,7 @@ test("text-only message never touches the upload endpoints", async () => {
 });
 
 test("link preview image upload failing (form 500 / CDN down / form 403) silently keeps the text going", async () => {
-  for (const o of [{ form: { status: 500 } }, { cdnStatus: 500 }, { form: { status: 403 } }]) {
+  for (const o of [{ form: { status: 500 } }, { cdnStatus: 500 }, { form: { status: 403 }, httpsForm: { status: 403 } }]) {
     const h = await setup(o);
     (h.client as never as { previewFetcher: unknown }).previewFetcher = async () => ({ url: "https://x.test/", title: "T", image: { data: new Uint8Array([1, 2, 3]), mime: "image/png" } });
     const m = await h.client.send(A, { text: "see https://x.test/ ok" });
@@ -255,4 +262,38 @@ test("a hung preview fetch cannot delay the text beyond the budget", async () =>
   priv.linkPreviewBudgetMs = 30; priv.previewFetcher = () => new Promise(() => {});
   await h.client.send(A, { text: "https://x.test/" });
   assert.equal(h.calls.filter((c) => c.mode === "message")[0]!.content.dataMessage!.preview, undefined);
+});
+
+test("upload form over the chat connection refused with 400: fetched again as plain HTTPS with this device's credentials, and the attachment goes out (#85)", async () => {
+  const h = await setup({ form: { status: 400 } });
+  const m = await h.client.send(A, { text: "", attachments: [oneFile] });
+  assert.deepEqual(h.formCalls, ["GET /v4/attachments/form/upload"], "the chat connection is still tried first");
+  assert.equal(h.formGets.length, 1, "exactly one HTTPS retry");
+  const g = h.formGets[0]!;
+  assert.equal(g.url.href, "https://chat.signal.org/v4/attachments/form/upload");
+  assert.equal(g.headers.authorization, "Basic " + Buffer.from(`${ME}.2:pw`).toString("base64"), "this device's own service credentials");
+  assert.equal(m.attachments!.length, 1);
+  assert.ok(h.calls.length >= 1, "the message itself was sent");
+  assert.equal(h.stored.length, 1, "the bytes reached the CDN");
+});
+
+test("when the HTTPS retry fails too, the error still names what the chat connection answered (#85)", async () => {
+  const h = await setup({ form: { status: 400, body: "Bad Request" }, httpsForm: { status: 500 } });
+  await assert.rejects(h.client.send(A, { text: "", attachments: [oneFile] }), /upload form, HTTP 400/);
+  assert.equal(h.formGets.length, 1);
+  assert.equal(h.calls.length, 0, "nothing was sent");
+});
+
+test("a 2xx HTTPS answer that is not a usable form does not override the chat error (#85)", async () => {
+  const h = await setup({ form: { status: 403 }, httpsForm: { status: 200, body: "{}" } });
+  await assert.rejects(h.client.send(A, { text: "", attachments: [oneFile] }), /upload form, HTTP 403/);
+});
+
+test("once HTTPS has produced a form, later attachments go there first and do not ask the chat connection again (#85)", async () => {
+  const h = await setup({ form: { status: 400 } });
+  await h.client.send(A, { text: "", attachments: [oneFile] });
+  assert.equal(h.formCalls.length, 1); assert.equal(h.formGets.length, 1);
+  await h.client.send(A, { text: "", attachments: [oneFile] });
+  assert.equal(h.formCalls.length, 1, "the chat connection is not asked a second time");
+  assert.equal(h.formGets.length, 2, "the second upload went straight to HTTPS");
 });

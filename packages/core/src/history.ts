@@ -1,6 +1,6 @@
 // One account's archive as a stream of pieces (messages, chat list, flags, names, link events, cached attachments), for the device-to-device move
 // ("Also move the chat history") and "send this device's history of <account> to <device>". Merge semantics on the receiving side (nothing is overwritten
-// that is newer there); nothing here touches the account's login. See docs/ARCHITECTURE.md "Move to another device".
+// that is newer there); nothing here touches the account's login. See https://github.com/PixelcrafterEXE/unichat/wiki/Architecture "Move to another device".
 import type { Chat, Message, Space } from "./model.js";
 import type { MediaCache } from "./media.js";
 import { attachmentIds } from "./backup.js";

@@ -1,4 +1,4 @@
-// Endpoints (production defaults are public client constants, see PROTOCOL-NOTES.md section 8) and loopback-only overrides for the offline tests.
+// Endpoints (production defaults are public client constants, see Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes) section 8) and loopback-only overrides for the offline tests.
 const LOOPBACK = /^(127\.0\.0\.1|localhost|\[::1\])$/;
 /** An endpoint override is honoured ONLY for loopback hosts (tests); anything else silently falls back to the default. */
 export function endpoint(envName: string, def: string): string {

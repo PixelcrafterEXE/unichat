@@ -8,6 +8,7 @@
 //                       KeyWrap hook, which is synchronous and so cannot call back into Java)
 //        UNIMSG_SQLITE  auto|node|better|sqljs (see sqlite-shim.ts)
 //   argv  [2]=data dir, [3]=socket path override the env (nodejs-mobile passes arguments, not env, on some builds)
+import "./tmpdir-fix.js"; // before anything that may call os.tmpdir()
 import net from "node:net";
 import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";

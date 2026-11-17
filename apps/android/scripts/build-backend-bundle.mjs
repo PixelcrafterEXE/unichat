@@ -36,6 +36,11 @@ const TARGET = "node18";
 const sqliteAlias = { name: "unimsg-sqlite-alias", setup(b) {
   b.onResolve({ filter: /^node:sqlite$/ }, () => ({ path: join(root, "src/sqlite-shim.ts") }));
 } };
+/** Baileys (WhatsApp) loads its image library with a guarded `import("jimp")` from inside the pnpm store, where jimp is not a dependency: resolve it
+ *  from packages/provider-whatsapp (which depends on it) so group / profile pictures and link-preview thumbnails work on the phone too. */
+const jimpAlias = { name: "unimsg-jimp-alias", setup(b) {
+  b.onResolve({ filter: /^jimp$/ }, () => { try { return { path: createRequire(join(repo, "packages/provider-whatsapp/package.json")).resolve("jimp") }; } catch { return undefined; } });
+} };
 
 /**
  * @signalapp/libsignal-client is a native N-API add-on whose npm package ships prebuilds for darwin/linux(glibc)/win32 only,
@@ -105,7 +110,7 @@ const result = await build({
   // native / optional add-ons that must be resolved on the device at run time rather than bundled
   external: ["better-sqlite3", "bufferutil", "utf-8-validate", "sharp", "jimp", "link-preview-js", "audio-decode", "jimp-*", "@ffmpeg/*"],
   banner: { js: `import { createRequire as __unimsgCreateRequire } from "node:module";\nconst require = __unimsgCreateRequire(import.meta.url);\nimport { fileURLToPath as __unimsgF2P } from "node:url";\nimport { dirname as __unimsgDir } from "node:path";\nconst __filename = __unimsgF2P(import.meta.url);\nconst __dirname = __unimsgDir(__filename);\n// Node 18 (nodejs-mobile) has no global WebCrypto; Baileys and others expect it (Node >= 20 has it)\nif (!globalThis.crypto) globalThis.crypto = require(\"node:crypto\").webcrypto;\n// nodejs-mobile has no ICU: new TextDecoder(enc, {fatal:true}) throws ERR_NO_ICU (matrix-sdk-crypto-wasm glue does this at load). Emulate fatal for UTF-8 by rejecting U+FFFD in the result.\ntry { new TextDecoder(\"utf-8\", { fatal: true }); } catch { const Orig = globalThis.TextDecoder; class TD extends Orig { constructor(l, o) { super(l, o && o.fatal ? { ...o, fatal: false } : o); this.__f = !!(o && o.fatal); } decode(i, o) { const r = super.decode(i, o); if (this.__f && r.includes(\"\\ufffd\")) { const e = new TypeError(\"The encoded data was not valid for encoding utf-8\"); e.code = \"ERR_ENCODING_INVALID_ENCODED_DATA\"; throw e; } return r; } } globalThis.TextDecoder = TD; require(\"node:util\").TextDecoder = TD; }` },
-  plugins: [sqliteAlias, libsignalLoader, libsignalStub, dhtNative, probeResolve],
+  plugins: [sqliteAlias, jimpAlias, libsignalLoader, libsignalStub, dhtNative, probeResolve],
   supported: { "dynamic-import": true },
   define: { __UNICHAT_VERSION__: JSON.stringify(process.env.UNICHAT_VERSION || "dev") }, // shown in About, compared by the updater (CI sets 0.1.<run number>)
   mainFields: ["module", "main"], conditions: ["node", "import"],

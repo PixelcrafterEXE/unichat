@@ -1,5 +1,5 @@
 // Connection Rendezvous Protocol (relayed WebSocket path only). Both roles are implemented: UniChat is RID (it shows the QR), the fake phone in the
-// tests is RRD. Written from md-d2d-rendezvous.proto (PROTOCOL-NOTES.md section 3).
+// tests is RRD. Written from md-d2d-rendezvous.proto (Threema-protocol-notes (https://github.com/PixelcrafterEXE/unichat/wiki/Threema-protocol-notes) section 3).
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import WebSocket from "ws";
 import { chachaOpen, chachaSeal } from "./aead.js";

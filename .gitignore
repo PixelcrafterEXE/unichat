@@ -49,3 +49,6 @@ backups/
 *.swp
 apps/ui/e2e/shots/
 .claude/
+
+# live tests: which chat each provider writes into on THIS machine (ids stay out of git)
+.live-targets.json

@@ -6,7 +6,7 @@ message archive, and read-only archives for accounts you signed out of.
 
 ## Screenshots
 
-Mock data (`?mock`), no real accounts.
+Mock data (`?mock`), no real accounts. **[Try the demo](https://pixelcrafterexe.github.io/unichat/)** — the same mock data, running in your browser with no backend and nothing to install.
 
 <p>
   <img src="docs/screenshots/desktop.png" alt="UniChat on the desktop: chat list, communities rail and a conversation" width="640">
@@ -63,6 +63,7 @@ How to read it:
 |---|---|
 | ✅ Verified | Seen working against the **real service** in this project: my live test run on the two test chats (2026-11-11, WhatsApp "Whatsapp-o-mat" and Signal "Signal-o-mat"), or you saw it working in daily use. |
 | 🧪 Untested | Implemented and covered by unit tests or a fake server, but **not yet run against the real service**. Expect small bugs. |
+| ❌ Failing | Tried against the **real service** by the live test (`scripts/live/run.mjs`) and did not work; the note in `docs/live-results.json` says what happened. |
 | 🛠️ Unimplemented | The messenger offers it, but UniChat does not do it yet. |
 | ⛔ Unsupported | The messenger itself has no such feature (or no way for a third-party client to use it). |
 
@@ -70,59 +71,59 @@ How to read it:
 |---|---|---|---|---|---|---|---|---|
 | **Messages** | | | | | | | | |
 | Receive text | ✅ Verified | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Send text | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Live updates (realtime) | ✅ Verified | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Older history from the service | ✅ Verified | ⛔ Unsupported | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported |
-| Fetch chat history in bulk (Settings > Storage & downloads, `Capabilities.fetchHistory`) | 🛠️ Unimplemented | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | 🛠️ Unimplemented | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Import old history from a local phone backup (account card > Import chat history; docs/WHATSAPP_IMPORT.md, docs/SIGNAL_IMPORT.md) | 🧪 Untested (msgstore.db.crypt15 / crypt14 + Media folder; format implemented from the wa-crypt-tools spec, fixture-tested only, never run on a real backup) | ✅ Verified (Secure Backup on-device folder incl. media; legacy .backup fixture-tested only) | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported |
-| Full-text search of the local archive (SQLite FTS5, operators, snippets) | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Replies / quotes | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Reactions (send + show) | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Pin messages (pin / unpin, pinned bar, list) | 🧪 Untested (fake only: Baileys `pinInChatMessage`, 24 h / 7 d / 30 d) | 🧪 Untested (fake only: `DataMessage.pinMessage`, incl. until-removed) | 🧪 Untested (fake only: `m.room.pinned_events`) | 🧪 Untested (fake only) | ⛔ Unsupported | 🧪 Untested (fake only) | 🧪 Untested (fake only: chats, not channels) | ⛔ Unsupported |
-| Edit own message | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🛠️ Unimplemented | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Delete own message for everyone | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Typing indicators | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |
+| Send text | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Live updates (realtime) | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Older history from the service | ✅ Verified (live 2026-11-16) | ⛔ Unsupported | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported |
+| Fetch chat history in bulk (Settings > Storage & downloads, `Capabilities.fetchHistory`) | ✅ Verified (live 2026-11-16) | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | 🛠️ Unimplemented | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Import old history from a local phone backup (account card > Import chat history; https://github.com/PixelcrafterEXE/unichat/wiki/WhatsApp-history-import, https://github.com/PixelcrafterEXE/unichat/wiki/Signal-history-import) | 🧪 Untested (msgstore.db.crypt15 / crypt14 + Media folder; format implemented from the wa-crypt-tools spec, fixture-tested only, never run on a real backup) | ✅ Verified (Secure Backup on-device folder incl. media; legacy .backup fixture-tested only) | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported |
+| Full-text search of the local archive (SQLite FTS5, operators, snippets) | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Replies / quotes | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Reactions (send + show) | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Pin messages (pin / unpin, pinned bar, list) | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | 🧪 Untested (fake only: `m.room.pinned_events`) | 🧪 Untested (fake only) | ⛔ Unsupported | 🧪 Untested (fake only) | 🧪 Untested (fake only: chats, not channels) | ⛔ Unsupported |
+| Edit own message | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | 🛠️ Unimplemented | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Delete own message for everyone | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Typing indicators | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |
 | Online status (presence): green dot, "online" / "last seen" for 1:1 contacts | 🧪 Untested (see note) | ⛔ Unsupported (by messenger) | 🧪 Untested (fake server only) | 🧪 Untested (fake server only) | 🛠️ Unimplemented | 🧪 Untested (user accounts only; bots get none) | ⛔ Unsupported | ⛔ Unsupported |
 | Chat list filters: Unread / Messenger / Type (personal, groups, community channels) | ✅ UniChat feature, works for every messenger (mock-tested) | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 Untested | 🧪 Untested |
 | "Online" filter (only 1:1 chats whose contact is online) | needs presence | ⛔ Unsupported (by messenger) | needs presence | needs presence | 🛠️ Unimplemented | needs presence | ⛔ Unsupported | ⛔ Unsupported |
 | Read receipts (see who read) | ✅ Verified | ✅ Verified | ✅ Verified | ⛔ Unsupported | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported | 🧪 Untested |
-| Mark chat read on the service | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Mark chat read on the service | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Custom emoji / animated emoji | ⛔ Unsupported | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported |
-| @mentions when sending | 🧪 Untested | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Link previews when sending | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported |
-| Disappearing / view-once messages | 🛠️ Unimplemented | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported | 🛠️ Unimplemented | ⛔ Unsupported | ⛔ Unsupported | 🛠️ Unimplemented |
+| @mentions when sending | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Link previews when sending | ❌ Failing (live 2026-11-16: sent, but no preview card attached) | ✅ Verified (live 2026-11-16) | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported |
+| Disappearing / view-once messages | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ⛔ Unsupported | ⛔ Unsupported | 🛠️ Unimplemented | ⛔ Unsupported | ⛔ Unsupported | 🛠️ Unimplemented |
 | **Media** | | | | | | | | |
 | Receive images, video, files | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Send images, video, files | ✅ Verified | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Send images, video, files | ✅ Verified (live 2026-11-16) | ❌ Failing (live 2026-11-16: Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again lat) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Play voice messages | ✅ Verified | 🧪 Untested | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🛠️ Unimplemented |
-| Send voice messages | 🧪 Untested | 🧪 Untested | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🛠️ Unimplemented |
-| GIFs | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported |
+| Send voice messages | ✅ Verified (live 2026-11-16) | ❌ Failing (live 2026-11-16: Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again lat) | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🛠️ Unimplemented |
+| GIFs | ❌ Failing (live 2026-11-16: uploads and comes back byte-identical, but WhatsApp shows it as a still image (needs MP4 +) | ❌ Failing (live 2026-11-16: Error: Signal refused the attachment upload request (upload form, HTTP 400). Try again lat) | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported |
 | Stickers (receive) | 🧪 Untested | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |
 | **Rich content** | | | | | | | | |
-| Polls: show and vote | 🧪 Untested | ✅ Verified | ✅ Verified | ⛔ Unsupported | 🛠️ Unimplemented | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |
-| Location sharing | 🧪 Untested | ⛔ Unsupported | ✅ Verified | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | 🧪 Untested |
-| Contact cards (vCard) | 🧪 Untested | ✅ Verified | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported |
-| Events / calendar invites | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported |
+| Polls: show and vote | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | ⛔ Unsupported | 🛠️ Unimplemented | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |
+| Location sharing | ✅ Verified (live 2026-11-16) | ⛔ Unsupported | ✅ Verified | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | 🧪 Untested |
+| Contact cards (vCard) | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported |
+| Events / calendar invites | ✅ Verified (live 2026-11-16) | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported |
 | Voice and video calls | 🛠️ Unimplemented | 🛠️ Unimplemented | 🛠️ Unimplemented | 🛠️ Unimplemented | 🛠️ Unimplemented | 🛠️ Unimplemented | 🛠️ Unimplemented | 🛠️ Unimplemented |
 | **Groups and communities** | | | | | | | | |
-| Group chats: receive | ✅ Verified | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Group chats: receive | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Group chats: send | ✅ Verified | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Group name and picture shown | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Create a group | 🧪 Untested | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Create a group | ✅ Verified (live 2026-11-16) | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Add / remove members | 🧪 Untested | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Rename a group | 🧪 Untested | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Change group description | 🧪 Untested | 🧪 Untested | ✅ Verified | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported |
-| Change group picture | 🧪 Untested | 🧪 Untested | ✅ Verified | ⛔ Unsupported | ⛔ Unsupported | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported |
-| Leave a group | 🧪 Untested | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Communities / spaces / servers: show | ✅ Verified | ⛔ Unsupported | ✅ Verified | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported |
+| Rename a group | ✅ Verified (live 2026-11-16) | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Change group description | ✅ Verified (live 2026-11-16) | 🧪 Untested | ✅ Verified | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported |
+| Change group picture | ❌ Failing (live 2026-11-16: Error: Could not change the group picture (only admins can, unless the group lets everyone) | 🧪 Untested | ✅ Verified | ⛔ Unsupported | ⛔ Unsupported | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported |
+| Leave a group | ✅ Verified (live 2026-11-16) | 🧪 Untested | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Communities / spaces / servers: show | ✅ Verified (live 2026-11-16) | ⛔ Unsupported | ✅ Verified | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported |
 | Create / join / leave a community | 🧪 Untested | ⛔ Unsupported | ✅ Verified | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | 🛠️ Unimplemented | ⛔ Unsupported |
 | **Account** | | | | | | | | |
 | Link / log in | ✅ Verified | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Remove account and sign out remotely | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Profile pictures of people and chats | ✅ Verified | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
-| Edit own profile (name, about, picture) | 🧪 Untested | 🧪 Untested | ✅ Verified | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | 🛠️ Unimplemented | 🛠️ Unimplemented |
+| Profile pictures of people and chats | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
+| Edit own profile (name, about, picture) | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | 🧪 Untested | ⛔ Unsupported | 🧪 Untested | 🛠️ Unimplemented | 🛠️ Unimplemented |
 | Identity verification: emoji comparison with another device or a person, incoming requests, cross-signing + recovery-key set-up, "verify with recovery key" (Settings > Accounts, contact panel) | ⛔ Unsupported | ⛔ Unsupported | 🧪 Fake-verified (fake SDK objects + mock UI only, no real homeserver or second device) | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported |
-| Privacy settings | 🧪 Untested | 🧪 Untested | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |
+| Privacy settings | ✅ Verified (live 2026-11-16) | ✅ Verified (live 2026-11-16) | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |
 | Start a chat with a new contact | 🧪 Untested | ✅ Verified | ✅ Verified | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested | 🧪 Untested |
 | Block a contact | 🧪 Untested | 🧪 Untested | ✅ Verified | ⛔ Unsupported | 🧪 Untested | 🧪 Untested | ⛔ Unsupported | 🧪 Untested |
 | Message requests inbox | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported | 🧪 Untested | ⛔ Unsupported | ⛔ Unsupported | ⛔ Unsupported |

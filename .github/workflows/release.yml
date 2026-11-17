@@ -44,6 +44,34 @@ jobs:
           name: web
           path: artifacts/*
 
+  demo:
+    if: github.ref == 'refs/heads/main'
+    name: Demo on GitHub Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The mock UI (apps/ui/src/mock.ts) published at https://pixelcrafterexe.github.io/unichat/ : no backend, no real data.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install -g pnpm@12.17.0
+      - run: pnpm install --frozen-lockfile
+      - name: Build the demo
+        run: node scripts/build-demo.mjs
+      - name: Publish it to the gh-pages branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd apps/ui/dist-demo
+          git init -q -b gh-pages
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add -A
+          git commit -q -m "UniChat demo ${VERSION} (mock data, no backend)"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+
   desktop:
     if: github.ref == 'refs/heads/main'
     name: Desktop app (Linux)
@@ -166,6 +194,14 @@ jobs:
         run: |
           rm -rf node_modules apps/*/node_modules packages/*/node_modules ~/.local/share/pnpm ~/.cache/pnpm ~/.cache/electron ~/.cache/electron-builder apps/desktop/out apps/ui/dist
           df -h / | tail -1
+      # ostree hardlinks the files it staged in TMPDIR into the flatpak installation. In this container HOME (where that
+      # installation lives) is bind-mounted from the host while /tmp belongs to the container, so the default TMPDIR made
+      # every runtime install fail with "Invalid cross-device link". Staging next to the installation keeps both on one device.
+      - name: Stage flatpak downloads on the same filesystem as the flatpak installation
+        run: |
+          mkdir -p "$HOME/flatpak-tmp"
+          echo "TMPDIR=$HOME/flatpak-tmp" >> "$GITHUB_ENV"
+          df -h "$HOME" /tmp | tail -2
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: unichat-desktop-${{ env.VERSION }}.flatpak

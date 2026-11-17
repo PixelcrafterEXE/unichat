@@ -9,7 +9,7 @@
 // the device's private key can compute it. The public key is announced to the group through the group record (`Dev.dht`), so peers know whom to look up without any
 // shared secret on the wire. The group key is deliberately NOT an input: it rotates on every revocation, which would silently change every device's DHT address.
 //
-// What the public DHT sees (documented in docs/ARCHITECTURE.md): your IP address and that of the peer, the time, your device's DHT public key and that it announces / looks up that key.
+// What the public DHT sees (documented in https://github.com/PixelcrafterEXE/unichat/wiki/Architecture): your IP address and that of the peer, the time, your device's DHT public key and that it announces / looks up that key.
 // It never sees the group id, the group key, device ids, names or any content: the key is a one-way derivation and everything after the DHT handshake is Noise.
 //
 // Android / nodejs-mobile: `hyperdht` uses the native add-ons udx-native and sodium-native. The module is therefore loaded lazily and any failure is reported as "not available

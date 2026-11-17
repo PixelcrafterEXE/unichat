@@ -54,6 +54,9 @@ public final class NodeRuntime {
         Os.setenv("HOME", files.getAbsolutePath(), true);
         Os.setenv("TMPDIR", app.getCacheDir().getAbsolutePath(), true);
         Os.setenv("UNIMSG_PLATFORM", "android", true);
+        // Provider debug lines (counts and ids only, never message text) on logcat while <filesDir>/unimsg-debug exists:
+        //   adb shell run-as app.unimsg.android touch files/unimsg-debug   (remove the file and restart the app to switch it off)
+        if (new File(files, "unimsg-debug").exists()) Os.setenv("UNIMSG_DEBUG", "1", true);
 
         NodeBridge.get().start(app, sock);
         Thread t = new Thread(null, () -> {
