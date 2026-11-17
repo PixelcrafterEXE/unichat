@@ -109,4 +109,23 @@ export default [
     await t.eq("two chips", `${MSG("ok")}.querySelectorAll('.reactions .chip:not(.add)').length`, 2);
     await t.ok("the 👍 chip counts both", `/👍\\s*2/.test(${MSG("ok")}.querySelector('.reactions .chip').textContent)`);
   }),
+
+  test("Android: the message menu offers Share, which hands the message text to the system (#82)", async (t) => {
+    await t.open("&chat=wa-1:anna");
+    await t.eq("the Android bridge is visible to the UI", `typeof window.UnimsgNative`, "object");
+    // One expression, because a message arriving under an open menu closes it again: (re)open, then click Share when it is there.
+    await t.ok("Share is offered and opens the share sheet", `(() => {
+      const el = __e2e.msg('Also: bring snacks'); if (!el) return false;
+      if (!document.querySelector('.ctxmenu')) { __e2e.ctx(el); return false; }
+      const b = [...document.querySelectorAll('.ctxmenu button')].find((x) => /Share/.test(x.textContent));
+      if (!b) return false; b.click(); return true; })()`);
+    await t.ok("the text was handed over", `window.__lastShare && window.__lastShare.text.includes('Also: bring snacks')`);
+  }, { init: `window.UnimsgNative = { call: () => {} };` }),
+
+  test("Share is not offered without the Android bridge", async (t) => {
+    await t.open("&chat=wa-1:anna", { settle: true });
+    await t.contextMenu({ expr: `__e2e.msg('Also: bring snacks')` });
+    await t.ok("the menu is open", `document.querySelector('.ctxmenu')`);
+    await t.ok("no Share entry", `![...document.querySelectorAll('.ctxmenu button')].some((b) => /Share/.test(b.textContent))`);
+  }),
 ];

@@ -613,6 +613,19 @@ function MessageView(p: {
   const lastLong = useRef(0); // touch: a long press opens the same menu as a right click (the browser's own contextmenu event that follows is ignored)
   const lp = useLongPress((x, y) => { lastLong.current = Date.now(); setMenu({ x, y, sel: "" }); });
   const del = () => { if (confirm("Delete this message for everyone?")) core.call("delete", { chatId: m.chatId, messageId: m.id }).catch(err); };
+  // Android only: hand the message to the system share sheet. An attachment has to travel as bytes, because the archive is
+  // encrypted and no other app can read it; the native side writes the copy and shares it as a content:// URI (issue #82).
+  const canShare = !!(window as any).UnimsgNative && !m.deleted && (!!m.text || !!m.attachments?.length);
+  const share = async () => {
+    try {
+      const a = m.attachments?.[0];
+      const payload = a
+        ? { text: m.text || "", file: { ...(await core.call("attachment", { chatId: m.chatId, messageId: m.id, attachmentId: a.id })), name: a.name || `attachment.${(a.mime.split("/")[1] ?? "bin").replace(/[^a-z0-9]/gi, "")}` } }
+        : { text: m.text };
+      const r = await core.call("$share", payload);
+      if (r && r.started === false) err(new Error(r.error ?? "Sharing did not start."));
+    } catch (e) { err(e); }
+  };
   const badge = p.net && p.showNet && <span className="netbadge" title={p.net.title}><ProviderIcon provider={p.net.provider} size={14} title={p.net.title} /></span>;
   const name = m.fromMe ? "You" : chat.kind === "dm" ? chat.name : m.sender || m.senderId; // your alias wins in 1:1 chats
   // "[Photo]"-style stand-in text: hidden when the real media is there, a proper "not available" card when it is not
@@ -674,7 +687,7 @@ function MessageView(p: {
         </div>)}
       {reactors && createPortal(<ReactorsModal chat={p.own} m={m} messages={p.getMessages()} onClose={() => setReactors(false)} />, document.body)}
       {info && createPortal(<Suspense fallback={null}><MessageInfoModal chat={p.own} m={m} messages={p.getMessages()} details={!!caps?.receiptDetails} onClose={() => setInfo(false)} /></Suspense>, document.body)}
-      {menu && <MessageMenu {...menu} onReactors={() => setReactors(true)} m={m} caps={caps} onClose={() => setMenu(undefined)} onSelect={p.onSelect} onMore={() => setFullPicker(true)} onReact={p.onReact} onPin={p.onPin} onReply={p.onReply} onForward={p.onForward} onEdit={p.onEdit} onDelete={del} onRetry={p.onRetry} onDiscard={p.onDiscard} />}
+      {menu && <MessageMenu {...menu} onReactors={() => setReactors(true)} m={m} caps={caps} onClose={() => setMenu(undefined)} onSelect={p.onSelect} canShare={canShare} onShare={() => void share()} onMore={() => setFullPicker(true)} onReact={p.onReact} onPin={p.onPin} onReply={p.onReply} onForward={p.onForward} onEdit={p.onEdit} onDelete={del} onRetry={p.onRetry} onDiscard={p.onDiscard} />}
       {fullPicker && <EmojiPopover onClose={() => setFullPicker(false)} onPick={(e) => p.onReact(e)} />}
       {picker && (
         <div className="reactpick" onMouseLeave={() => { pickTimer.current = setTimeout(() => setPicker(false), 600); }} onMouseEnter={() => clearTimeout(pickTimer.current)}>
@@ -802,7 +815,7 @@ function SystemRow({ m }: { m: Message }) {
 }
 
 /** Right-click menu for a message (replaces the browser's own menu; selected text still gets "Copy selection"). */
-function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: () => void; x: number; y: number; sel: string; m: Message; caps?: Capabilities; onClose: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onReply: () => void; onForward: () => void; onEdit: () => void; onDelete: () => void; onRetry: () => void; onDiscard: () => void }) {
+function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: () => void; canShare?: boolean; onShare: () => void; x: number; y: number; sel: string; m: Message; caps?: Capabilities; onClose: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onReply: () => void; onForward: () => void; onEdit: () => void; onDelete: () => void; onRetry: () => void; onDiscard: () => void }) {
   const { m, caps } = p;
   const [pinOpen, setPinOpen] = useState(false); // networks with expiring pins: the length is chosen right in the menu
   const ref = useRef<HTMLDivElement>(null);
@@ -827,6 +840,7 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: 
       {!m.deleted && !failed && <>
         {caps?.replies && <Item icon={<Reply size={15} />} label="Reply" onClick={p.onReply} />}
         <Item icon={<Forward size={15} />} label="Forward" onClick={p.onForward} />
+        {p.canShare && <Item icon={<ExternalLink size={15} />} label="Share…" onClick={p.onShare} />}
         <Item icon={<CheckSquare size={15} />} label="Select" onClick={p.onSelect} />
         {caps?.pinMessages && (m.pinned ? <Item icon={<PinOffIcon size={15} />} label="Unpin" onClick={() => p.onPin(false)} />
           : caps.pinDurations?.length ? <>

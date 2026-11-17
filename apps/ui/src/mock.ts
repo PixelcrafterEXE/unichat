@@ -499,6 +499,8 @@ export function mockTransport() {
           const c = chats.find((x) => x.id === p.chatId);
           if (c?.kind === "dm") return [{ id: c.id, name: c.name, handle: c.provider === "matrix" ? c.id.split(":").slice(1).join(":") : "+49 151 " + (1000 + (c.name.length * 137) % 9000), avatarUrl: undefined }];
           return membersOf(p.chatId); }
+        // Android share sheet (issue #82): the fake backend only records what the UI handed over
+        case "$share": (globalThis as any).__lastShare = p; return { started: true };
         case "attachment": { const f = files.get(`${p.messageId}|${p.attachmentId}`) ?? (BIG ? BIG_FILE : undefined); if (!f) throw new Error("attachment expired"); return { dataBase64: f.b64, mime: f.mime, name: f.name }; }
         case "send": {
           { const slow = Number((globalThis as any).__mockSlowSend) || 0; if (slow) await new Promise((r) => setTimeout(r, slow)); } // e2e hook: a slow backend answer

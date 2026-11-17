@@ -169,6 +169,9 @@ public final class NodeBridge {
                 case "$installApk": // must follow a user tap ("Update"): the UI passes the path of the verified file from the updater
                     replyToUi(id, installApk(c, p.optString("path", "")));
                     return true;
+                case "$share": // {text?, file?:{name,mime,dataBase64}}: hand a message to Android's share sheet (issue #82)
+                    replyToUi(id, share(c, p));
+                    return true;
                 case "$notificationState":
                     replyToUi(id, new JSONObject().put("granted", MainActivity.notificationsGranted(c)).put("sdk", Build.VERSION.SDK_INT));
                     return true;
@@ -275,6 +278,67 @@ public final class NodeBridge {
             return fail("This phone has nothing that can install app files: " + e.getClass().getSimpleName() + ".");
         }
         return new JSONObject().put("started", true);
+    }
+
+    /** Cache folder the share sheet reads from. Covered by the cache-path root of res/xml/file_paths.xml. */
+    private static final String SHARE_DIR = "share";
+    private static final int MAX_SHARE_BYTES = 64 * 1024 * 1024;
+
+    /**
+     * Android's share sheet for one message (issue #82): its text, or an attachment the UI has already downloaded.
+     * The bytes are written into the cache and handed over as a content:// URI, because another app cannot read our files.
+     */
+    private static JSONObject share(Context c, JSONObject p) throws Exception {
+        final String text = p.optString("text", "");
+        final JSONObject file = p.optJSONObject("file");
+        Intent send = new Intent(Intent.ACTION_SEND);
+        if (file != null) {
+            byte[] bytes;
+            try { bytes = android.util.Base64.decode(file.optString("dataBase64", ""), android.util.Base64.DEFAULT); }
+            catch (IllegalArgumentException e) { Log.w(TAG, "share: undecodable attachment", e); return fail("This attachment could not be read, so it was not shared."); }
+            if (bytes.length == 0) return fail("This attachment is empty, so there is nothing to share.");
+            if (bytes.length > MAX_SHARE_BYTES) return fail("This file is too large to share from UniChat (the limit is 64 MB).");
+            java.io.File dir = new java.io.File(c.getCacheDir(), SHARE_DIR);
+            sweepShared(dir);
+            if (!dir.isDirectory() && !dir.mkdirs()) return fail("UniChat cannot prepare the file for sharing on this phone.");
+            java.io.File f = new java.io.File(dir, shareName(file.optString("name", "")));
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(f)) { out.write(bytes); }
+            Uri uri;
+            try { uri = androidx.core.content.FileProvider.getUriForFile(c, c.getPackageName() + ".fileprovider", f); }
+            catch (IllegalArgumentException e) { Log.w(TAG, "FileProvider has no root for " + f.getPath(), e); return fail("This build cannot share files. Please report this."); }
+            send.setType(mimeOf(file.optString("mime", ""))).putExtra(Intent.EXTRA_STREAM, uri);
+            if (!text.isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
+        } else {
+            if (text.isEmpty()) return fail("There is nothing to share in this message.");
+            send.setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
+        }
+        Intent chooser = Intent.createChooser(send, null)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        // Like the installer handoff: started from the activity, because a background activity start is dropped silently.
+        android.app.Activity a = MainActivity.onScreen();
+        try { if (a != null) a.startActivity(chooser); else c.startActivity(chooser); }
+        catch (Exception e) { Log.w(TAG, "no activity for the share intent", e); return fail("This phone has nothing to share with: " + e.getClass().getSimpleName() + "."); }
+        return new JSONObject().put("started", true);
+    }
+
+    /** A file name another app will see: no path, no surprises, never empty. */
+    private static String shareName(String raw) {
+        String n = raw.replace('\\', '/');
+        n = n.substring(n.lastIndexOf('/') + 1).replaceAll("[^A-Za-z0-9._-]", "_");
+        while (n.startsWith(".")) n = n.substring(1);
+        if (n.isEmpty()) n = "attachment";
+        return n.length() > 80 ? n.substring(n.length() - 80) : n;
+    }
+    private static String mimeOf(String raw) {
+        String m = raw.split(";")[0].trim();
+        return m.matches("[\\w.+-]+/[\\w.+-]+") ? m : "application/octet-stream";
+    }
+    /** The receiving app reads the file after this call returns, so shared copies are cleared on the NEXT share, not now. */
+    private static void sweepShared(java.io.File dir) {
+        java.io.File[] old = dir.listFiles();
+        if (old == null) return;
+        long cutoff = System.currentTimeMillis() - 10 * 60_000L;
+        for (java.io.File f : old) if (f.isFile() && f.lastModified() < cutoff && !f.delete()) Log.w(TAG, "could not clear " + f.getName());
     }
 
     private static JSONObject fail(String message) throws Exception { return new JSONObject().put("started", false).put("error", message); }
