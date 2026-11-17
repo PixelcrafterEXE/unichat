@@ -25,14 +25,30 @@ export function interfaces(): Iface[] {
   for (const [name, list] of Object.entries(all)) for (const i of list ?? []) out.push({ name, address: i.address.replace(/%.*$/, ""), family: i.family === "IPv6" ? 6 : 4, internal: i.internal, netmask: i.netmask });
   return out;
 }
-/** Private-network IPv4 addresses of this machine (what "LAN interfaces" means: never a public address, never a Docker-style wildcard). VPN addresses (100.64/10) are NOT included: pick them explicitly. */
-export const lanBindAddresses = (ifs = interfaces()) => ifs.filter((i) => i.family === 4 && !i.internal && RFC1918(i.address)).map((i) => i.address);
+/**
+ * Interfaces that are never the network another device of yours sits on: container bridges, virtual switches and VPN tunnels.
+ * A Docker bridge has an RFC1918 address, so without this the "local network" listener happily bound to 172.x.0.1 and nothing
+ * else -- a phone on the same Wi-Fi then cannot reach this device at all, and the pairing only says "couldn't reach that device".
+ */
+const VIRTUAL_IF = /^(docker|br-|veth|virbr|vmnet|vboxnet|tun|tap|wg|tailscale|zt|utun|lxc|podman|cni|kube)/i;
+/** Private-network IPv4 addresses of this machine (what "LAN interfaces" means: never a public address, never a virtual bridge). VPN addresses (100.64/10) are NOT included: pick them explicitly. */
+export const lanBindAddresses = (ifs = interfaces()) => ifs.filter((i) => i.family === 4 && !i.internal && RFC1918(i.address) && !VIRTUAL_IF.test(i.name)).map((i) => i.address);
+/** Real interfaces carrying a PUBLIC IPv4 address: a campus, hotel or ISP network without NAT. Offered for picking, never bound by itself. */
+export const publicLanInterfaces = (ifs = interfaces()) => ifs.filter((i) => i.family === 4 && !i.internal && !RFC1918(i.address) && !CGNAT(i.address) && !VIRTUAL_IF.test(i.name));
 /** Addresses worth telling a peer about for the given bind set. */
 export const advertisable = (binds: string[]) => binds.filter((h) => h !== "0.0.0.0" && h !== "::" && !/^127\./.test(h) && h !== "::1");
 /** The addresses the listener should be bound to for a setting, or an error text. */
 export function bindsFor(s: ListenSetting, ifs = interfaces()): { hosts: string[]; error?: string } {
   if (s.scope === "loopback") return { hosts: ["127.0.0.1"] };
-  if (s.scope === "lan") return { hosts: lanBindAddresses(ifs) };
+  if (s.scope === "lan") {
+    const hosts = lanBindAddresses(ifs);
+    if (hosts.length) return { hosts };
+    // Not every local network is an RFC1918 one: universities and some ISPs hand out public addresses. Opening a port there is
+    // the user's call (see "Exposure"), so say what is going on instead of listening on nothing and failing every pairing.
+    const pub = publicLanInterfaces(ifs);
+    if (pub.length) return { hosts: [], error: `This network gives this device a public address (${pub.map((i) => `${i.name}: ${i.address}`).join(", ")}), so UniChat does not open a port on it by itself. Choose "One specific address" and pick that address to let your other devices reach this one, or use a VPN address such as Tailscale's.` };
+    return { hosts: [] };
+  }
   const a = (s.address ?? "").trim().replace(/^\[|\]$/g, "");
   if (!a) return { hosts: [], error: "Enter the address of the network interface to listen on (for example your Tailscale or VPN address)." };
   if (a === "0.0.0.0" || a === "::") return { hosts: [], error: "Listening on every interface is not offered. Pick \"local network\" or one specific address." };
@@ -46,7 +62,7 @@ const maskBits = (m?: string) => { if (!m || !/^\d+\.\d+\.\d+\.\d+$/.test(m)) re
  * Changes when the device joins another Wi-Fi; addresses announced together with it are only valid while the owner still announces that fingerprint.
  */
 export function netFingerprint(ifs: Iface[] = interfaces()): string {
-  const subnets = ifs.filter((i) => i.family === 4 && !i.internal && RFC1918(i.address) && !/^(docker|br-|veth|virbr|tun|tap|wg|tailscale|zt)/i.test(i.name)).map((i) => {
+  const subnets = ifs.filter((i) => i.family === 4 && !i.internal && RFC1918(i.address) && !VIRTUAL_IF.test(i.name)).map((i) => {
     const b = maskBits(i.netmask), ip = i.address.split(".").reduce((n, o) => ((n << 8) | Number(o)) >>> 0, 0), m = b === 0 ? 0 : (0xffffffff << (32 - b)) >>> 0;
     return ((ip & m) >>> 0).toString(16) + "/" + b;
   }).sort();
