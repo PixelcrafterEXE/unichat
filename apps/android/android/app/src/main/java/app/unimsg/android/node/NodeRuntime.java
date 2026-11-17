@@ -17,7 +17,8 @@ import java.nio.file.Files;
  * Starts the Node.js runtime (nodejs-mobile, libnode.so) inside this process.
  *
  * nodejs-mobile can start Node ONCE per process: node::Start cannot be called again after it returns. So if Node ever
- * exits we terminate the process; NodeService is START_STICKY and the system recreates it in a fresh process.
+ * exits we terminate the process; NodeService is START_STICKY and the system recreates it in a fresh process. Repeated
+ * exits are counted so that the service waits longer and longer before trying again (see restartDelayMs).
  */
 public final class NodeRuntime {
     private static final String TAG = "UnimsgNode";
@@ -62,10 +63,54 @@ public final class NodeRuntime {
         Thread t = new Thread(null, () -> {
             int rc = nativeStart(new String[]{"node", new File(project, "main.js").getAbsolutePath()});
             Log.e(TAG, "node exited with code " + rc + "; restarting the process");
+            noteExit(app); // before the kill: the backoff below has to survive this process
             Process.killProcess(Process.myPid());
         }, "unimsg-node", 8L * 1024 * 1024);
         t.start();
     }
+
+    // ---- crash-loop backoff ------------------------------------------------------------------------------------------
+    // Node exiting kills the process and START_STICKY starts the service again, so a bundle that cannot run (parse error,
+    // unreadable archive, missing add-on) would restart as fast as the runtime can fail and empty the battery in minutes.
+    // The exits are counted in SharedPreferences because nothing in this process outlives them.
+    private static final long EXIT_WINDOW_MS = 600_000, EXIT_FIRST_WAIT_MS = 5_000, EXIT_MAX_WAIT_MS = 300_000;
+    private static final int EXIT_GIVE_UP = 6;
+
+    private static void noteExit(Context app) {
+        NativePrefs p = new NativePrefs(app);
+        StringBuilder b = new StringBuilder();
+        for (long at : recentExits(p)) b.append(at).append(',');
+        p.setNodeExits(b.append(System.currentTimeMillis()).toString());
+    }
+
+    /** The exits of the last EXIT_WINDOW_MS, oldest first. */
+    private static java.util.List<Long> recentExits(NativePrefs p) {
+        java.util.List<Long> out = new java.util.ArrayList<>();
+        long now = System.currentTimeMillis();
+        for (String t : p.nodeExits().split(",")) {
+            if (t.isEmpty()) continue;
+            // at > now: the clock jumped backwards (time zone, NTP); such an entry would never expire, so drop it
+            try { long at = Long.parseLong(t); if (at <= now && now - at < EXIT_WINDOW_MS) out.add(at); } catch (NumberFormatException ignored) { }
+        }
+        return out;
+    }
+
+    /**
+     * How long NodeService should wait before starting Node again: 0 after a clean run, otherwise 5 s doubling with every
+     * exit in the last 10 minutes up to 5 min (minus the time the restart itself took), and -1 = give up after 6 exits.
+     * Giving up stops the service and leaves the user a notification; opening the app clears the count (forgetExits).
+     */
+    public static long restartDelayMs(Context ctx) {
+        java.util.List<Long> exits = recentExits(new NativePrefs(ctx.getApplicationContext())); // read only: noteExit prunes, so the list cannot grow
+        int n = exits.size();
+        if (n == 0) return 0;
+        if (n >= EXIT_GIVE_UP) return -1;
+        long waited = System.currentTimeMillis() - exits.get(n - 1);
+        return Math.max(Math.min(EXIT_FIRST_WAIT_MS << (n - 1), EXIT_MAX_WAIT_MS) - waited, 0);
+    }
+
+    /** The user opened the app: that IS the retry, so the backoff starts over (and a service that gave up starts again). */
+    public static void forgetExits(Context ctx) { new NativePrefs(ctx.getApplicationContext()).setNodeExits(""); }
 
     /**
      * Restarts the whole app process: node::Start cannot run twice in one process, so the only clean restart of the backend is a new process.

@@ -52,6 +52,7 @@ public class MainActivity extends BridgeActivity {
 
         current = new java.lang.ref.WeakReference<>(this);
         askNotificationPermissionOnce();
+        app.unimsg.android.node.NodeRuntime.forgetExits(this); // the user opening the app is the retry after a backend crash loop
         ContextCompat.startForegroundService(this, new Intent(this, NodeService.class)); // allowed: we are in the foreground
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {

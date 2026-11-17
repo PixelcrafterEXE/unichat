@@ -1,2 +1,4 @@
 # sha256 of nodejs-mobile release assets. Upstream publishes no checksums: these were computed by trust-on-first-use from the GitHub download.
+# The GitHub API exposes no digest for these assets either (only name + size), so the pin below is NOT independently confirmed.
+# How to check it, and what was already checked: apps/android/README.md, section "nodejs-mobile download".
 bd7321eaa1a7602fbe0bb87302df2d79d87835cf4363fbdd17c350dbb485c2af  nodejs-mobile-v18.20.4-android.zip

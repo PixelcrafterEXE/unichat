@@ -3,7 +3,7 @@
 // object per line, UTF-8. JSON.stringify never emits a raw newline, so a line is always one frame.
 //
 //   native -> node   {"id":N,"method":"snapshot","params":{...}}      a Hub call (the UI's UnimsgNative.call, forwarded verbatim)
-//                    ids < 0 are used by the native side for its own control calls ($foreground, $config, $ping, $flush, $shutdown)
+//                    ids < 0 are used by the native side for its own control calls ($foreground, $config, $ping, $network, $power, $flush, $shutdown)
 //   node -> native   {"id":N,"result":...}  |  {"id":N,"error":"message"}
 //                    {"event":"message","data":{...}}                 a Hub event (forwarded to the UI as is)
 //                    {"ctl":"ready","protocol":1,"node":"v18...","sqlite":"sqljs"}   the backend is up (never forwarded to the UI)
@@ -22,10 +22,14 @@
 //                                  {keepAlive,notifyContent} (native reply to the UI).
 //   $reply {chatId,text}           notification direct reply: Hub "send" {chatId,text}. Result: {} or error.
 //   $markRead {chatId,messageId}   notification "mark as read" action: Hub "markRead".
-//   $network {interfaces:[{name,address,family?,netmask?}]}
+//   $network {interfaces:[{name,address,family?,netmask?}], metered?:boolean}
 //                                  the native side reports every IP address of every connected network (ConnectivityManager LinkProperties) after each
 //                                  connectivity change / resume; the backend uses it instead of os.networkInterfaces() (which may fail on Android), rebinds the
 //                                  sync listener, re-announces addresses to peers and resets the dial back-off (hub call syncNetworkChanged).
+//                                  metered = the active network does not have NET_CAPABILITY_NOT_METERED: no background update check, no avatar pre-warming.
+//   $power {saver:boolean,low:boolean}
+//                                  battery saver on / Android reported a low battery (PowerMonitor.java). Together with $network metered it decides
+//                                  `setAvatarWarmPaused` (see warm-pause.ts). Both are re-sent whenever the native side reconnects to the backend.
 //   $flush {}                      flush the sql.js database to disk (call when the app goes to the background)
 //   $shutdown {}                   hub.shutdown(), flush, then exit(0)
 //
