@@ -24,6 +24,7 @@ export default [
     await t.ok("show / scan / by code, in that order", `(()=>{const o=['sync-add','sync-join','sync-bycode'].map(id=>document.querySelector('#'+id)); if(o.some(e=>!e)) return false;
       return /Show QR code/.test(o[0].textContent) && /Scan QR code/.test(o[1].textContent) && /pair with the code/i.test(o[2].textContent)
         && o[0].compareDocumentPosition(o[1]) & Node.DOCUMENT_POSITION_FOLLOWING && o[1].compareDocumentPosition(o[2]) & Node.DOCUMENT_POSITION_FOLLOWING})()`);
+    await t.eq("show and scan are the same size", `(()=>{const a=document.querySelector('#sync-start').getBoundingClientRect(), b=document.querySelector('#sync-scan').getBoundingClientRect(); return Math.round(a.width)===Math.round(b.width) && Math.round(a.height)===Math.round(b.height)})()`, true);
     await t.click("#sync-start"); await t.waitSel("#sync-pairing");
     await t.ok("this device is listed with a name and no leftover bar/ellipse/dash", `(()=>{const r=document.querySelector('#sync-devices .devrow'); return !!r && /My laptop/.test(r.textContent) && !r.querySelector('.bar,.state')})()`);
   }),

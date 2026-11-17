@@ -101,7 +101,7 @@ export function SyncPanel() {
       <div className="box" id="sync-add">
         {!adding ? <><h4 style={{ marginTop: 0 }}>Show QR code</h4>
           <p className="hint">On this device. The other one scans it.</p>
-          <button className="primary inline big" id="sync-start" disabled={busy || st.revoked || !!st.unlinking} onClick={startAdd}>Show the code</button></>
+          <div className="btns"><button className="primary inline big pairbtn" id="sync-start" disabled={busy || st.revoked || !!st.unlinking} onClick={startAdd}>Show the code</button></div></>
           : <Pairing p={pair ?? st.pairing} copied={copied} onCopy={(l) => { navigator.clipboard?.writeText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={() => run(() => core.call("syncStopPairing"))} />}
       </div>
 
@@ -110,7 +110,7 @@ export function SyncPanel() {
           <h4 style={{ marginTop: 0 }}>Scan QR code</h4>
           <p className="hint">Of the device that is showing one.</p>
           {typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia
-            ? <div className="btns"><button className="primary inline big" id="sync-scan" disabled={busy} onClick={() => setScan(true)}>Scan the code</button></div>
+            ? <div className="btns"><button className="primary inline big pairbtn" id="sync-scan" disabled={busy} onClick={() => setScan(true)}>Scan the code</button></div>
             : <p className="hint">This device has no camera UniChat may use. Type the code below instead.</p>}
           {scan && <Scanner onClose={() => setScan(false)} onLink={(l) => { setScan(false); join({ link: l }); }} />}
         </div>
