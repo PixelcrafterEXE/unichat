@@ -231,7 +231,8 @@ Bugs found by running it and fixed: missing `libc++_shared.so`, `\p{L}` SyntaxEr
 ## NOT verified (needs a phone / real accounts)
 Notification posting with real messages, Reply and Mark as read actions, `$requestBatteryExemption` dialog, the UI button calling `$config`/`$requestBatteryExemption` (UI not changed here), real reboot (BOOT_COMPLETED),
 Android 15 behaviour on a physical device and OEM killers, arm64 execution (only x86_64 ran; arm64 libsignal add-on not executed), getUserMedia/file chooser, Doze, a real WhatsApp/Signal/Matrix account (providers were exercised against fakes, see the probe table), memory use of sql.js with a big archive,
-StrongBox, better-sqlite3 (not built), and the new host signals: that `metered` flips on real mobile data, that `ACTION_BATTERY_LOW` / battery saver reach `PowerMonitor`
+StrongBox, better-sqlite3 (not built), the `$installApk` handoff end to end (that the corrected FileProvider root really shares the file, that the system installer opens, and that the signing-certificate comparison reads an archive's certificates on a real device — it is written so that a failing check never blocks an install).
+Also unverified: that `metered` flips on real mobile data, that `ACTION_BATTERY_LOW` / battery saver reach `PowerMonitor`
 and pause the avatar warm-up, and that the crash-loop backoff waits and gives up as described (only the TypeScript decision and the control calls are tested).
 
 ## Known gaps / follow-ups
@@ -284,5 +285,23 @@ the count, because the user tapping the icon *is* the retry. A deliberate restar
 so it is not counted here; it keeps its own limit of 3 per 10 minutes.
 
 ## Self-update (APK)
-`updateCheck/Download` run in the Node backend (packages/core/src/updater.ts); the verified APK lands in `<filesDir>/unimsg-data/updates/`. The UI then calls `$installApk {path}` (answered natively in `NodeBridge`): only files below that folder are accepted, without the "install unknown apps" permission (`REQUEST_INSTALL_PACKAGES`) the system page for UniChat opens and `{needsPermission:true}` comes back, otherwise `ACTION_VIEW application/vnd.android.package-archive` with a FileProvider URI (`res/xml/file_paths.xml`, entry `unimsg_updates`). `$apkInstallState` reports `canInstall`.
-Versions: `UNICHAT_VERSION` (0.1.N) = versionName and baked into the backend bundle; `UNICHAT_VERSION_CODE` (CI: 1000 + run number, must stay above local builds: package.json 0.1.0 gives 100) = versionCode; also `-Punimsg.versionName/-Punimsg.versionCode`. An update only installs if signed with the SAME key as the installed app: CI decodes `ANDROID_DEBUG_KEYSTORE_B64` into `~/.android/debug.keystore` and fails with a clear message when the secret is missing. `$network {metered:true}` (not sent by the native side yet) pauses background checks.
+`updateCheck/Download` run in the Node backend (packages/core/src/updater.ts); the verified APK lands in **`<filesDir>/unimsg-data/accounts/updates/`** — the Hub's data dir is `<UNIMSG_DATA>/accounts` (`new Hub(join(dataDir, "accounts"), …)` in packages/host/src/index.ts) and the updater writes `<Hub data dir>/updates`. That path appears twice natively and both copies must match it: `UPDATES_DIR` in `node/NodeBridge.java` and the `unimsg_updates` entry of `res/xml/file_paths.xml`. (Issue #91: both said `unimsg-data/updates`, so the handoff refused every real download and no installer ever opened.)
+The UI then calls `$installApk {path}` (answered natively in `NodeBridge`): only `*.apk` below that folder are accepted; without the "install unknown apps" permission (`REQUEST_INSTALL_PACKAGES`) the system page for UniChat opens and `{needsPermission:true}` comes back; otherwise `ACTION_VIEW application/vnd.android.package-archive` with a FileProvider URI, started from `MainActivity` while it is on screen (an activity start from an application context is dropped silently once the app is backgrounded). Every other outcome is `{started:false, error:"<sentence>"}`, which the UI prints under the status line — no path may end without an answer. `$apkInstallState` reports `canInstall`.
+Versions: `UNICHAT_VERSION` (0.1.N) = versionName and baked into the backend bundle; `UNICHAT_VERSION_CODE` (CI: 1000 + run number, must stay above local builds: package.json 0.1.0 gives 100) = versionCode; also `-Punimsg.versionName/-Punimsg.versionCode`. `$network {metered:true}` (not sent by the native side yet) pauses background checks.
+
+### Which key signs the APK, and why a local build blocks the update (issue #92)
+Android replaces an installed app only with a build signed by the **same** key; otherwise the install fails with "app not installed" / "a package with the same id already exists". There is no release keystore in this flow — everything is **debug**-signed:
+
+| Build | Key |
+|---|---|
+| CI (`.github/workflows/release.yml`, job `android`) | the repository secret `ANDROID_DEBUG_KEYSTORE_B64`, base64 of **the maintainer's `~/.android/debug.keystore`**, decoded into `~/.android/debug.keystore` on the runner before the build. The job fails in seconds when the secret is missing. |
+| local `pnpm run debug` / `./gradlew assembleDebug` | your own `~/.android/debug.keystore`, which the Android SDK generates per machine (alias `androiddebugkey`, store/key password `android`). |
+
+So the two match only on the machine that keystore came from. On any other machine the CI APK — downloaded by hand or by the in-app updater — cannot install over a locally built UniChat. `$installApk` now compares the signing certificates (`GET_SIGNING_CERTIFICATES`, the installed app's whole certificate history vs. the archive's) before handing the file over and answers with a sentence instead of letting Android fail in its own words; when the comparison cannot be made it stays out of the way and lets the installer decide.
+
+What to do, in order of preference:
+1. **Use the same debug keystore**: copy the keystore behind `ANDROID_DEBUG_KEYSTORE_B64` to `~/.android/debug.keystore` (`base64 -d < key.b64 > ~/.android/debug.keystore`) and rebuild. Local builds and CI builds then replace each other freely, and the in-app update works. Back up the file; it is the only copy of that key.
+2. **Uninstall first**: `adb uninstall app.unimsg.android`, then install the CI APK. This **deletes the app's data** — the message archive is encrypted with a key in the Android Keystore that the uninstall destroys, and `allowBackup` is off on purpose (see "Release / signing"), so the archive is gone for good. Export/pair with another device first if the data matters.
+3. Keep building locally and ignore the published APKs; the updater says what is wrong instead of silently doing nothing.
+
+Do not "fix" this by generating a new keystore in CI: every published APK would then be a one-way street for everyone who already installed one.
