@@ -265,6 +265,15 @@ export default [
     await t.ok("no spinner, no Retry", `!document.querySelector('.loading .spinner') && !document.querySelector('[data-load-note] button')`);
   }),
 
+  test("a chat opened while its messenger is still answering shows the archive at once, not an empty chat (#94)", async (t) => {
+    await t.open(); await t.ev(`window.__mockSlowHistory = 4000`);
+    const t0 = Date.now();
+    await t.openChat("wa-1:ben");
+    await t.waitFor(`document.querySelectorAll('.messages .msg').length>0`, { desc: "messages from the local archive", timeout: 2500 });
+    t.check("painted before the messenger answered", Date.now() - t0 < 3000);
+    await t.ok("no spinner over them", `!document.querySelector('.messages .loading .spinner')`);
+  }),
+
   test("no answer within the timeout: archived messages + note with Retry; the late answer clears the note", async (t) => {
     await t.open(); await t.ev(`window.__loadTimeoutMs = 600; window.__mockSlowHistory = 2500`);
     await t.openChat("wa-1:ben");
