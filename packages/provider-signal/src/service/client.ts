@@ -29,7 +29,7 @@ import { getOwnProfile, updateOwnProfile } from "./ownProfile.js";
 import { applyVote, pollView, registerPoll } from "./polls.js";
 import { Aci } from "@signalapp/libsignal-client";
 import { downloadAttachment } from "./attachments.js";
-import { AttachmentUploadError, attachDebug, checkAttachments, pinnedHttp, uploadAttachment, type CdnHttp, type SignalOutgoingAttachment } from "./attachmentUpload.js";
+import { AttachmentUploadError, attachDebug, checkAttachments, pinnedHttp, uploadAttachment, type CdnHttp, type ServiceAuth, type SignalOutgoingAttachment } from "./attachmentUpload.js";
 import { parseContactStream } from "./contacts.js";
 import { renderPreview } from "./richContent.js";
 import { LookupError, lookupE164, lookupUsername, parseHandle } from "./lookup.js";
@@ -449,6 +449,11 @@ export class SignalClient {
     if (!this.chatConn) throw new Error("Signal is not connected");
     return this.chatConn;
   }
+  /** This device's service credentials, for the few endpoints that are fetched as plain HTTPS (attachmentUpload.ts). */
+  private serviceAuth(): ServiceAuth | undefined {
+    const a = this.store.account;
+    return a?.password ? { username: `${a.aci}.${a.deviceId}`, password: a.password } : undefined;
+  }
   private nextTimestamp(): number { this.lastTs = Math.max(Date.now(), this.lastTs + 1); return this.lastTs; }
   private get ours() { return this.store.requireAccount().aci; }
   private requireDm(chatId: string): string {
@@ -739,7 +744,7 @@ export class SignalClient {
       checkAttachments(outAtt);
       this.requireChat();
       dm.attachments = [];
-      for (const a of outAtt) dm.attachments.push(await uploadAttachment(this.requireChat(), this.cdnHttp, a, Date.now())); // upload ONCE, fan out the pointers
+      for (const a of outAtt) dm.attachments.push(await uploadAttachment(this.requireChat(), this.cdnHttp, a, Date.now(), { auth: this.serviceAuth() })); // upload ONCE, fan out the pointers
     }
     let previewImage: { data: Uint8Array; mime: string } | undefined;
     if (!outAtt.length && !msg.poll && !msg.contacts?.length) previewImage = await this.attachLinkPreview(dm, msg, timestamp);
@@ -814,7 +819,7 @@ export class SignalClient {
     let image: { data: Uint8Array; mime: string } | undefined;
     if (p.image) {
       // upload failure (form refused, CDN down, ...) only costs the picture; the text and the title/description card still go out
-      try { preview.image = await uploadAttachment(this.requireChat(), this.cdnHttp, { kind: "image", mime: p.image.mime, data: p.image.data }, Date.now(), { retries: 0 }); image = p.image; }
+      try { preview.image = await uploadAttachment(this.requireChat(), this.cdnHttp, { kind: "image", mime: p.image.mime, data: p.image.data }, Date.now(), { auth: this.serviceAuth(), retries: 0 }); image = p.image; }
       catch (e) { previewDebug(`image-upload-failed:${e instanceof AttachmentUploadError ? e.errClass : "error"}`, false); }
     }
     return { preview, image };

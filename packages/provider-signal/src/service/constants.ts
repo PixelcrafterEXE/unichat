@@ -76,6 +76,9 @@ export const CDN_URLS: Record<number, string> = {
 };
 
 export const STORAGE_URL = "https://storage.signal.org";
+/** The service itself. libsignal reaches it over the chat connection; a few endpoints (the attachment upload form, see
+ *  attachmentUpload.ts) are fetched as ordinary HTTPS with this device's credentials, the way Signal's own clients do. */
+export const SERVICE_URL = "https://chat.signal.org";
 
 /**
  * Production zkgroup ServerPublicParams (base64). Source: Signal-Desktop config/production.json `serverPublicParams`

@@ -12,7 +12,7 @@ import { request } from "node:https";
 import type { OutgoingAttachment } from "@unimsg/core";
 import type { AttachmentPointer } from "../protocol/codec.js";
 import type { AuthChat } from "./chatTypes.js";
-import { CDN_URLS, SIGNAL_TLS_ROOT_PEM, USER_AGENT } from "./constants.js";
+import { CDN_URLS, SERVICE_URL, SIGNAL_TLS_ROOT_PEM, USER_AGENT } from "./constants.js";
 import { encryptAttachmentBlob } from "./attachments.js";
 
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
@@ -45,15 +45,19 @@ export function padToBucket(plain: Uint8Array): Buffer {
 }
 
 export interface HttpReq { method: string; url: URL; headers: Record<string, string>; body?: Buffer }
-export interface HttpRes { status: number; headers: Record<string, string | string[] | undefined> }
+export interface HttpRes { status: number; headers: Record<string, string | string[] | undefined>; body?: Buffer }
 export type CdnHttp = (r: HttpReq) => Promise<HttpRes>;
+/** Credentials of this linked device for the service itself (same pair the authenticated chat connection uses). */
+export interface ServiceAuth { username: string; password: string }
 
+const MAX_RESPONSE_BODY = 256 * 1024; // answers we read are small (an upload form, an error); anything larger is cut off
 /** Default transport: HTTPS with only Signal's root trusted. */
 export const pinnedHttp: CdnHttp = (r) => new Promise((resolve, reject) => {
   const headers = { "user-agent": USER_AGENT, ...r.headers, "content-length": String(r.body?.length ?? 0) };
   const req = request(r.url, { method: r.method, ca: SIGNAL_TLS_ROOT_PEM, timeout: 120_000, headers }, (res) => {
-    res.resume();
-    res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers }));
+    const chunks: Buffer[] = []; let n = 0;
+    res.on("data", (c: Buffer) => { if (n < MAX_RESPONSE_BODY) { chunks.push(c); n += c.length; } });
+    res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));
     res.on("error", reject);
   });
   req.on("timeout", () => req.destroy(new Error("CDN timeout")));
@@ -92,29 +96,75 @@ async function withRetry<T>(fn: () => Promise<T>, retries = uploadRetry.delaysMs
   }
 }
 
-async function fetchForm(chat: AuthChat, bytes: number): Promise<UploadForm> {
+const FORM_PATH = "/v4/attachments/form/upload";
+const parseForm = (body?: Uint8Array): UploadForm | undefined => {
+  try { return JSON.parse(Buffer.from(body ?? new Uint8Array()).toString("utf8")) as UploadForm; } catch { return undefined; }
+};
+/** A form we can actually upload with: a key, a location and a CDN we know. */
+const usable = (f?: UploadForm): f is UploadForm =>
+  !!f && typeof f.key === "string" && !!f.key && typeof f.signedUploadLocation === "string" && !!CDN_URLS[f.cdn] && f.cdn !== 0;
+/**
+ * The same request as over the chat connection, but as an ordinary HTTPS call to the service with this device's
+ * credentials. Signal's own clients fetch the upload form this way; the chat connection answers 400 for this path on
+ * some accounts/servers (issue #85), and then this is what gets the attachment sent.
+ */
+async function fetchFormOverHttps(http: CdnHttp, auth: ServiceAuth): Promise<{ status: number; body?: Buffer }> {
+  const r = await http({
+    method: "GET", url: new URL(FORM_PATH, SERVICE_URL),
+    headers: { authorization: "Basic " + Buffer.from(`${auth.username}:${auth.password}`).toString("base64"), accept: "application/json" },
+  });
+  return { status: r.status, body: r.body };
+}
+
+/** Set once the HTTPS route has produced a form: the chat connection is then not asked again, so later attachments do not
+ *  pay for a round trip that is known to fail here. Reset only by restarting the backend. */
+let httpsFormWorks = false;
+/** TESTS: forget what the last account learned about the two routes. */
+export const resetFormRoute = () => { httpsFormWorks = false; };
+
+async function fetchForm(chat: AuthChat, bytes: number, https?: { http: CdnHttp; auth: ServiceAuth }): Promise<UploadForm> {
   const stage = "form";
   const tooBig = () => new AttachmentUploadError("This file is too large for Signal (the limit is 100 MB).", stage, "http-413");
-  let res;
-  try { res = await chat.fetch({ verb: "GET", path: "/v4/attachments/form/upload", headers: [] }); }
+  let res: { status: number; body?: Uint8Array; headers?: ReadonlyArray<readonly [string, string]>; message?: string };
+  let triedHttps = false; // one HTTPS attempt per upload, whichever route was tried first
+  if (https && httpsFormWorks) { // this account already needed HTTPS; the chat connection stays the fallback
+    triedHttps = true;
+    try {
+      const r = await fetchFormOverHttps(https.http, https.auth);
+      if (r.status >= 200 && r.status < 300 && usable(parseForm(r.body))) { attachDebug("form", bytes, 0, "https:ok"); return form(parseForm(r.body)!, bytes); }
+      attachDebug("form", bytes, 0, `https:http-${r.status}:back-to-chat`);
+    } catch (e) { attachDebug("form", bytes, 0, `https:${errClassOf(e)}:back-to-chat`); }
+  }
+  try { res = await chat.fetch({ verb: "GET", path: FORM_PATH, headers: [] }); }
   catch (e) { attachDebug("form", bytes, 0, `error:${errClassOf(e)}`); throw new AttachmentUploadError("Couldn't reach Signal to send the attachment. Check your connection and try again.", stage, errClassOf(e), true); }
+  // A 4xx that is not about this file (400 "the chat connection does not serve this path", 401/403/404) is retried over
+  // HTTPS. Only a usable form counts: anything else leaves the original answer in place, so the error still names it.
+  if (https && !triedHttps && res.status >= 400 && res.status < 500 && res.status !== 413 && res.status !== 429) {
+    attachDebug("form", bytes, 0, `chat-${res.status}:retry-https`);
+    try {
+      const r = await fetchFormOverHttps(https.http, https.auth);
+      if (r.status >= 200 && r.status < 300 && usable(parseForm(r.body))) { attachDebug("form", bytes, 0, "https:ok"); httpsFormWorks = true; res = r; }
+      else attachDebug("form", bytes, 0, `https:http-${r.status}`);
+    } catch (e) { attachDebug("form", bytes, 0, `https:${errClassOf(e)}`); }
+  }
   if (res.status === 413) { attachDebug("form", bytes, 0, "error:http-413"); throw tooBig(); }
   if (res.status === 429) { attachDebug("form", bytes, 0, "error:http-429"); throw new AttachmentUploadError("Signal is busy or you are sending too fast (upload form, HTTP 429); try again shortly.", stage, "http-429", true); }
-  let form: UploadForm | undefined;
   const ok = res.status >= 200 && res.status < 300;
-  if (ok) {
-    try { form = JSON.parse(Buffer.from(res.body ?? new Uint8Array()).toString("utf8")) as UploadForm; } catch { form = undefined; }
-  }
-  if (!form || typeof form.key !== "string" || !form.key || typeof form.signedUploadLocation !== "string" || !CDN_URLS[form.cdn] || form.cdn === 0) {
+  const parsed = ok ? parseForm(res.body) : undefined;
+  if (!usable(parsed)) {
     const cls = ok ? "bad-form" : `http-${res.status}`;
     attachDebug("form", bytes, 0, `error:${cls}`);
     if (ok) throw new AttachmentUploadError("Signal didn't accept the attachment upload: its reply to the upload request was malformed or named an unsupported CDN. Try again later.", stage, cls);
-    const hdrs = ok ? "" : (res.headers ?? []).map((h: [string, string]) => h.join("=")).filter((h) => !/authorization|cookie/i.test(h)).join(" ").slice(0, 160);
+    const hdrs = ok ? "" : (res.headers ?? []).map((h) => h.join("=")).filter((h) => !/authorization|cookie/i.test(h)).join(" ").slice(0, 160);
     const why = ok ? "" : [res.message, Buffer.from(res.body ?? new Uint8Array()).toString("utf8").replace(/\s+/g, " ").trim(), hdrs].filter(Boolean).join(" | ").slice(0, 240); // the server's reason (never the request: no secrets in it)
     throw new AttachmentUploadError(`Signal refused the attachment upload request (upload form, HTTP ${res.status}${why ? ": " + why : ""}). Try again later.`, stage, cls, transientStatus(res.status));
   }
-  attachDebug("form", bytes, form.cdn, "ok");
-  return { cdn: form.cdn, key: form.key, headers: form.headers && typeof form.headers === "object" ? form.headers : {}, signedUploadLocation: form.signedUploadLocation };
+  return form(parsed, bytes);
+}
+/** The form as the uploader wants it (and the one debug line that says which CDN it names). */
+function form(f: UploadForm, bytes: number): UploadForm {
+  attachDebug("form", bytes, f.cdn, "ok");
+  return { cdn: f.cdn, key: f.key, headers: f.headers && typeof f.headers === "object" ? f.headers : {}, signedUploadLocation: f.signedUploadLocation };
 }
 
 const uploadErr = (stage: string, status: number) => new AttachmentUploadError(uploadMsg(status, stage), "upload", `http-${status}`, transientStatus(status));
@@ -168,7 +218,7 @@ export function checkAttachments(list: OutgoingAttachment[]): void {
 }
 
 /** Encrypt + upload one attachment and return its pointer. */
-export async function uploadAttachment(chat: AuthChat, http: CdnHttp, a: SignalOutgoingAttachment, now: number, opts: { retries?: number } = {}): Promise<AttachmentPointer> {
+export async function uploadAttachment(chat: AuthChat, http: CdnHttp, a: SignalOutgoingAttachment, now: number, opts: { retries?: number; auth?: ServiceAuth } = {}): Promise<AttachmentPointer> {
   const size = a.data.length;
   let enc: ReturnType<typeof encryptAttachmentBlob>;
   try {
@@ -178,7 +228,7 @@ export async function uploadAttachment(chat: AuthChat, http: CdnHttp, a: SignalO
     attachDebug("encrypt", size, 0, `error:${errClassOf(e)}`);
     throw new AttachmentUploadError("The attachment could not be prepared for sending.", "encrypt", errClassOf(e));
   }
-  const form = await withRetry(() => fetchForm(chat, size), opts.retries);
+  const form = await withRetry(() => fetchForm(chat, size, opts.auth ? { http, auth: opts.auth } : undefined), opts.retries);
   try {
     await withRetry(() => upload(http, form, enc.blob), opts.retries);
     attachDebug("upload", enc.blob.length, form.cdn, "ok");
