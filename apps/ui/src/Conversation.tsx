@@ -612,6 +612,27 @@ function MessageView(p: {
   const [menu, setMenu] = useState<{ x: number; y: number; sel: string }>();
   const lastLong = useRef(0); // touch: a long press opens the same menu as a right click (the browser's own contextmenu event that follows is ignored)
   const lp = useLongPress((x, y) => { lastLong.current = Date.now(); setMenu({ x, y, sel: "" }); });
+  // Touch: drag a message to the right to reply to it. `swipe.on` is decided on the first moves -- false as soon as the
+  // gesture is more vertical than horizontal, so the timeline keeps scrolling normally (CSS touch-action: pan-y does the rest).
+  const canSwipeReply = !!caps?.replies && !m.deleted && !pend && !p.selMode;
+  const swipe = useRef({ x: 0, y: 0, on: undefined as boolean | undefined, armed: false });
+  const [slide, setSlide] = useState(0);
+  const SWIPE_FIRE = 56, SWIPE_MAX = 80;
+  const swipeHandlers = {
+    onTouchStart: (e: React.TouchEvent) => { const t = e.touches[0]!; swipe.current = { x: t.clientX, y: t.clientY, on: undefined, armed: false }; },
+    onTouchMove: (e: React.TouchEvent) => {
+      if (!canSwipeReply || e.touches.length > 1) { swipe.current.on = false; if (slide) setSlide(0); return; }
+      const t = e.touches[0]!, dx = t.clientX - swipe.current.x, dy = t.clientY - swipe.current.y;
+      if (swipe.current.on === undefined) { if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; swipe.current.on = dx > 0 && Math.abs(dx) > Math.abs(dy); }
+      if (!swipe.current.on) return;
+      const d = Math.max(0, Math.min(SWIPE_MAX, dx - 8));
+      if (d >= SWIPE_FIRE && !swipe.current.armed) { swipe.current.armed = true; try { navigator.vibrate?.(12); } catch { /* not allowed */ } } // past the point: one tick, like the phone apps
+      if (d < SWIPE_FIRE) swipe.current.armed = false;
+      setSlide(d);
+    },
+    onTouchEnd: () => { const fire = swipe.current.on && swipe.current.armed; swipe.current.on = false; setSlide(0); if (fire) p.onReply(); },
+    onTouchCancel: () => { swipe.current.on = false; setSlide(0); },
+  };
   const del = () => { if (confirm("Delete this message for everyone?")) core.call("delete", { chatId: m.chatId, messageId: m.id }).catch(err); };
   // Android only: hand the message to the system share sheet. An attachment has to travel as bytes, because the archive is
   // encrypted and no other app can read it; the native side writes the copy and shares it as a content:// URI (issue #82).
@@ -646,8 +667,14 @@ function MessageView(p: {
       onClickCapture={(e) => { // while selecting, the whole row is one big checkbox: links, players and action buttons must not fire
         if (p.selMode) { e.stopPropagation(); e.preventDefault(); p.onSelect(); return; }
         if (lp.swallow()) { e.stopPropagation(); e.preventDefault(); } }}
-      onTouchStart={(e) => { if (!(e.target as HTMLElement).closest("a, audio, video, input, textarea, .vidctrls")) lp.onTouchStart(e); }} onTouchMove={lp.onTouchMove} onTouchEnd={lp.onTouchEnd} onTouchCancel={lp.onTouchCancel}
+      style={slide ? { transform: `translateX(${slide}px)`, transition: "none" } : undefined}
+      data-swipe={slide >= SWIPE_FIRE ? "fire" : slide ? "on" : undefined}
+      onTouchStart={(e) => { if (!(e.target as HTMLElement).closest("a, audio, video, input, textarea, .vidctrls")) { lp.onTouchStart(e); swipeHandlers.onTouchStart(e); } }}
+      onTouchMove={(e) => { lp.onTouchMove(e); swipeHandlers.onTouchMove(e); }}
+      onTouchEnd={(e) => { lp.onTouchEnd(e); swipeHandlers.onTouchEnd(); }}
+      onTouchCancel={() => { lp.onTouchCancel(); swipeHandlers.onTouchCancel(); }}
       onContextMenu={(e) => { if ((e.target as HTMLElement).closest("a, audio, video, input, textarea")) return; e.preventDefault(); if (pend || Date.now() - lastLong.current < 1200) return; setMenu({ x: e.clientX, y: e.clientY, sel: window.getSelection()?.toString() ?? "" }); }}>
+      {!!slide && <span className="swipereply" aria-hidden style={{ opacity: Math.min(1, slide / SWIPE_FIRE), transform: `translateX(${-Math.min(slide, SWIPE_MAX)}px) scale(${0.7 + 0.3 * Math.min(1, slide / SWIPE_FIRE)})` }}><Reply size={18} /></span>}
       {p.selMode && <span className="selmark" data-selected={p.selected ? "1" : "0"} aria-hidden>{p.selected ? <CheckSquare size={16} /> : <Square size={16} />}</span>}
       {p.grouped ? <time className="gtime">{fmtTime(m.time)}</time>
         : (() => { const av = <Avatar name={name} size={40} of={m.fromMe ? undefined : chat.kind === "dm" ? { kind: "chat", id: chat.id } : { kind: "contact", id: `${chat.accountId}:${m.senderId}` }} />;

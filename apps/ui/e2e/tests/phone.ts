@@ -16,6 +16,28 @@ async function noOverflow(t: Page, name: string) {
 const inViewport = (sel: string) => `(()=>{const e=document.querySelector(${JSON.stringify(sel)}); if(!e) return false; const r=e.getBoundingClientRect(); return r.left>=-1&&r.top>=-1&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1})()`;
 
 export default [
+  test("phone: swipe a message to the right to reply to it", async (t) => {
+    await t.device("phone");
+    await t.open("&chat=wa-1:anna");
+    const MSG = `__e2e.msg("Are we still on for Saturday?")`;
+    await t.waitFor(MSG);
+    await t.swipeOn(MSG, 20); // too short: the message springs back and nothing is quoted
+    await t.not("a short drag does not reply", `document.querySelector('.replybar')`);
+    await t.swipeOn(MSG, 100);
+    await t.ok("the composer quotes the message", `/Replying to/.test(document.querySelector('.replybar')?.textContent||'')`);
+    await t.ok("and the row is back where it belongs", `!${MSG}.style.transform`);
+    await t.ok("the quote names the sender", `/Anna Becker/.test(document.querySelector('.replybar')?.textContent||'')`);
+  }),
+
+  test("phone: swiping up or down scrolls the timeline instead of replying", async (t) => {
+    await t.device("phone");
+    await t.open("&chat=wa-1:anna");
+    const MSG = `__e2e.msg("Are we still on for Saturday?")`;
+    await t.waitFor(MSG);
+    await t.swipeOn(MSG, 10, -120);
+    await t.not("a vertical drag never replies", `document.querySelector('.replybar')`);
+  }),
+
   test("phone: chat list, open chat, back, no overflow", async (t) => {
     await t.device("phone"); await t.open();
     t.check("(pointer: coarse) is on", await t.ev(`matchMedia('(pointer: coarse)').matches`));
