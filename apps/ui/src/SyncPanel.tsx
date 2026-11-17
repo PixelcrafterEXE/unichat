@@ -39,13 +39,15 @@ export function SyncPanel() {
     const report = () => { const m = c.type === "cellular" || c.saveData === true; if (m !== !!st.media?.metered) core.call("syncSetMetered", { metered: m }).catch(() => {}); };
     report(); c.addEventListener?.("change", report); return () => c.removeEventListener?.("change", report);
   }, [st?.enabled, st?.media?.metered]);
-  const run: Run = async (f) => { setBusy(true); setErr(""); try { await f(); await load(); } catch (e: any) { setErr(e.message); load(); } finally { setBusy(false); } };
+  // `shown`: the failure has its own place in the panel (joining into the "Connect to another device" box), so the general
+  // error line stays empty instead of printing the same sentence a second time underneath it.
+  const run: Run = async (f) => { setBusy(true); setErr(""); try { await f(); await load(); } catch (e: any) { if (!e?.shown) setErr(e.message); load(); } finally { setBusy(false); } };
 
   const midJoin = !!st && !!st.joining && (st.joining.state === "confirm" || st.joining.state === "waiting");
   // keep nearby discovery running while the "Connect to another device" list is visible
   useEffect(() => { if (!st || midJoin) return; const f = () => core.call("syncBrowse").catch(() => {}); f(); const t = setInterval(f, 20_000); return () => clearInterval(t); }, [!!st, midJoin]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const join = (p: any) => run(() => core.call("syncJoin", p));
+  const join = (p: any) => run(async () => { try { await core.call("syncJoin", p); } catch (e: any) { throw Object.assign(e, { shown: true }); } });
   const joinNearby = (d: any) => run(() => core.call("syncJoinNearby", { host: d.host, port: d.port }));
   const startAdd = () => run(async () => setPair(await core.call("syncStartPairing", { keepListening: true })));
   // a pairing link (QR scanned by the system camera, pasted into the web URL as ?pair=) starts joining by itself; only the number comparison is left
@@ -113,7 +115,7 @@ export function SyncPanel() {
         <div className="btns"><button className="secondary" id="sync-joinbtn" disabled={busy || !code.trim()} onClick={() => join(isSyncLink(code.trim()) ? { link: code.trim() } : { code, host: host.trim() || undefined, port: port.trim() ? Number(port) : undefined })}>{busy && code ? "Looking for the other device…" : "Connect"}</button></div>
         {flip && <div className="warn" id="sync-flip"><b>Couldn't reach that device.</b> Some devices don't accept connections from others. Show a code here instead and enter it there.
           <div className="btns"><button className="primary inline" id="sync-flip-btn" disabled={busy} onClick={startAdd}>Add a device here instead</button></div></div>}
-        {st.joining?.state === "failed" && st.joining.reason === "code" && <p className="err" id="sync-join-badcode">That code wasn't accepted. Check the letters, and that the other device still shows its code.</p>}
+        {st.joining?.state === "failed" && st.joining.reason === "code" && <p className="err" id="sync-join-badcode">A device answered but did not accept that code. Codes run out after a few minutes: check the letters, and that the other device is still showing <em>this</em> code (start a new one there if not).</p>}
         {st.joining?.state === "failed" && !st.joining.reason && <p className="err" id="sync-join-failed">{st.joining.error}</p>}
       </div>}
       {err && !flip && <p className="err" id="sync-err">{err}</p>}

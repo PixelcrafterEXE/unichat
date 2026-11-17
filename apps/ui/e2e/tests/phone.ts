@@ -16,6 +16,18 @@ async function noOverflow(t: Page, name: string) {
 const inViewport = (sel: string) => `(()=>{const e=document.querySelector(${JSON.stringify(sel)}); if(!e) return false; const r=e.getBoundingClientRect(); return r.left>=-1&&r.top>=-1&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1})()`;
 
 export default [
+  test("phone: 'Take a photo' hands the file input to the system camera, and the other entries do not", async (t) => {
+    await t.device("phone");
+    await t.open("&chat=wa-1:anna");
+    await t.click(".composer .tools .icon.big");
+    await t.waitSel("#att-camera");
+    await t.click("#att-camera");
+    await t.eq("the input asks for an image from the camera", `(()=>{const f=document.querySelector('.composer input[type=file]'); return f.accept + '|' + f.getAttribute('capture')})()`, "image/*|environment");
+    await t.click(".composer .tools .icon.big");
+    await t.click("#att-media");
+    await t.eq("picking a photo afterwards opens the gallery again, not the camera", `(()=>{const f=document.querySelector('.composer input[type=file]'); return f.accept + '|' + f.getAttribute('capture')})()`, "image/*,video/*|null");
+  }),
+
   test("phone: swipe a message to the right to reply to it", async (t) => {
     await t.device("phone");
     await t.open("&chat=wa-1:anna");

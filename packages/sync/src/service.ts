@@ -597,6 +597,10 @@ export class SyncService {
       this.joinBusy = false; void jd?.stop();
       if (startedMdns && !this.servers.size) { this.mdns?.stop(); this.mdns = undefined; }
       if (e instanceof DialFailure) {
+        // What the dial actually did, in the log of the device that tried: "the code was not accepted" and "nobody answered"
+        // look the same from the outside, and without these numbers a pairing complaint cannot be told apart from a typo.
+        const st = e.stats;
+        console.warn(`[sync] pairing failed: reason=${e.reason} candidates=${st.tried} answered=${st.connected} refusedTheCode=${st.rejected} connectionRefused=${st.refused} timedOut=${st.timedOut}${pin ? " link=yes" : ""}${nearby ? " nearby=yes" : ""}`);
         const msg = nearby && e.reason !== "other" ? "Couldn't reach that device. Make sure both are on the same Wi-Fi and it still shows \"Add a device\"." : e.reason === "code" ? "The pairing code was not accepted (wrong code, expired, or too many attempts)." + (pin ? " If you scanned a QR code, check that it is the one on the other device's screen." : "")
           : e.reason === "unreachable" ? "Couldn't reach a device showing that code. Both the local network and the internet (HyperDHT hole punching) were tried. If the other device is on a very restrictive network (symmetric NAT, UDP blocked), try the other direction: show a code on this device instead and type it there." : e.message;
         this.joinResult = { state: "failed", error: msg, reason: e.reason }; this.changedDevices(); throw new Error(msg);
