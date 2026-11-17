@@ -27,7 +27,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm -r typecheck
+      # Bounded on purpose: a test command that hangs (apps/desktop did, printing nothing at all) used to sit here until the
+      # job's own 45-minute cap, which looks like "the tests are slow" instead of "something never exited".
       - name: Unit tests
+        timeout-minutes: 20
         env:
           TMPDIR: ${{ runner.temp }}
         run: pnpm -r test
