@@ -6,8 +6,9 @@
 //
 // docs/live-results.json is written by scripts/live/run.mjs (real-account runs) and may hold `manual` records for things verified by hand:
 //   "manual": [{ "row": "Profile pictures of people and chats", "provider": "signal", "status": "verified", "at": "2026-11-16", "note": "..." }]
-// A cell is rewritten only when a result exists for its row and provider: ✅ for verified (with the date of the run), ❌ for failed.
-// Cells without a result (unsupported by capability, skipped, never run) keep their hand-written text.
+// A cell is rewritten only when a result exists for its row and provider: ✅ for verified, ❌ for failed. A cell is just the emoji -- the run
+// date stays in docs/live-results.json and the failure note goes into the README's notes section by hand -- and a trailing `*` ("see the notes
+// below the table") is kept as it is. Cells without a result (unsupported by capability, skipped, never run) keep their hand-written text.
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,10 +41,9 @@ for (let i = head2 + 2; i < lines.length && lines[i].startsWith("|"); i++) {
   const row = cells[0]; const res = byRow.get(row); if (!res) continue;
   for (let c = 1; c < cols.length; c++) {
     const prov = COLS[cols[c]]; const r = prov && res.get(prov); if (!r || cells[c] === undefined) continue; // a row may be short of columns
-    const date = (r.at ?? "").slice(0, 10);
-    const note = (r.note ?? "").replace(/\s+/g, " ").replace(/\|/g, "/").trim(); // a newline or a pipe would break the table row
-    const want = r.status === "verified" ? `✅ Verified (live ${date}${r.feature === "manual" ? ", by hand" : ""})` : `❌ Failing (live ${date}: ${note.slice(0, 90)})`;
-    if (cells[c] !== want) { changes.push(`${row} / ${cols[c]}: "${cells[c].slice(0, 50)}" -> "${want}"`); cells[c] = want; }
+    const want = r.status === "verified" ? "✅" : "❌";
+    const star = cells[c].endsWith("*") && cells[c].slice(0, -1).trim() === want; // a hand-added "see the notes below" marker survives
+    if (cells[c] !== want && !star) { changes.push(`${row} / ${cols[c]}: "${cells[c].slice(0, 50)}" -> "${want}"`); cells[c] = want; }
   }
   lines[i] = "| " + cells.join(" | ") + " |";
 }
