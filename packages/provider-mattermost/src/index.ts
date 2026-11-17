@@ -247,7 +247,11 @@ class MattermostConnector implements Connector {
       } catch (e) {
         if (this.stopped || !this.session) return;
         if (e instanceof MmError && e.status === 401) { this.needsLogin(); return; }
-        this.err("connect", e instanceof MmError ? e.message : "Connection problem; retrying.");
+        // A server we could not reach (status 0: DNS, no route, timeout) is retried right below, and on a phone that just woke
+        // up the first try regularly lands before the network is back. Telling the user at once turned every app start into an
+        // error popup while the account went green seconds later, so the first attempts stay a state, not a message.
+        const transient = e instanceof MmError && e.status === 0;
+        if (!transient || attempt >= 3) this.err("connect", e instanceof MmError ? e.message : "Connection problem; retrying.");
       }
       if (this.stopped || !this.session) return;
       this.state("disconnected");
