@@ -20,7 +20,9 @@ test("a ledger sealed with another key throws WrongKeyError and leaves the file 
 });
 
 test("isWrongKey recognises the raw node:crypto message and ignores other errors", () => {
-  assert.equal(isWrongKey(new Error("Unsupported state or unable to authenticate data")), true);
+  assert.equal(isWrongKey(new Error("Unsupported state or unable to authenticate data")), true); // Node 22 and earlier
+  assert.equal(isWrongKey(new Error("error:1C800064:Provider routines::bad decrypt")), true);    // Node 24 and later
+  assert.equal(isWrongKey(Object.assign(new Error("whatever OpenSSL says next"), { code: "ERR_OSSL_BAD_DECRYPT" })), true);
   assert.equal(isWrongKey(new Error("disk full")), false);
   assert.equal(isWrongKey(undefined), false);
 });
