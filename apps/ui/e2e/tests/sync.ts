@@ -103,6 +103,16 @@ export default [
       if(!svg||!card) return false; return svg.getBoundingClientRect().width > card.getBoundingClientRect().width * 0.8})()`);
   }),
 
+  test("while the confirm dialog is up, no dead close button is left under it", async (t) => {
+    await t.device("phone");
+    await open(t);
+    await t.setInput("#sync-code", "bako-lemi-zuta-nosu"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-confirm");
+    await t.not("the settings X is gone (it sat under the overlay and did nothing)", `(()=>{const x=document.querySelector('.settings .closex'); return x && getComputedStyle(x).display !== 'none'})()`);
+    await t.ok("the dialog's own way out is there", `!!document.querySelector('#sync-cancel')`);
+    await t.click("#sync-cancel");
+    await t.ok("and the X comes back once it is closed", `(()=>{const x=document.querySelector('.settings .closex'); return !!x && getComputedStyle(x).display !== 'none'})()`, { timeout: 4000 });
+  }),
+
   test("typing a code: wrong code gives one sentence, right code opens the confirm dialog", async (t) => {
     await open(t);
     await t.setInput("#sync-code", "baba-baba-baba-baba"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-join-badcode");
