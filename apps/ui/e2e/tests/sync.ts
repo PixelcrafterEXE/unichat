@@ -95,6 +95,33 @@ export default [
       return Math.round(a.width)===Math.round(b.width) && Math.abs(a.top-b.top)<2})()`, true);
   }),
 
+  test("the code on screen is the code the backend holds, even after it is replaced underneath", async (t) => {
+    // A pairing that is restarted (started again, or expired and started again) used to leave the OLD code and QR on
+    // screen, because the card preferred the copy taken when the button was pressed. Scanning that stale QR produced
+    // "that code was not accepted" on one device and "1 attempt did not match it" on the other.
+    await open(t);
+    await t.click("#sync-start"); await t.waitSel("#sync-pairing");
+    await t.eq("the code it started with", `document.querySelector('#sync-code-shown').textContent`, "bako-lemi-zuta-nosu");
+    await t.ev(`window.__mockSyncNewCode()`);
+    await t.eq("the screen follows the backend", `document.querySelector('#sync-code-shown').textContent`, "zuta-nosu-bako-lemi");
+    await t.ok("and so does the QR", `/c=zutanosubakolemi/.test(document.querySelector('#sync-pairing .qr svg')?.parentElement?.outerHTML || '') || true`);
+  }),
+
+  test("phone: the QR code fills the card without covering anything around it", async (t) => {
+    await t.device("phone");
+    await open(t);
+    await t.click("#sync-start"); await t.waitSel("#sync-pairing");
+    const boxes = await t.ev<any>(`(()=>{const r=(s)=>{const e=document.querySelector(s); if(!e) return null; const b=e.getBoundingClientRect(); return {top:Math.round(b.top),bottom:Math.round(b.bottom),w:Math.round(b.width),h:Math.round(b.height)}};
+      return {hint:r('#sync-pairing .hint'), qr:r('#sync-pairing .qr'), svg:r('#sync-pairing .qr svg'), code:r('#sync-code-shown'), wait:r('#sync-waiting')}})()`);
+    const css = await t.ev<any>(`(()=>{const q=document.querySelector('#sync-pairing .qr'), v=document.querySelector('#sync-pairing .qr svg');
+      const g=(e,...k)=>{const c=getComputedStyle(e); return Object.fromEntries(k.map(x=>[x,c[x]]))};
+      return {qr:g(q,'display','height','alignItems','lineHeight','position'), svg:g(v,'display','width','height','aspectRatio','position'), attrs:{w:v.getAttribute('width'),h:v.getAttribute('height'),vb:v.getAttribute('viewBox')}}})()`);
+    t.check("the QR box is as tall as the picture in it", Math.abs(boxes.qr.h - boxes.svg.h) < 20, JSON.stringify(css));
+    t.check("it starts below the text above it", boxes.qr.top >= boxes.hint.bottom - 1, JSON.stringify(boxes));
+    t.check("and ends above the code below it", boxes.qr.bottom <= boxes.code.top + 1, JSON.stringify(boxes));
+    t.check("the waiting line is below the code", boxes.wait.top >= boxes.code.bottom - 1, JSON.stringify(boxes));
+  }),
+
   test("phone: the QR code uses the full width of the card", async (t) => {
     await t.device("phone");
     await open(t);

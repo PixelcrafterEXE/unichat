@@ -45,11 +45,12 @@ body:has(#sync-confirm) .settings .closex { display: none; }
 @media (max-width: 520px) { .pairbtn { width: 100%; } }
 
 /* (a) the QR code is the thing to point a camera at: on a phone it takes the whole width instead of a 150px stamp. */
-.bk.sync .qr svg { width: 100%; height: auto; max-width: 150px; display: block; }
+.bk.sync .qr { display: grid; width: min(100%, 166px); aspect-ratio: 1 / 1; box-sizing: border-box; }
+.bk.sync .qr svg { width: 100%; height: 100%; display: block; }
 @media (max-width: 560px) {
   .bk.sync .paircard { flex-direction: column; align-items: stretch; }
   .bk.sync .qr { align-self: stretch; }
-  .bk.sync .qr svg { max-width: none; }
+  .bk.sync .qr { width: 100%; }
   .bk.sync .codebox { text-align: center; }
 }
 /* (b) "Copy link" and "Cancel" are one row of equal buttons, not one inside the code box and one under the card. */

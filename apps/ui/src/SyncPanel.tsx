@@ -102,7 +102,7 @@ export function SyncPanel() {
         {!adding ? <><h4 style={{ marginTop: 0 }}>Show QR code</h4>
           <p className="hint">On this device. The other one scans it.</p>
           <div className="btns"><button className="primary inline big pairbtn" id="sync-start" disabled={busy || st.revoked || !!st.unlinking} onClick={startAdd}>Show the code</button></div></>
-          : <Pairing p={pair ?? st.pairing} copied={copied} onCopy={(l) => { navigator.clipboard?.writeText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={() => run(() => core.call("syncStopPairing"))} />}
+          : <Pairing p={st.pairing ?? pair} copied={copied} onCopy={(l) => { navigator.clipboard?.writeText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={() => run(() => core.call("syncStopPairing"))} />}
       </div>
 
       {!midJoin && !st.approval && <>

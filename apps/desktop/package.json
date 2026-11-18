@@ -28,5 +28,6 @@
   },
   "description": "UniChat desktop app (Electron)",
   "author": "UniChat",
-  "homepage": "https://github.com/PixelcrafterEXE/unichat"
+  "homepage": "https://github.com/PixelcrafterEXE/unichat",
+  "desktopName": "unichat.desktop"
 }
