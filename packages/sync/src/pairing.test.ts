@@ -267,3 +267,30 @@ test("an identity whose id is not the hash of its key is replaced at startup (no
   assert.equal((A2.svc as any).me.id, "1".repeat(32), "a device that is in a group keeps its identity; the problem is reported instead");
   await A2.stop();
 });
+
+/** mDNS stand-in: a table a test fills by hand, the way a real browser hears every announcement on the link -- its own included. */
+class TableMdns {
+  table: { instance: string; host: string; port: number; txt: Record<string, string>; addrs: string[]; seen: number }[] = [];
+  async start() {} stop() {} query() {} refresh() {} unadvertise() {} advertise() {}
+  services() { return this.table; }
+  add(instance: string, port: number, addrs: string[]) { this.table.push({ instance, host: instance + ".local", port, txt: { v: "1", m: "pair", n: instance }, addrs, seen: Date.now() }); return this; }
+}
+
+test("a device that is showing a code does not dial its own mDNS announcement while joining", async () => {
+  // Both devices show a code, so both announce over mDNS -- and a browser hears its own announcement. The joining one
+  // used to dial ITSELF, be refused by its own listener (it holds a different code), and because an announced host counts
+  // as decisive, that refusal aborted the pairing with "that code wasn't accepted" while the real handshake was running.
+  // The other device's answer is slowed down here so the self-dial always loses the race it used to win.
+  const browse = new TableMdns();
+  const A = await nd("mdnsA", "memory");
+  const pa = await A.call("syncStartPairing", { deviceName: "mdnsA" });
+  const slowToA: Connector = (host, port, timeout, signal) =>
+    (port === pa.port ? new Promise((r) => setTimeout(r, 500)) : Promise.resolve()).then(() => tcpConnect(host, port, timeout, signal));
+  const B = await nd("mdnsB", "memory", undefined, undefined, undefined, { opts: { mdns: browse as any, net: { connect: slowToA } } });
+  const pb = await B.call("syncStartPairing", { deviceName: "mdnsB" });
+  const idOf = (n: typeof A) => "unichat-" + n.svc.status().deviceId.slice(0, 10);
+  browse.add(idOf(B), pb.port, ["127.0.0.1"]).add(idOf(A), pa.port, ["127.0.0.1"]); // B's own announcement first, and it answers at once
+  const j = await B.call("syncJoin", { code: pa.code, deviceName: "mdnsB" });
+  await confirm(A, B, "joiner", j.sas);
+  await until(async () => (await B.call("syncStatus")).enabled, "B joined A instead of being refused by itself");
+});

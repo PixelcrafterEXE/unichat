@@ -576,7 +576,8 @@ export class SyncService {
     let startedMdns = false, poll: (() => Cand[]) | undefined;
     if (!explicit && this.o.mdns) {
       if (!this.mdns) { this.mdns = this.o.mdns === true ? new Mdns() : this.o.mdns; this.ownMdns = this.o.mdns === true; if (this.ownMdns) { startedMdns = true; await this.mdns.start().catch(() => { this.mdns = undefined; startedMdns = false; }); } }
-      const m = this.mdns; if (m) poll = () => m.services().filter((x) => x.txt.m === "pair" && x.port).flatMap((x) => (x.addrs.length ? x.addrs : [x.host]).filter((h) => /^\d+\.\d+\.\d+\.\d+$/.test(h)).map((host) => ({ host, ports: [x.port], src: "mdns" as const })));
+      const ownInstance = "unichat-" + this.me.id.slice(0, 10);
+      const m = this.mdns; if (m) poll = () => m.services().filter((x) => x.txt.m === "pair" && x.port && x.instance !== ownInstance).flatMap((x) => (x.addrs.length ? x.addrs : [x.host]).filter((h) => /^\d+\.\d+\.\d+\.\d+$/.test(h)).map((host) => ({ host, ports: [x.port], src: "mdns" as const })));
     }
     const keys = { pub: Buffer.from(this.me.pub, "base64"), priv: Buffer.from(this.me.priv, "base64") };
     // across networks (a university network, CGNAT): the code also names a HyperDHT key, hole punched like the group sync (see pairingDhtSeed). Raced with everything above; the first handshake wins.
