@@ -87,7 +87,7 @@ for (const who of ["joiner", "host"] as const) test(`nearby join: a wrong confir
 test("nearby is only offered while 'Add a device' is open, and a code-less peer cannot use the code path", async () => {
   const H = await nd("Host"), J = await nd("Joiner");
   const p = await H.call("syncStartPairing", {}); await H.call("syncStopPairing"); await until(async () => !(await st(H)).pairing, "closed");
-  await assert.rejects(joinNearby(J, p.port), /reach|nearby|Add a device/);
+  await assert.rejects(joinNearby(J, p.port), /not showing a pairing code|reach|nearby/);
   const p2 = await H.call("syncStartPairing", {});
   await assert.rejects(J.call("syncJoin", { host: "127.0.0.1", port: p2.port, code: "baba-baba-baba-baba" }), /not accepted/); // the public psk is not the code
 });
@@ -96,13 +96,13 @@ test("nearby rate limits: prompt budget per session, and aborted attempts lock t
   const H = await nd("Host", { maxNearbyPrompts: 2, maxPairingFailures: 99 }), J = await nd("Joiner");
   const p = await H.call("syncStartPairing", {});
   for (let i = 0; i < 2; i++) { await joinNearby(J, p.port); await until(async () => !!(await st(H)).approval, "prompt " + i); await Promise.allSettled([J.call("syncCancelJoin"), H.call("syncApproveJoin", { accept: true })]); await until(async () => !(await st(H)).approval && !(await st(J)).joining, "closed"); }
-  await assert.rejects(joinNearby(J, p.port), /reach|nearby|Add a device/, "third attempt in the same session is refused");
+  await assert.rejects(joinNearby(J, p.port), /not showing a pairing code|reach|nearby/, "third attempt in the same session is refused");
   // lock-out: connections that start the nearby handshake and vanish
   const H2 = await nd("Host2", { maxPairingFailures: 2 }); const p2 = await H2.call("syncStartPairing", {});
   const kp = generateKeyPair();
   for (let i = 0; i < 3; i++) await new Promise<void>((ok) => { const s = connect(p2.port, "127.0.0.1"); dial(s, { mode: "nearby", psk: NEARBY_PSK, s: kp, hello: { id: deviceIdOf(kp.pub), name: "x" }, checkRemote() {} }).then((ch) => { ch.close(); }, () => {}).finally(() => setTimeout(ok, 50)); });
   await new Promise((r) => setTimeout(r, 200));
-  await assert.rejects(joinNearby(J, p2.port), /reach|nearby/, "source is locked out");
+  await assert.rejects(joinNearby(J, p2.port), /not showing a pairing code|reach|nearby/, "source is locked out");
 });
 
 test("nearby MITM over real sockets: an attacker relaying between the two devices produces different digits on the two screens", async () => {

@@ -258,6 +258,7 @@ test("pairing by QR link across networks: the addresses in the link are dead, th
   await Promise.all([B.call("syncConfirmJoin", { keepListening: true }), A.call("syncApproveJoin", { accept: true })]);
   await until(() => B.svc.status().devices.length === 2 && A.svc.status().devices.length === 2, "both devices in the group");
   await until(() => !!onlineVia(A, B)?.online && !!onlineVia(B, A)?.online, "the paired devices connect");
+  for (const n of [A, B]) await n.stop();
 });
 
 test("a device that is showing its own code can still join another one (it must not answer its own rendezvous)", async () => {

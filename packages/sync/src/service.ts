@@ -502,6 +502,7 @@ export class SyncService {
     else if (this.group.devices[this.me.id].name !== this.me.name) { this.group.devices[this.me.id].name = this.me.name; this.persist(); }
     this.paused = false; this.ledger.kvSet("paused", false);
     this.stopPairing("restarted"); this.joinResult = undefined;
+    this.src.clear(); // the user is asking for connections right now: earlier failures do not get to lock them out
     const code = newPairingCode(), ttl = this.o.pairingTtlMs ?? 5 * 60_000;
     const pr: Pairing = { code, psk: pairingPsk(code), expiresAt: this.now() + ttl, failures: 0, nearbyPrompts: 0, keepListening: !!p?.keepListening, timer: setTimeout(() => this.stopPairing("expired"), ttl) };
     pr.timer.unref?.(); this.pairing = pr;
@@ -530,9 +531,13 @@ export class SyncService {
     t.start().then(() => { if (this.pairDht === t) { this.pairDhtState = "ready"; console.warn(`[sync] showing a code (${this.pairTag(pr)}): its rendezvous is open`); this.changedDevices(); } else void t.stop(); },
       (e) => { if (this.pairDht === t) { this.pairDht = undefined; this.pairDhtState = e instanceof DhtUnavailable ? "unavailable" : "error"; console.warn(`[sync] showing a code (${this.pairTag(pr)}): its rendezvous could NOT be opened: ${errmsg(e)}`); this.changedDevices(); } void t.stop(); });
   }
-  private stopPairDht() {
+  private pairDhtGrace?: ReturnType<typeof setTimeout>;
+  private stopPairDht(now = false) {
     const t = this.pairDht; this.pairDht = undefined; this.pairDhtState = "off";
-    if (t) { const k = setTimeout(() => void t.stop(), 90_000); k.unref?.(); } // a pairing handshake that is still running gets time to finish (new callers are refused: no pairing is open)
+    clearTimeout(this.pairDhtGrace); this.pairDhtGrace = undefined;
+    if (!t) return;
+    if (now) { void t.stop(); return; }
+    this.pairDhtGrace = setTimeout(() => void t.stop(), 90_000); this.pairDhtGrace.unref?.(); // a pairing handshake that is still running gets time to finish (new callers are refused: no pairing is open)
   }
   private stopPairing(reason: string) {
     if (!this.pairing) return;
@@ -734,7 +739,9 @@ export class SyncService {
   private onInbound(sock: Socket) {
     const ip = this.srcOf(sock), st = this.srcState(ip), now = this.now(), viaPairDht = (sock as any).unichatVia === "dht-pair", viaDht = (sock as any).unichatVia === "dht" || viaPairDht, viaRelay = ip === "relay"; // viaRelay: no source address (relay or DHT): only the firewall / unauthenticated cap apply
     st.conns = st.conns.filter((t) => now - t < 60_000); st.conns.push(now);
-    if ((!viaRelay && (st.until > now || st.conns.length > 40 || st.open >= 3)) || this.unauth >= 8) { sock.destroy(); return; } // per-source lockout, connection rate, concurrent half-open
+    if ((!viaRelay && (st.until > now || st.conns.length > 40 || st.open >= 3)) || this.unauth >= 8) {
+      if (st.until > now) console.warn(`[sync] dropping connections from ${ip} for another ${Math.ceil((st.until - now) / 1000)}s after repeated failures from it`);
+      sock.destroy(); return; } // per-source lockout, connection rate, concurrent half-open
     this.unauth++; st.open++; sock.setNoDelay?.(true); sock.setTimeout?.(30_000, () => sock.destroy());
     let mode = "", done = false; const leave = () => { if (!done) { done = true; this.unauth--; st.open--; } };
     accept(sock, {
@@ -756,9 +763,9 @@ export class SyncService {
       leave(); sock.setTimeout?.(0);
       if (ch.mode === "nearby") {
         const pr = this.pairing;
-        if (!pr || !this.nearbyOpen()) return ch.close();
-        pr.nearbyPrompts++; // counted when the attempt starts: aborted attempts use up the budget too
-        try { await nearbyHost(ch); } catch { this.srcFail(ip, 2); return ch.close(); }
+        if (!pr || !this.nearbyOpen()) { if (pr) console.warn(`[sync] a nearby connect from ${ip} was turned down: ${pr.nearbyPrompts} prompts have been shown for this code already`); return ch.close(); }
+        try { await nearbyHost(ch); } catch { this.srcFail(ip, 2); return ch.close(); } // started and abandoned: a stranger spamming prompts looks exactly like this
+        pr.nearbyPrompts++; // from here a prompt really is put in front of the user
         if (Number(ch.hello?.grp) > 1 && this.liveCount() <= 1) return this.joinInbound(ch, ip, true);
         return this.pairHost(ch, ip, pr, false, true);
       }
@@ -1429,6 +1436,7 @@ export class SyncService {
   async dispose() {
     this.disposed = true; await this.ready.catch(() => {}); this.moves?.dispose();
     clearTimeout(this.wakeT); clearTimeout(this.reloadT); clearTimeout(this.statusT); this.avatars?.stop(); this.store.onAvatar = undefined;
+    this.stopPairDht(true); // not in 90 seconds: this service is going away now
     this.teardown(true); await this.dhtBusy.catch(() => {}); try { this.persist(); } catch { /* closed */ }
     this.store.ctx = undefined; this.ledger.close();
   }

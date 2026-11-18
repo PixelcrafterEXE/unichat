@@ -13,6 +13,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { deviceIdOf } from "./noise.js";
+import { dial } from "./channel.js";
+import { NEARBY_PSK } from "./nearby.js";
+import { newIdentity } from "./group.js";
 import { Ledger } from "./ledger.js";
 
 const refused = () => Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
@@ -307,4 +310,25 @@ test("every device is paired with every other one: three devices joined through 
   await hub.stop(); // and they are not talking THROUGH the hub: with it gone they still find each other
   await until(async () => !!phone.svc.status().devices.find((d: any) => d.name === "tablet")?.online
     && !!tablet.svc.status().devices.find((d: any) => d.name === "phone")?.online, "phone and tablet are connected to each other");
+});test("showing a code again clears the lock-out that failed attempts left behind", async () => {
+  // Attempts that start the nearby handshake and vanish lock that address out (nearby.test.ts pins that: it is what a
+  // stranger spamming prompts looks like). The lock-out is silent, it doubles -- 30s, a minute, two, up to an hour --
+  // and the device that is locked out only ever reads "couldn't reach that device". Retrying is what a user does, so
+  // there has to be a way back: putting a code on the screen is the user saying "accept connections now".
+  const host = await nd("host", "memory"), joiner = await nd("joiner", "memory");
+  const p = await host.call("syncStartPairing", { deviceName: "host", keepListening: true });
+  const me = newIdentity("ghost"), keys = { pub: Buffer.from(me.pub, "base64"), priv: Buffer.from(me.priv, "base64") };
+  for (let i = 0; i < 4; i++) { // handshake, then gone before the number exchange
+    const sock = await tcpConnect("127.0.0.1", p.port, 2000);
+    try { const ch = await dial(sock, { mode: "nearby", psk: NEARBY_PSK, s: keys, hello: { id: me.id, name: "ghost", grp: 1 }, checkRemote: () => {}, timeoutMs: 3000 }); ch.close(); }
+    catch { sock.destroy(); }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  await assert.rejects(joiner.call("syncJoinNearby", { host: "127.0.0.1", port: p.port, deviceName: "joiner" }),
+    /not showing a pairing code|reach/, "locked out, and nothing says so");
+
+  const p2 = await host.call("syncStartPairing", { deviceName: "host", keepListening: true }); // the user shows a code again
+  const j = await joiner.call("syncJoinNearby", { host: "127.0.0.1", port: p2.port, deviceName: "joiner" });
+  assert.match(j.sas, /^\d{3} \d{3}$/, "which is the way back: the connect goes through again");
+  await until(async () => !!(await host.call("syncStatus")).approval, "and the prompt is shown");
 });
