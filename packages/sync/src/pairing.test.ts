@@ -8,6 +8,12 @@ import { ChannelError } from "./channel.js";
 import { tcpConnect, type Connector, type Iface } from "./addrs.js";
 import { dialAny, isPrivateLan, listenPorts, probeHosts, SYNC_PORT, SYNC_PORT_SPAN, wellKnownPorts } from "./discover.js";
 import { node, pairUp, until, type Node } from "./testkit.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomBytes } from "node:crypto";
+import { deviceIdOf } from "./noise.js";
+import { Ledger } from "./ledger.js";
 
 const refused = () => Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
 /** A fake LAN: addresses -> loopback ports. `drop` = firewall that silently drops (connect hangs until the caller's timeout); alive hosts answer RST on closed ports. */
@@ -230,4 +236,34 @@ test("link (QR) with addresses and the pinned key; typed address keeps working",
   const C = await nd("C", "memory"); const p2 = await A.call("syncStartPairing", {}); (A.svc as any).src.clear();
   const j2 = await C.call("syncJoin", { host: "127.0.0.1", port: p2.port, code: p2.code }); await confirm(A, C, "joiner", j2.sas);
   await until(async () => (await C.call("syncStatus")).enabled, "C joined with host/port");
+});
+
+test("an identity whose id is not the hash of its key is replaced at startup (nothing could ever pair with it)", async () => {
+  const dir = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "sync-brokenid-"));
+  const key = new Uint8Array(randomBytes(32));
+  // first start: a healthy identity, which is then corrupted in the ledger the way a half-written or migrated one would be
+  const first = await nd("broken", "sqlite", dir, undefined, key);
+  const good = (first.svc as any).me;
+  await first.stop();
+  const l = new Ledger(join(dir, "sync.db"), key);
+  l.kvSet("identity", { ...good, id: "0".repeat(32) });
+  l.close();
+
+  const again = await nd("broken", "sqlite", dir, undefined, key);
+  const me = (again.svc as any).me;
+  assert.notEqual(me.id, "0".repeat(32), "the broken id is gone");
+  assert.equal(me.id, deviceIdOf(Buffer.from(me.pub, "base64")), "and the new one matches its key");
+  assert.equal(again.svc.status().deviceId, me.id);
+  await again.stop();
+
+  // in a group it must NOT be replaced behind the user's back: that would orphan the ledger
+  const dir2 = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "sync-brokenid2-"));
+  const key2 = new Uint8Array(randomBytes(32));
+  const A = await nd("grpA", "sqlite", dir2, undefined, key2), B = await nd("grpB", "memory");
+  await pairUp(A, B);
+  const meA = (A.svc as any).me; await A.stop(); await B.stop();
+  const l2 = new Ledger(join(dir2, "sync.db"), key2); l2.kvSet("identity", { ...meA, id: "1".repeat(32) }); l2.close();
+  const A2 = await nd("grpA", "sqlite", dir2, undefined, key2);
+  assert.equal((A2.svc as any).me.id, "1".repeat(32), "a device that is in a group keeps its identity; the problem is reported instead");
+  await A2.stop();
 });

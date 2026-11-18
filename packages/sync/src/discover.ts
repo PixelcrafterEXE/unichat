@@ -47,7 +47,8 @@ export function probeHosts(ifs: Iface[], max = 512): string[] {
 // ---- parallel dialing ----
 export class DialFailure extends Error { constructor(msg: string, public reason: "unreachable" | "code" | "other", public stats: DialStats) { super(msg); } }
 export interface DialStats { tried: number; refused: number; timedOut: number; rejected: number; connected: number;
-  /** where the first refusal came from ("<src> <host>:<port>"): a device that answers and says no is the whole difference between a wrong code and nobody listening */ rejectedBy?: string }
+  /** where the first refusal came from ("<src> <host>:<port>"): a device that answers and says no is the whole difference between a wrong code and nobody listening */ rejectedBy?: string;
+  /** and WHY it was refused: a shared secret that does not match reads the same as a key that does not belong to the device that showed the code */ rejectedWhy?: string }
 export interface DialAnyOpts<T> {
   /** candidates known up front, tried first (in this order) */ fixed: Cand[];
   /** polled while running (mDNS): candidates found later jump the queue */ poll?: () => Cand[];
@@ -88,7 +89,7 @@ export function dialAny<T>(o: DialAnyOpts<T>): Promise<{ value: T; cand: Cand; p
             return finish({ value: v, cand: c, port });
           } catch (e: any) {
             if (done) return;
-            if (e instanceof ChannelError && e.code === "auth") { stats.connected++; stats.rejected++; stats.rejectedBy ??= `${c.src} ${c.host}:${port}`;
+            if (e instanceof ChannelError && e.code === "auth") { stats.connected++; stats.rejected++; stats.rejectedBy ??= `${c.src} ${c.host}:${port}`; stats.rejectedWhy ??= e.message;
               if (c.src === "link" || c.src === "typed" || c.src === "mdns") return failure(true); continue; } // explicitly named / announced host: the code is wrong, stop at once
             if (e instanceof ChannelError && e.code === "protocol" && e.soft) { other = e.message; return failure(true); }
             if (isRefused(e)) { stats.refused++; continue; } // the host is up but nothing listens on this port: try the next port of the range
