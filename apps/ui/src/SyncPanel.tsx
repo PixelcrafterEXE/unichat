@@ -125,7 +125,8 @@ export function SyncPanel() {
         </div>
 
         {flip && <div className="warn" id="sync-flip"><b>Couldn't reach that device.</b> Some devices don't accept connections from others. Show a code here instead and enter it there.
-          <div className="btns"><button className="primary inline" id="sync-flip-btn" disabled={busy} onClick={startAdd}>Show a code here instead</button></div></div>}
+          <div className="btns"><button className="primary inline" id="sync-flip-btn" disabled={busy} onClick={startAdd}>Show a code here instead</button></div>
+          <p className="sub">If neither device lets the other in, swapping makes no difference: leave "Reach my devices from anywhere" switched on under Advanced, which works without either device accepting connections.</p></div>}
         {st.joining?.state === "failed" && st.joining.reason === "code" && <p className="err" id="sync-join-badcode">A device answered but did not accept that code. Codes run out after a few minutes: check the letters, and that the other device is still showing <em>this</em> code (start a new one there if not).</p>}
         {st.joining?.state === "failed" && !st.joining.reason && <p className="err" id="sync-join-failed">{st.joining.error}</p>}</>}
       {err && !flip && <p className="err" id="sync-err">{err}</p>}
@@ -338,6 +339,7 @@ function Network({ st, busy, run }: { st: any; busy: boolean; run: Run }) {
   return (
     <div className="box" id="sync-network"><h3 style={{ marginTop: 0 }}>Network</h3>
       <label className="opt"><input type="checkbox" id="sync-listen" checked={!!L.enabled} disabled={busy} onChange={(e) => set({ enabled: e.target.checked })} /><span>Stay reachable on my network<small className="sub">{L.enabled ? (st.listening ? `On ${st.binds.join(", ")}.` : L.error || "Not available right now.") : "Off: this device only connects out. At least one of your devices should stay reachable."}</small></span></label>
+      {L.enabled && st.listening && <p className="hint" id="sync-firewall">If another device cannot reach this one, this computer's firewall is dropping the connection: allow TCP port {st.port || 45045} there. Nothing has to be opened to pair, though — show the code on the other device and scan it here instead, which only needs an outgoing connection.</p>}
       {L.enabled && <><label className="sub">Who can reach it
         <select id="sync-scope" value={pickAddr ? "address" : L.scope} disabled={busy} onChange={(e) => { if (e.target.value === "address") setPickAddr(true); else { setPickAddr(false); set({ scope: e.target.value }); } }}>
           <option value="loopback">Only this computer (testing, SSH tunnels)</option><option value="lan">My local network</option><option value="address">One specific address (VPN / Tailscale)…</option></select></label>

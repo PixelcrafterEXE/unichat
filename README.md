@@ -55,6 +55,21 @@ pnpm --filter @unimsg/provider-whatsapp test  # likewise provider-signal, provid
 The pnpm workspace sets `blockExoticSubdeps: false` because Baileys (WhatsApp) depends on a git-hosted `libsignal-node` fork.
 Build scripts (Electron download, esbuild, protobufjs) are skipped by pnpm 11+; the web UI and server do not need them.
 
+## Version numbers
+
+Releases are numbered by CI and nothing else: `release.yml` builds `0.1.<github.run_number>` and tags it. A build made on a
+developer's machine must never take one of those numbers -- the installed app would claim to be a release nobody published,
+and the updater would have nothing to match it against.
+
+Local builds therefore use `scripts/dev-version.mjs`, which prints `dev-0.1.<next>` from the newest tag (`--next` prints the
+release number itself). The `dev-` prefix is what `apps/desktop/src/updater.ts` turns into "dev", so such a build reports
+itself as a development build and never offers an update:
+
+```sh
+export UNICHAT_VERSION=$(node scripts/dev-version.mjs)       # dev-0.1.14
+pnpm --filter @unimsg/ui build && pnpm --filter @unimsg/desktop exec electron-vite build
+```
+
 ## Feature matrix
 
 How to read it: one emoji per cell. A `*` means the notes under the table say more about that cell.

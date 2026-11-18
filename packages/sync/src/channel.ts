@@ -101,8 +101,10 @@ export function dial(socket: Socket, o: DialOpts): Promise<Secure> {
     await f.write(pro);
     const hs = new Handshake({ initiator: true, s: o.s, psk: o.psk, prologue: pro });
     await f.write(hs.write(Buffer.alloc(0)));
-    let hello: any;
-    try { hello = JSON.parse(hs.read(await f.hello(tm)).toString("utf8")); } catch { throw new ChannelError("auth", "the other device did not accept the code / group key"); }
+    let raw: Buffer, hello: any;
+    try { raw = await f.hello(tm); }
+    catch (e) { throw e instanceof ChannelError ? e : new ChannelError("closed", "the other device stopped answering during the handshake"); }
+    try { hello = JSON.parse(hs.read(raw).toString("utf8")); } catch { throw new ChannelError("auth", "the other device did not accept the code / group key"); }
     o.checkRemote(hs.remoteStatic!, hello);
     await f.write(hs.write(enc(o.hello)));
     return wrap(f, hs, hello, hs.remoteStatic!);
