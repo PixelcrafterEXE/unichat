@@ -16,6 +16,23 @@ async function noOverflow(t: Page, name: string) {
 const inViewport = (sel: string) => `(()=>{const e=document.querySelector(${JSON.stringify(sel)}); if(!e) return false; const r=e.getBoundingClientRect(); return r.left>=-1&&r.top>=-1&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1})()`;
 
 export default [
+  test("phone: tapping a chapter marks that chapter, not the ones it scrolls past", async (t) => {
+    // The bar used to follow the scroll-spy while a tap was still scrolling, so it flashed through every chapter on
+    // the way and dragged itself back and forth. A tap decides until the list settles.
+    await t.device("phone");
+    await t.open();
+    await t.click('.chats .foot .icon, [title="Settings"], .rail [title^="Settings"]');
+    await t.waitSel("#settings-chapters");
+    const chips = await t.ev<string[]>(`[...document.querySelectorAll('#settings-chapters button')].map(b=>b.dataset.chip)`);
+    const last = chips[chips.length - 1];
+    await t.click(`#settings-chapters button[data-chip="${last}"]`);
+    for (const d of [60, 160, 320]) {
+      await t.sleep(d);
+      await t.eq(`after ${d}ms the marked chapter is still the one tapped`,
+        `document.querySelector('#settings-chapters button.on')?.dataset.chip`, last);
+    }
+  }),
+
   test("phone: settings are one long list with a chapter bar, not a top bar of tabs", async (t) => {
     await t.device("phone");
     await t.open();

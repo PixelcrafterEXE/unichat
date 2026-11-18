@@ -1,6 +1,7 @@
 // Electron main process = the app's backend. The Hub runs right here, in-process;
 // the UI talks to it via IPC. No server, no port.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
+import { execFileSync } from "node:child_process";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, session, shell, Tray } from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { startBackend, DataKeyMismatchError, type KeyWrap } from "@unimsg/host";
@@ -37,6 +38,7 @@ const dev = !!process.env.ELECTRON_RENDERER_URL;
 
 let win: BrowserWindow | undefined;
 let tray: Tray | undefined;
+let toldAboutHiding = false;
 let quitting = false;
 let settings: SettingsStore | undefined;
 /** Started by the autostart entry / login item: come up in the tray only. Asked after `ready`, the login-item API wants that. */
@@ -88,6 +90,21 @@ async function keyProblemDialog(e: DataKeyMismatchError) {
 
 function showWindow() { if (!win) return; if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
 
+/** A Tray object is built without complaint on a desktop that shows no tray at all -- GNOME with the AppIndicator
+ *  extension off has no StatusNotifierWatcher, so the item is registered for a host that does not exist and is never
+ *  drawn. Hiding the window there leaves no way back and the app has to be killed, so the host is what we ask about.
+ *  If the question cannot be asked (no gdbus), the tray gets the benefit of the doubt, as before. */
+function trayIsVisible() {
+  if (!tray || tray.isDestroyed()) return false;
+  if (process.platform !== "linux") return true;
+  try {
+    const out = execFileSync("gdbus", ["call", "--session", "--dest", "org.freedesktop.DBus", "--object-path",
+      "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.NameHasOwner", "org.kde.StatusNotifierWatcher"],
+      { timeout: 2000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return /true/.test(out);
+  } catch { return true; }
+}
+
 function createTray() {
   try {
     const img = nativeImage.createFromPath(join(import.meta.dirname, "../../build/icon.png")).resize({ width: 22, height: 22 });
@@ -99,6 +116,7 @@ function createTray() {
       { label: "Quit", click: () => { quitting = true; app.quit(); } },
     ]));
     tray.on("click", showWindow);
+    console.log("[unimsg] tray icon:", trayIsVisible() ? "shown" : "created, but this desktop has nowhere to show it");
   } catch (e) { console.warn("[unimsg] tray unavailable:", (e as Error).message); }
 }
 
@@ -171,7 +189,16 @@ app.whenReady().then(async () => {
   win.webContents.on("will-navigate", (e, url) => { if (url !== win!.webContents.getURL()) { e.preventDefault(); if (/^https?:/i.test(url)) void shell.openExternal(url); } });
   // Close to tray when the user wants that and there is a tray to reach the window from again; the backend keeps syncing.
   // `quitting` (before-quit, the tray's Quit, the updater's relaunch) always wins, so the app stays quittable.
-  win.on("close", (e) => { if (!quitting && settings!.get().keepRunningInBackground && tray && !tray.isDestroyed()) { e.preventDefault(); win!.hide(); } });
+  win.on("close", (e) => {
+    if (quitting || !settings!.get().keepRunningInBackground) return;
+    e.preventDefault(); win!.hide();
+    // No tray to click: say once where the window went, or it looks like the app is gone while it keeps syncing.
+    if (!trayIsVisible() && !toldAboutHiding) {
+      toldAboutHiding = true;
+      console.warn("[unimsg] hid the window with no tray icon to restore it from; told the user to use the launcher");
+      try { new Notification({ title: "UniChat is still running", body: "It keeps syncing in the background. Open UniChat again from your launcher to bring the window back." }).show(); } catch {}
+    }
+  });
 
   // Backup paths come from native dialogs only: the renderer may not name files (see dialogs.ts).
   const dialogs = createDialogs({ dialog: { showSaveDialog: (o) => dialog.showSaveDialog(win!, o as Electron.SaveDialogOptions), showOpenDialog: (o) => dialog.showOpenDialog(win!, o as Electron.OpenDialogOptions) }, shell, home: () => app.getPath("documents") });
@@ -193,7 +220,7 @@ app.whenReady().then(async () => {
   else void win.loadFile(join(import.meta.dirname, "../renderer/index.html"));
   createTray();
   // Hidden start is only honoured with a tray: without one the user would have no way to get the window back.
-  win.once("ready-to-show", () => { if (!startHidden() || !tray || tray.isDestroyed()) showWindow(); });
+  win.once("ready-to-show", () => { if (!startHidden() || !trayIsVisible()) showWindow(); });
 
   if (warning) {
     console.warn("[unimsg] " + warning);

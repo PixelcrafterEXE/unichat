@@ -196,7 +196,11 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
   const [narrow, setNarrow] = useState(() => typeof matchMedia === "function" && matchMedia("(max-width: 720px)").matches);
   useEffect(() => { if (typeof matchMedia !== "function") return; const q = matchMedia("(max-width: 720px)"); const f = () => setNarrow(q.matches); q.addEventListener("change", f); return () => q.removeEventListener("change", f); }, []);
   const show = (k: Section) => narrow || sec === k;
+  // While a tap is scrolling the list, the chapters it passes must not steal the marker: the bar used to follow every
+  // chapter on the way and scroll itself to each one, which is the flashing. The observer is muted until it settles.
+  const jumping = useRef(0);
   const scrollTo = (k: Section) => {
+    jumping.current = Date.now() + 1200;
     setSec(k);
     const el = document.getElementById("set-" + k), box = el?.closest("section");
     if (!el) return;
@@ -208,10 +212,12 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
   useEffect(() => {
     if (!narrow || typeof IntersectionObserver !== "function") return;
     const io = new IntersectionObserver((es) => { const v = es.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (Date.now() < jumping.current) return; // a tap is still scrolling there: it decides, not what passes by
       const k = (v?.target as HTMLElement | undefined)?.dataset.chapter as Section | undefined; if (k) setSec(k); }, { rootMargin: "-10% 0px -75% 0px" });
     document.querySelectorAll("[data-chapter]").forEach((el) => io.observe(el));
     return () => io.disconnect();
   }, [narrow]);
+  useEffect(() => { if (narrow) document.querySelector(`[data-chip="${sec}"]`)?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); }, [sec, narrow]);
   const [notifMsg, setNotifMsg] = useState("");
   const [retention, setRetention] = useState(0);
   const [collapse, setCollapse] = useState(true);
@@ -231,7 +237,7 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
   return (
     <div className="settings">
       {narrow
-        ? <div className="chapterbar" id="settings-chapters" role="tablist">{NAV.flatMap((g) => g.items).map(([k, l]) => <button key={k} role="tab" aria-selected={sec === k} className={sec === k ? "on" : ""} onClick={() => scrollTo(k)} ref={(e) => { if (e && sec === k) e.scrollIntoView({ inline: "center", block: "nearest" }); }}>{l}</button>)}</div>
+        ? <div className="chapterbar" id="settings-chapters" role="tablist">{NAV.flatMap((g) => g.items).map(([k, l]) => <button key={k} role="tab" aria-selected={sec === k} className={sec === k ? "on" : ""} onClick={() => scrollTo(k)} data-chip={k}>{l}</button>)}</div>
         : <nav><h5>Settings</h5>{NAV.map((g) => <div className="navgroup" key={g.title || "more"}>{g.title && <h6>{g.title}</h6>}{g.items.map(([k, l]) => <button key={k} className={sec === k ? "on" : ""} onClick={() => setSec(k)}>{l}</button>)}</div>)}</nav>}
       <section>
         <button className="closex" onClick={onClose} title="Close (Esc)"><X size={18} /></button>

@@ -61,8 +61,10 @@ Releases are numbered by CI and nothing else: `release.yml` builds `0.1.<github.
 developer's machine must never take one of those numbers -- the installed app would claim to be a release nobody published,
 and the updater would have nothing to match it against.
 
-Local builds therefore use `scripts/dev-version.mjs`, which prints `dev-0.1.<next>` from the newest tag (`--next` prints the
-release number itself). The `dev-` prefix is what `apps/desktop/src/updater.ts` turns into "dev", so such a build reports
+Local builds therefore use `scripts/dev-version.mjs`, which prints `dev-0.1.<next>.<YYYYMMDDHHMM>` from the newest tag
+(`--next` prints the release number itself). The stamp matters: without it every local build carried the same version, so
+a package manager saw nothing to upgrade and an app that had been installed but never restarted was indistinguishable
+from one that was up to date. Settings > Updates shows the string, so the running build can always be named. The `dev-` prefix is what `apps/desktop/src/updater.ts` turns into "dev", so such a build reports
 itself as a development build and never offers an update:
 
 ```sh

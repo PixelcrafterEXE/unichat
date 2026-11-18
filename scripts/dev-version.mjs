@@ -14,4 +14,6 @@ const tags = (() => {
 })();
 const latest = tags.map((t) => /^v(\d+)\.(\d+)\.(\d+)$/.exec(t.trim())).find(Boolean);
 const next = latest ? `${latest[1]}.${latest[2]}.${Number(latest[3]) + 1}` : "0.1.0";
-process.stdout.write((process.argv.includes("--next") ? next : "dev-" + next) + "\n");
+const d = new Date(), p2 = (n) => String(n).padStart(2, "0");
+const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}`;
+process.stdout.write((process.argv.includes("--next") ? next : `dev-${next}.${stamp}`) + "\n");
