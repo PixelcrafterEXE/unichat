@@ -93,6 +93,8 @@ export function dialAny<T>(o: DialAnyOpts<T>): Promise<{ value: T; cand: Cand; p
               if (c.src === "link" || c.src === "typed" || c.src === "mdns") return failure(true); continue; } // explicitly named / announced host: the code is wrong, stop at once
             if (e instanceof ChannelError && e.code === "protocol" && e.soft) { other = e.message; return failure(true); }
             if (isRefused(e)) { stats.refused++; continue; } // the host is up but nothing listens on this port: try the next port of the range
+            if (e instanceof ChannelError && e.code === "closed") { stats.connected++; stats.rejected++; stats.rejectedBy ??= `${c.src} ${c.host}:${port}`; stats.rejectedWhy ??= "it answered and then hung up (a code it does not hold, or it is not showing one)";
+              if (c.src === "link" || c.src === "typed" || c.src === "mdns") return failure(true); continue; }
             stats.timedOut++; return; // dropped / unreachable: no point trying more ports there
           }
         }

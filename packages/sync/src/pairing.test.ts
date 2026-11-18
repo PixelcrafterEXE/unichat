@@ -294,3 +294,17 @@ test("a device that is showing a code does not dial its own mDNS announcement wh
   await confirm(A, B, "joiner", j.sas);
   await until(async () => (await B.call("syncStatus")).enabled, "B joined A instead of being refused by itself");
 });
+
+test("every device is paired with every other one: three devices joined through one hub know each other and sync without it", async () => {
+  // Pairing is one-to-one, but the group is not: a device that joins learns the whole membership (and its keys), so a
+  // phone that only ever met the laptop still talks to the tablet directly. This is what keeps it that way.
+  const hub = await nd("hub", "memory"), phone = await nd("phone", "memory"), tablet = await nd("tablet", "memory");
+  await pairUp(hub, phone);
+  await pairUp(hub, tablet); // phone and tablet never meet during pairing
+  const names = (n: Node) => n.svc.status().devices.map((d: any) => d.name).sort().join(",");
+  await until(async () => names(phone) === "hub,phone,tablet" && names(tablet) === "hub,phone,tablet",
+    "each device knows all three");
+  await hub.stop(); // and they are not talking THROUGH the hub: with it gone they still find each other
+  await until(async () => !!phone.svc.status().devices.find((d: any) => d.name === "tablet")?.online
+    && !!tablet.svc.status().devices.find((d: any) => d.name === "phone")?.online, "phone and tablet are connected to each other");
+});

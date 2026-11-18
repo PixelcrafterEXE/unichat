@@ -337,7 +337,8 @@ export class SyncService {
         addrs: d.id === this.me.id ? undefined : (d.addrs ?? []).map((a) => ({ kind: a.kind, host: a.host, port: a.port, url: a.url, src: a.src, good: a.good, bad: a.bad })), audit: this.proxies.audit[d.id] };
     });
     const self = "unichat-" + this.me.id.slice(0, 10) + "." + SERVICE;
-    const discovered = this.mdns ? this.mdns.services().filter((s) => s.txt.m === "pair" && s.instance !== self).map((s) => ({ instance: s.instance, name: s.txt.n ?? s.instance, host: s.addrs[0] ?? s.host, port: s.port, nearby: s.txt.nb === "1" })) : [];
+    const fresh = this.now() - 45_000;
+    const discovered = this.mdns ? this.mdns.services().filter((s) => s.txt.m === "pair" && s.instance !== self && s.seen > fresh).map((s) => ({ instance: s.instance, name: s.txt.n ?? s.instance, host: s.addrs[0] ?? s.host, port: s.port, nearby: s.txt.nb === "1" })) : [];
     const binds = this.boundHosts().map((h) => (h.includes(":") ? `[${h}]` : h) + ":" + this.port);
     return { enabled: !!g, paused: this.paused, revoked: this.selfRevoked, removedNotice: this.removedNotice, unlinking: this.unlinkPending && { peer: this.unlinkPending.peer, name: this.unlinkPending.name, since: this.unlinkPending.since, reason: this.unlinkPending.reason, online: this.sessions.has(this.unlinkPending.peer) }, deviceId: this.me.id, deviceName: this.me.name, groupId: g?.id, listening: this.servers.size > 0, port: this.port || undefined, binds,
       listen: { ...this.listen, error: this.listenErr || undefined, pairingOnly: this.servers.size > 0 && !this.listen.enabled, interfaces: interfaces().filter((i) => !i.internal && i.family === 4).map((i) => ({ name: i.name, address: i.address })) },
@@ -616,8 +617,10 @@ export class SyncService {
         // look the same from the outside, and without these numbers a pairing complaint cannot be told apart from a typo.
         const st = e.stats;
         console.warn(`[sync] pairing failed: reason=${e.reason} candidates=${st.tried} answered=${st.connected} refusedTheCode=${st.rejected} connectionRefused=${st.refused} timedOut=${st.timedOut}${st.rejectedBy ? ` refusedBy=${st.rejectedBy}` : ""}${st.rejectedWhy ? ` why="${st.rejectedWhy}"` : ""}${pin ? " link=yes" : ""}${nearby ? " nearby=yes" : ""}`);
-        const msg = nearby && e.reason !== "other" ? "Couldn't reach that device. Make sure both are on the same Wi-Fi and it still shows \"Add a device\"." : e.reason === "code" ? "The pairing code was not accepted (wrong code, expired, or too many attempts)." + (pin ? " If you scanned a QR code, check that it is the one on the other device's screen." : "")
-          : e.reason === "unreachable" ? "Couldn't reach a device showing that code. Both the local network and the internet (HyperDHT hole punching) were tried. If the other device is on a very restrictive network (symmetric NAT, UDP blocked), try the other direction: show a code on this device instead and type it there." : e.message;
+        const msg = nearby && e.reason !== "other" ? "That device is not showing a pairing code any more (it was a moment ago, which is why it is still listed). Start \"Show QR code\" on it again, or scan its code." : e.reason === "code" ? "The pairing code was not accepted (wrong code, expired, or too many attempts)." + (pin ? " If you scanned a QR code, check that it is the one on the other device's screen." : "")
+          : e.reason === "unreachable" ? (this.liveCount() > 1
+            ? "Couldn't reach a device showing that code. This device is already synced with another one: if the other device also has devices of its own, neither can join the other. Use \"Stop syncing here\" on the device that should join, then pair it again."
+            : "Couldn't reach a device showing that code. Both the local network and the internet (HyperDHT hole punching) were tried. If the other device is on a very restrictive network (symmetric NAT, UDP blocked), try the other direction: show a code on this device instead and type it there.") : e.message;
         this.joinResult = { state: "failed", error: msg, reason: e.reason }; this.changedDevices(); throw new Error(msg);
       }
       this.changedDevices(); throw e;
@@ -771,10 +774,13 @@ export class SyncService {
         // silent, and the two sides cannot be told apart: a code that does not match, or one nobody ever brought here.
         console.warn(`[sync] refused a pairing attempt from ${ip}: ${e instanceof ChannelError ? e.code : "error"} (this device is showing a code; ${this.pairing.failures + 1} attempt(s) did not match it)`);
         if (++this.pairing.failures >= (this.o.maxPairingGlobal ?? 20)) this.stopPairing("too many wrong attempts"); else this.changedDevices();
-      } else if (!(e instanceof ChannelError && ((e.code === "closed" && !mode) || e.soft))) {
-        if (mode === "pair" || mode === "nearby") console.warn(`[sync] a pairing attempt arrived from ${ip} while no code is open here (it expired, was cancelled, or a new one was started)`);
-        this.srcFail(ip, 6); // soft = a known kind of mismatch (old key, revoked member), not a guessing attempt
-      }
+      } else if (mode === "pair" || mode === "nearby") {
+        // Every refusal looks the same from outside (channel.ts closes the socket without a word), so the device that
+        // dialled can only report "couldn't reach that device". The reason belongs in THIS log, named.
+        const why = e instanceof ChannelError ? (e.soft ? e.message : e.code) : "error";
+        console.warn(`[sync] turned down a pairing attempt from ${ip}: ${why}${this.pairing ? "" : " (no code is open here)"}${/already have a group/.test(String((e as Error)?.message)) ? " -- neither device can join the other while both are in one; use \"Stop syncing here\" on the one that should join" : ""}`);
+        if (!(e instanceof ChannelError && ((e.code === "closed" && !mode) || e.soft))) this.srcFail(ip, 6);
+      } else if (!(e instanceof ChannelError && ((e.code === "closed" && !mode) || e.soft))) this.srcFail(ip, 6); // soft = a known kind of mismatch (old key, revoked member), not a guessing attempt
     });
   }
   /** This device's group DHT public key without starting a node (derived, see dhtSeed): pairing hands it to the other device, which has no session to learn it from yet. */

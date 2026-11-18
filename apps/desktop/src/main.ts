@@ -26,6 +26,10 @@ if (process.platform === "linux") {
 // (Electron would otherwise derive it from the product name).
 app.setName("UniChat");
 app.setPath("userData", process.env.UNIMSG_DATA || join(app.getPath("appData"), "unimsg"));
+// Linux: the window's class (X11) / app_id (Wayland) is what a dock or app menu matches against unichat.desktop
+// (StartupWMClass there). Without it the running app has no icon in the taskbar and no entry to attach to -- on Wayland
+// especially, where there is no other way to connect the two.
+if (process.platform === "linux") app.commandLine.appendSwitch("class", "unichat");
 let dataDir = app.getPath("userData");
 /** Where "use a fresh folder" puts the desktop app's own data (separate from ~/.config/unimsg, which the web server/dev backend uses). */
 const freshDir = join(app.getPath("appData"), "unimsg-desktop");

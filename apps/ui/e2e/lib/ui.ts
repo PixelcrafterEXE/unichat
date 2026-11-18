@@ -58,7 +58,9 @@ export async function plusItems(t: Page): Promise<string[]> {
 export async function settings(t: Page, section?: string) {
   await t.click(".pill.gear");
   await t.waitSel(".settings");
-  if (section) await t.click(".settings nav button", section);
+  if (!section) return;
+  const bar = await t.ev(`!!document.querySelector('#settings-chapters')`); // phone: one long list, the bar jumps to a chapter
+  await t.click(bar ? "#settings-chapters button" : ".settings nav button", section);
 }
 
 /** Same as moveChatTo, but addressing the chat by its id (when names are ambiguous). */

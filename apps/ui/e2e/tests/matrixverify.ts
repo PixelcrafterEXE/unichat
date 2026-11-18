@@ -9,8 +9,13 @@ const called = (pred: string) => `window.__mockVerifyLog.some((c)=>${pred})`;
 const log = (t: Page) => t.ev<{ method: string; params: any }[]>(`JSON.parse(JSON.stringify(window.__mockVerifyLog))`);
 const clickAct = (t: Page, act: string) => t.click(`.vmodal [data-act=${act}]`);
 const dialogText = `(document.querySelector('.vmodal')?.textContent||'')`;
-const openCard = async (t: Page) => { await settings(t, "Accounts"); await t.waitSel(".acard"); await t.waitFor(`[...document.querySelectorAll('.acard')].some(c=>/Matrix/.test(c.textContent)&&c.querySelector('[data-verify-account]'))`, { desc: "matrix card with verification row" }); };
-const clickIn = (t: Page, scope: string, act: string) => t.ev(`(()=>{const c=[...document.querySelectorAll('.acard')].find(c=>/Matrix/.test(c.textContent)); c.querySelector('[data-act=${act}]').click();})()`);
+const openCard = async (t: Page) => { await settings(t, "Accounts"); await t.waitSel(".acard"); await t.waitFor(`[...(document.querySelector('#set-accounts')||document).querySelectorAll('.acard')].some(c=>/Matrix/.test(c.textContent)&&c.querySelector('[data-verify-account]'))`, { desc: "matrix card with verification row" }); };
+const card = `[...(document.querySelector('#set-accounts')||document).querySelectorAll('.acard')].find(c=>/Matrix/.test(c.textContent))`;
+const clickIn = async (t: Page, scope: string, act: string) => {
+  const sel = scope ? `${scope} [data-act=${act}]` : `[data-act=${act}]`;
+  await t.waitFor(`!!${card}?.querySelector(${JSON.stringify(sel)})`, { desc: `${act} button in the Matrix card` });
+  await t.ev(`${card}.querySelector(${JSON.stringify(sel)}).click()`);
+};
 const OVERFLOW_AND_TARGETS = `(()=>{const m=document.querySelector('.vmodal'); const W=innerWidth; const r=m.getBoundingClientRect();
   const bad=[...m.querySelectorAll('button')].filter(b=>b.getBoundingClientRect().height<43.5).map(b=>b.textContent+':'+Math.round(b.getBoundingClientRect().height));
   const out=[...m.querySelectorAll('*')].filter(e=>e.getBoundingClientRect().right>W+0.5||e.getBoundingClientRect().left<-0.5).map(e=>e.className||e.tagName);
@@ -177,7 +182,7 @@ export default [
 
   test("other messengers show no verification UI", async (t) => {
     await t.open(); await settings(t, "Accounts"); await t.waitSel(".acard");
-    await t.ok("only the Matrix card has it", `[...document.querySelectorAll('.acard')].filter(c=>c.querySelector('[data-verify-account]')).every(c=>/Matrix/.test(c.textContent)) && document.querySelectorAll('[data-verify-account]').length===1`);
+    await t.ok("only the Matrix card has it", `[...(document.querySelector('#set-accounts')||document).querySelectorAll('.acard')].filter(c=>c.querySelector('[data-verify-account]')).every(c=>/Matrix/.test(c.textContent)) && document.querySelectorAll('[data-verify-account]').length===1`);
   }),
 
   test("phone 360px: emoji dialog fits, no overflow, every button is at least 44px", async (t) => {

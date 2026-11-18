@@ -16,6 +16,22 @@ async function noOverflow(t: Page, name: string) {
 const inViewport = (sel: string) => `(()=>{const e=document.querySelector(${JSON.stringify(sel)}); if(!e) return false; const r=e.getBoundingClientRect(); return r.left>=-1&&r.top>=-1&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1})()`;
 
 export default [
+  test("phone: settings are one long list with a chapter bar, not a top bar of tabs", async (t) => {
+    await t.device("phone");
+    await t.open();
+    await t.click('.chats .foot .icon, [title="Settings"], .rail [title^="Settings"]');
+    await t.waitSel("#settings-chapters");
+    await t.ok("every chapter is on the page at once", `document.querySelectorAll('.settings .chapter').length >= 8`);
+    await t.ok("the bar lists them all and scrolls sideways", `(()=>{const b=document.querySelector('#settings-chapters');
+      return b.querySelectorAll('button').length >= 8 && getComputedStyle(b).overflowX === 'auto'})()`);
+    await t.ok("the bar stays at the top while the list scrolls", `getComputedStyle(document.querySelector('#settings-chapters')).position === 'sticky'`);
+    const top = `(()=>{const e=document.querySelector('#set-sync'); return e ? Math.round(e.getBoundingClientRect().top) : null})()`;
+    const before = await t.ev(top);
+    await t.click("#settings-chapters button", "Sync devices");
+    await t.ok("tapping a chapter scrolls the list to it", `${top} < ${before}`, { timeout: 5000 });
+    await t.ok("and that chapter is the marked one", `/Sync devices/.test(document.querySelector('#settings-chapters button.on')?.textContent || '')`, { timeout: 5000 });
+  }),
+
   test("phone: 'Take a photo' hands the file input to the system camera, and the other entries do not", async (t) => {
     await t.device("phone");
     await t.open("&chat=wa-1:anna");
@@ -160,7 +176,7 @@ export default [
   test("phone 360px: Sync devices (add card, nearby list, Advanced open, confirm dialog) has no horizontal overflow and 44px targets", async (t) => {
     await t.device("small"); await t.open();
     await t.tap(`document.querySelector('.pill.gear[title="Settings"]')`); await t.waitSel(".settings");
-    await t.ev(`[...document.querySelectorAll('.settings nav button')].find(b=>b.textContent.trim()==='Sync devices').click()`); await t.waitSel("#sync-panel");
+    await t.click("#settings-chapters button, .settings nav button", "Sync devices"); await t.waitSel("#sync-panel");
     await t.ev(`window.__mockSyncNearby(true)`); await t.waitSel("[data-nearby]");
     await noOverflow(t, "sync idle");
     await t.tap(`document.querySelector('#sync-start')`); await t.waitSel("#sync-pairing");
@@ -173,17 +189,16 @@ export default [
     t.check("confirm buttons >= 44px", await t.ev(`[...document.querySelectorAll('#sync-confirm button')].every(b=>b.offsetHeight>=44)`));
   }),
 
-  test("phone: settings tabs and account cards do not overflow", async (t) => {
+  test("phone: the settings chapters and the bar above them do not overflow", async (t) => {
     await t.device("small"); await t.open();
     await t.tap(`document.querySelector('.pill.gear[title="Settings"]')`);
     await t.waitSel(".settings");
     await noOverflow(t, "settings");
-    await t.not("category headings are hidden on a phone", `[...document.querySelectorAll('.settings nav h6')].some(h=>getComputedStyle(h).display!=='none'&&h.getBoundingClientRect().width>0)`);
-    await t.ok("all pages sit in one row", `(()=>{const ys=[...document.querySelectorAll('.settings nav button')].map(b=>Math.round(b.getBoundingClientRect().top)); return new Set(ys).size===1})()`);
-    const tabs = await t.ev<string[]>(`[...document.querySelectorAll('.settings nav button')].map(b=>b.textContent.trim())`);
-    for (const name of tabs) {
-      await t.ev(`[...document.querySelectorAll('.settings nav button')].find(b=>b.textContent.trim()===${JSON.stringify(name)}).click()`);
-      await t.sleep(120);
+    await t.ok("the chapter bar is one row that scrolls sideways", `(()=>{const ys=[...document.querySelectorAll('#settings-chapters button')].map(b=>Math.round(b.getBoundingClientRect().top)); return new Set(ys).size===1})()`);
+    const chapters = await t.ev<string[]>(`[...document.querySelectorAll('#settings-chapters button')].map(b=>b.textContent.trim())`);
+    for (const name of chapters) {
+      await t.click("#settings-chapters button", name);
+      await t.sleep(140);
       await noOverflow(t, "settings > " + name);
       await look(t, "phone-settings-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
     }
