@@ -243,6 +243,23 @@ test("pairing across networks: with no address at all, the code alone finds the 
   await until(() => !!onlineVia(A, B)?.online && !!onlineVia(B, A)?.online, "the paired devices connect (settles every dial before the test ends)");
 });
 
+test("pairing by QR link across networks: the addresses in the link are dead, the rendezvous carries it, and the pinned key still matches", async () => {
+  const t = await net(), A = await node("qrA", "memory"), B = await node("qrB", "memory");
+  await enable(t, A, B);
+  const p = await A.call("syncStartPairing", { deviceName: "qrA", keepListening: true });
+  await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "pairing DHT ready");
+  // what a phone really scans when the other device's addresses cannot be reached from its network (TEST-NET-1 goes nowhere):
+  // only the code and the pinned key survive, so the join has to run over the rendezvous and still satisfy checkRemote.
+  const dead = p.link.replace(/h=[^&]*/, "h=192.0.2.1");
+  assert.match(dead, /c=[a-z]{16}/); assert.match(dead, /k=[\w-]+/);
+  const j = await B.call("syncJoin", { link: dead, deviceName: "qrB" });
+  assert.equal(j.via, "the internet (DHT)");
+  await until(async () => !!(await A.call("syncStatus")).approval, "approval request shown on the showing device");
+  await Promise.all([B.call("syncConfirmJoin", { keepListening: true }), A.call("syncApproveJoin", { accept: true })]);
+  await until(() => B.svc.status().devices.length === 2 && A.svc.status().devices.length === 2, "both devices in the group");
+  await until(() => !!onlineVia(A, B)?.online && !!onlineVia(B, A)?.online, "the paired devices connect");
+});
+
 test("pairing over the DHT is refused when no pairing is open, and the group DHT key never accepts a pairing handshake", async () => {
   const t = await net(), A = await node("prA", "memory"), B = await node("prB", "memory");
   await enable(t, A, B);
