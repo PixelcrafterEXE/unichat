@@ -515,14 +515,19 @@ export class SyncService {
   }
   /** Pairing across networks: while a code is shown, also listen on the code-derived HyperDHT key (see pairingDhtSeed). Best effort and in the background: the local network works without it. */
   private pairDht?: DhtTransport; private pairDhtState: DhtState = "off";
+  /** First 8 hex of sha256(psk): tells two pairings apart in a log without putting the code (or anything derived from it that helps a guess) in it. */
+  private pairTag(pr: Pairing) { return createHash("sha256").update(pr.psk).digest("hex").slice(0, 8); }
   private startPairDht(pr: Pairing) {
     if (!this.dhtSet.enabled) return;
     const o = this.o.dht ?? {}; this.pairDhtState = "starting";
     const t = new DhtTransport({ seed: pairingDhtSeed(pr.psk), bootstrap: this.dhtSet.bootstrap, loader: o.loader, requireBootstrap: o.requireBootstrap, startTimeoutMs: o.startTimeoutMs, open: true, via: "dht-pair", allow: () => [],
-      onInbound: (sock) => { if (this.pairing === pr) this.onInbound(sock); else sock.destroy(); } });
+      onInbound: (sock) => {
+        if (this.pairing === pr) { console.warn(`[sync] someone reached the rendezvous of the code ${this.pairTag(pr)}; answering it`); this.onInbound(sock); }
+        else { console.warn(`[sync] someone reached the rendezvous of the code ${this.pairTag(pr)}, which is not the code shown here any more: hanging up`); sock.destroy(); }
+      } });
     this.pairDht = t;
-    t.start().then(() => { if (this.pairDht === t) { this.pairDhtState = "ready"; this.changedDevices(); } else void t.stop(); },
-      (e) => { if (this.pairDht === t) { this.pairDht = undefined; this.pairDhtState = e instanceof DhtUnavailable ? "unavailable" : "error"; this.changedDevices(); } void t.stop(); });
+    t.start().then(() => { if (this.pairDht === t) { this.pairDhtState = "ready"; console.warn(`[sync] showing a code (${this.pairTag(pr)}): its rendezvous is open`); this.changedDevices(); } else void t.stop(); },
+      (e) => { if (this.pairDht === t) { this.pairDht = undefined; this.pairDhtState = e instanceof DhtUnavailable ? "unavailable" : "error"; console.warn(`[sync] showing a code (${this.pairTag(pr)}): its rendezvous could NOT be opened: ${errmsg(e)}`); this.changedDevices(); } void t.stop(); });
   }
   private stopPairDht() {
     const t = this.pairDht; this.pairDht = undefined; this.pairDhtState = "off";
@@ -530,6 +535,7 @@ export class SyncService {
   }
   private stopPairing(reason: string) {
     if (!this.pairing) return;
+    console.warn(`[sync] the code ${this.pairTag(this.pairing)} is no longer shown here (${reason})`);
     clearTimeout(this.pairing.timer); this.pairing = undefined; this.stopPairDht();
     if (this.pendingJoin) this.finishJoin(false, "Pairing was closed.");
     void this.syncListeners().then(() => { if (!this.disposed) this.host.emit("sync-devices", { ...this.status(), pairingEnded: reason }); }, () => {});

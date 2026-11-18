@@ -260,6 +260,24 @@ test("pairing by QR link across networks: the addresses in the link are dead, th
   await until(() => !!onlineVia(A, B)?.online && !!onlineVia(B, A)?.online, "the paired devices connect");
 });
 
+test("a device that is showing its own code can still join another one (it must not answer its own rendezvous)", async () => {
+  const t = await net(), A = await node("bothA", "memory"), B = await node("bothB", "memory");
+  await enable(t, A, B);
+  const pa = await A.call("syncStartPairing", { deviceName: "bothA", keepListening: true });
+  await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "A's rendezvous ready");
+  // B is showing a code of its own at the same time (both users pressed "show the code"), then B scans A's
+  const pb = await B.call("syncStartPairing", { deviceName: "bothB", keepListening: true });
+  await until(async () => (await B.call("syncStatus")).pairing?.dht === "ready", "B's rendezvous ready");
+  assert.notEqual(pa.code, pb.code);
+  const dead = pa.link.replace(/h=[^&]*/, "h=192.0.2.1"); // only A's code and key survive: it has to go over the rendezvous
+  const j = await B.call("syncJoin", { link: dead, deviceName: "bothB" });
+  assert.equal(j.via, "the internet (DHT)");
+  await until(async () => !!(await A.call("syncStatus")).approval, "A shows the approval request");
+  await Promise.all([B.call("syncConfirmJoin", { keepListening: true }), A.call("syncApproveJoin", { accept: true })]);
+  await until(() => B.svc.status().devices.length === 2 && A.svc.status().devices.length === 2, "both devices in the group");
+  for (const n of [A, B]) await n.stop();
+});
+
 test("pairing over the DHT is refused when no pairing is open, and the group DHT key never accepts a pairing handshake", async () => {
   const t = await net(), A = await node("prA", "memory"), B = await node("prB", "memory");
   await enable(t, A, B);
