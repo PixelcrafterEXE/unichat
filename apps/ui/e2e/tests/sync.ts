@@ -83,6 +83,26 @@ export default [
     await t.not("no device was added", `document.querySelector('#sync-devices')`);
   }),
 
+  test("the scanner replaces the button that opened it, and the pairing card is one row of equal buttons", async (t) => {
+    await open(t);
+    await t.click("#sync-scan");
+    await t.waitSel("#sync-scanner");
+    await t.not("the button it was started from is gone (it used to stay, so nothing looked like it happened)", `document.querySelector('#sync-scan')`);
+    await t.click("#sync-scan-close");
+    await t.ok("closing brings it back", `document.querySelector('#sync-scan')`);
+    await t.click("#sync-start"); await t.waitSel("#sync-pairing");
+    await t.eq("copy and cancel are the same size, side by side", `(()=>{const a=document.querySelector('#sync-copy').getBoundingClientRect(), b=document.querySelector('#sync-stop').getBoundingClientRect();
+      return Math.round(a.width)===Math.round(b.width) && Math.abs(a.top-b.top)<2})()`, true);
+  }),
+
+  test("phone: the QR code uses the full width of the card", async (t) => {
+    await t.device("phone");
+    await open(t);
+    await t.click("#sync-start"); await t.waitSel("#sync-pairing");
+    await t.ok("the code is as wide as the card it sits in", `(()=>{const svg=document.querySelector('#sync-pairing .qr svg'), card=document.querySelector('#sync-pairing .paircard');
+      if(!svg||!card) return false; return svg.getBoundingClientRect().width > card.getBoundingClientRect().width * 0.8})()`);
+  }),
+
   test("typing a code: wrong code gives one sentence, right code opens the confirm dialog", async (t) => {
     await open(t);
     await t.setInput("#sync-code", "baba-baba-baba-baba"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-join-badcode");
