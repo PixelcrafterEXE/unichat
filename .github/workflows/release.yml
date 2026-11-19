@@ -123,6 +123,9 @@ jobs:
           mkdir -p ~/.android
           echo "$KS_B64" | base64 -d > ~/.android/debug.keystore
           test -s ~/.android/debug.keystore
+          # Named explicitly for Gradle (app/build.gradle, signingConfigs.debug): the Android plugin's own lookup did not
+          # find this file on the runner and signed with a key it generated instead.
+          echo "UNICHAT_DEBUG_KEYSTORE=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -170,17 +173,27 @@ jobs:
         working-directory: apps/android
         run: bash scripts/build-hyperdht-android.sh
       - name: Android version code
-        # versionCode must keep growing and stay above the local dev builds (package.json 0.1.0 -> 100)
-        run: echo "UNICHAT_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+        # versionCode must keep growing and stay above any local dev build (package.json 0.1.0 -> 100; a few were built by
+        # hand with codes up to 1032, which the old 1000+run base fell below -- Android refuses an update to a lower code)
+        run: echo "UNICHAT_VERSION_CODE=$((2000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
       - name: Build the app
         working-directory: apps/android
         run: pnpm run debug
-      - name: "Signing certificate of the APK (compare with the 'secret keystore SHA-256' line above and with: keytool -list -v -keystore ~/.android/debug.keystore -storepass android)"
-        # An APK signed with a different key than the installed app cannot update it ("a package with the same id exists"),
-        # so the fingerprint is printed on every release instead of being found out on a phone (issue #92).
+      - name: The APK is signed with the expected key
+        # An APK signed with a different key than the installed app cannot update it (issue #92). This step only PRINTED
+        # the fingerprint, so an APK signed with a key the Android plugin had generated itself was published anyway --
+        # while the check of the secret, above, passed. The APK itself is what has to carry the key.
+        env:
+          WANT: ${{ vars.ANDROID_DEBUG_KEY_SHA256 }}
         run: |
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
-          "$APKSIGNER" verify --print-certs apps/android/android/app/build/outputs/apk/debug/app-debug.apk | grep -i "SHA-256 digest" || true
+          GOT=$("$APKSIGNER" verify --print-certs apps/android/android/app/build/outputs/apk/debug/app-debug.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+          echo "APK signing certificate SHA-256: $GOT"
+          [ -n "$GOT" ] || { echo "::error::Could not read the APK's signing certificate."; exit 1; }
+          if [ -n "$WANT" ] && [ "$GOT" != "$(echo "$WANT" | tr -d ':' | tr 'A-Z' 'a-z')" ]; then
+            echo "::error::The APK is signed with $GOT, not the developer's key $WANT: it could not update the installed app, so it is not published."
+            exit 1
+          fi
       - name: Collect
         run: |
           mkdir -p artifacts
