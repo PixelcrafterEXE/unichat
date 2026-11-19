@@ -187,7 +187,7 @@ jobs:
           WANT: ${{ vars.ANDROID_DEBUG_KEY_SHA256 }}
         run: |
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
-          GOT=$("$APKSIGNER" verify --print-certs apps/android/android/app/build/outputs/apk/debug/app-debug.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+          GOT=$("$APKSIGNER" verify --print-certs apps/android/android/app/build/outputs/apk/debug/app-debug.apk | grep -m1 -oiE 'certificate SHA-256 digest: *[0-9a-f]{64}' | grep -oiE '[0-9a-f]{64}$' | tr 'A-Z' 'a-z')
           echo "APK signing certificate SHA-256: $GOT"
           [ -n "$GOT" ] || { echo "::error::Could not read the APK's signing certificate."; exit 1; }
           if [ -n "$WANT" ] && [ "$GOT" != "$(echo "$WANT" | tr -d ':' | tr 'A-Z' 'a-z')" ]; then
