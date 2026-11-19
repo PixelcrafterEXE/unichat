@@ -44,6 +44,13 @@ android {
     compileOptions { sourceCompatibility JavaVersion.VERSION_21; targetCompatibility JavaVersion.VERSION_21 }
     buildFeatures { buildConfig = true }
     signingConfigs {
+        // Debug builds are signed with the key named here when UNICHAT_DEBUG_KEYSTORE is set (CI: the developer's key from
+        // the ANDROID_DEBUG_KEYSTORE_B64 secret). Left to the Android plugin's own lookup, CI signed with a key the plugin
+        // generated itself -- not the one the workflow had restored -- and the APK could not update the installed app.
+        debug {
+            def ks = System.getenv('UNICHAT_DEBUG_KEYSTORE')
+            if (ks) { storeFile file(ks); storePassword 'android'; keyAlias 'androiddebugkey'; keyPassword 'android' }
+        }
         release {
             if (releaseKeystore) {
                 storeFile file(releaseKeystore)

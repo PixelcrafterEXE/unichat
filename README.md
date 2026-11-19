@@ -64,7 +64,12 @@ and the updater would have nothing to match it against.
 Local builds therefore use `scripts/dev-version.mjs`, which prints `dev-0.1.<next>.<YYYYMMDDHHMM>` from the newest tag
 (`--next` prints the release number itself). The stamp matters: without it every local build carried the same version, so
 a package manager saw nothing to upgrade and an app that had been installed but never restarted was indistinguishable
-from one that was up to date. Settings > Updates shows the string, so the running build can always be named. The `dev-` prefix is what `apps/desktop/src/updater.ts` turns into "dev", so such a build reports
+from one that was up to date. Settings > Updates shows the string, so the running build can always be named.
+
+On Android the version code has to keep growing, or the phone refuses the update. CI builds use `2000 + run number`; local
+builds keep the default from `apps/android/package.json` (0.1.0 -> 100), so an APK from a release can always replace one
+built here. Both are signed with the same debug key: CI restores it from the `ANDROID_DEBUG_KEYSTORE_B64` secret and names
+it to Gradle explicitly (`UNICHAT_DEBUG_KEYSTORE`), and the release fails if the APK carries any other key. The `dev-` prefix is what `apps/desktop/src/updater.ts` turns into "dev", so such a build reports
 itself as a development build and never offers an update:
 
 ```sh
