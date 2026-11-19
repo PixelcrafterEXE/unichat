@@ -65,6 +65,11 @@ const isRefused = (e: any) => e?.code === "ECONNREFUSED" || e?.code === "ECONNRE
 export function dialAny<T>(o: DialAnyOpts<T>): Promise<{ value: T; cand: Cand; port: number; stats: DialStats }> {
   const stats: DialStats = { tried: 0, refused: 0, timedOut: 0, rejected: 0, connected: 0 }, ctl = new AbortController(), conc = o.concurrency ?? 64, t0 = Date.now();
   const queue: Cand[] = [], seen = new Set<string>(); let running = 0, done = false, other: string | undefined;
+  // A named host saying no used to end everything at once -- including the DHT rendezvous for this very code, which was
+  // still on its way. A phone on a campus network put its public address in the link and then (rightly) refused
+  // connections to it; the refusal cancelled the one path that worked. Now a refusal stops the scan, but an attempt on
+  // the code's rendezvous already in flight may still finish: only a device holding exactly this code can answer there.
+  let settled = false, runningDht = 0;
   const add = (c: Cand, front = false) => { const k = c.host + "|" + c.ports.join(","); if (seen.has(k)) return; seen.add(k); front ? queue.unshift(c) : queue.push(c); };
   return new Promise((ok, fail) => {
     const timers: ReturnType<typeof setTimeout | typeof setInterval>[] = [];
@@ -77,9 +82,11 @@ export function dialAny<T>(o: DialAnyOpts<T>): Promise<{ value: T; cand: Cand; p
       finish(new DialFailure(other ?? (stats.rejected ? "A device answered but did not accept the code." : decisive ? "unreachable" : "No device showing a pairing code could be reached."), reason, stats));
     };
     const check = () => { if (!done && !running && !queue.length && (!o.poll || Date.now() - t0 >= (o.graceMs ?? 2500))) failure(); };
-    const pump = () => { while (!done && running < conc && queue.length) void run(queue.shift()!); check(); };
+    const pump = () => { while (!done && !settled && running < conc && queue.length) void run(queue.shift()!); check(); };
+    /** a named host refused: no new candidates; finish now unless the code's own rendezvous is still being tried */
+    const decide = () => { settled = true; queue.length = 0; if (!runningDht) failure(true); };
     const run = async (c: Cand) => {
-      running++;
+      running++; const dhtAttempt = c.src === "dht"; if (dhtAttempt) runningDht++;
       try {
         for (const port of c.ports) {
           if (done) return; stats.tried++;
@@ -90,19 +97,19 @@ export function dialAny<T>(o: DialAnyOpts<T>): Promise<{ value: T; cand: Cand; p
           } catch (e: any) {
             if (done) return;
             if (e instanceof ChannelError && e.code === "auth") { stats.connected++; stats.rejected++; stats.rejectedBy ??= `${c.src} ${c.host}:${port}`; stats.rejectedWhy ??= e.message;
-              if (c.src === "link" || c.src === "typed" || c.src === "mdns") return failure(true); continue; } // explicitly named / announced host: the code is wrong, stop at once
+              if (c.src === "link" || c.src === "typed" || c.src === "mdns") return decide(); continue; } // explicitly named / announced host: the code is wrong, stop the scan
             if (e instanceof ChannelError && e.code === "protocol" && e.soft) { other = e.message; return failure(true); }
             if (isRefused(e)) { stats.refused++; continue; } // the host is up but nothing listens on this port: try the next port of the range
             if (e instanceof ChannelError && e.code === "closed") { stats.connected++; stats.rejected++; stats.rejectedBy ??= `${c.src} ${c.host}:${port}`; stats.rejectedWhy ??= "it answered and then hung up (a code it does not hold, or it is not showing one)";
-              if (c.src === "link" || c.src === "typed" || c.src === "mdns") return failure(true); continue; }
+              if (c.src === "link" || c.src === "typed" || c.src === "mdns") return decide(); continue; }
             stats.timedOut++; return; // dropped / unreachable: no point trying more ports there
           }
         }
-      } finally { running--; if (!done) pump(); }
+      } finally { running--; if (dhtAttempt) runningDht--; if (!done) { if (settled) { if (!runningDht) failure(true); } else pump(); } }
     };
     for (const c of o.fixed) add(c); for (const c of o.probe ?? []) add(c);
     if (o.poll) {
-      const take = () => { for (const c of o.poll!()) add(c, true); pump(); };
+      const take = () => { if (settled) return; for (const c of o.poll!()) add(c, true); pump(); };
       timers.push(setInterval(take, o.pollMs ?? 400)); take();
     }
     timers.push(setTimeout(() => failure(), o.overallMs ?? 20_000));

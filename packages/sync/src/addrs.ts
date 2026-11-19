@@ -114,7 +114,10 @@ export async function raceConnect(cands: Addr[], open: Opener, o: { stagger?: nu
       timers.push(setTimeout(() => {
         if (done) return;
         const local = new AbortController(); ctl.signal.addEventListener("abort", () => local.abort(), { once: true });
-        open(a, local.signal).then((sock) => {
+        // An opener that throws instead of rejecting (the DHT went away while this candidate waited its delay) is one
+        // failed attempt. It used to escape the timer as an uncaught exception, and the race then never settled.
+        let attempt: Promise<Socket>; try { attempt = Promise.resolve(open(a, local.signal)); } catch (e) { attempt = Promise.reject(e); }
+        attempt.then((sock) => {
           if (done) { sock.destroy(); return; }
           done = true; ctl.abort(); timers.forEach(clearTimeout); ok({ sock, addr: a, failed });
         }, (e) => {

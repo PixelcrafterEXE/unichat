@@ -34,5 +34,13 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
         run: pnpm -r test
+      # The desktop app runs this code in Electron, whose crypto is BoringSSL, not OpenSSL. Every test above runs on plain
+      # Node, which is how a desktop that could not complete a single pairing handshake went unnoticed (core/chacha.ts).
+      - name: Pairing and crypto under Electron's runtime (what the desktop app really runs)
+        timeout-minutes: 10
+        env:
+          TMPDIR: ${{ runner.temp }}
+        working-directory: packages/sync
+        run: node ../../scripts/electron-node.mjs --test ../core/src/chacha.test.ts src/crypto.test.ts src/pairing.test.ts src/android.test.ts
       - name: README feature table matches the live-test results (docs/live-results.json)
         run: node scripts/feature-table.mjs --check

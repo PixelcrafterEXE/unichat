@@ -144,6 +144,10 @@ importers:
       '@signalapp/libsignal-client':
         specifier: 0.106.2
         version: 0.106.2
+    optionalDependencies:
+      sodium-native:
+        specifier: ^5.2.1
+        version: 5.2.1(bare-buffer@3.7.2)(bare-events@2.9.2)(bare-url@2.5.7)
 
   packages/host:
     dependencies:

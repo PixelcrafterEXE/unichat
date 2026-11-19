@@ -135,6 +135,24 @@ test("dialAny: an explicitly named host that rejects the code ends it at once; p
   assert.deepEqual(timeouts, [1], "a host that drops packets is not tried on the other ports");
 });
 
+test("dialAny: a named host that hangs up stops the scan, but the code's rendezvous already on its way may still win", async () => {
+  // Without this, a refused link address cancelled the DHT attempt for the same code -- the one path that worked.
+  const r = await dialAny<string>({ fixed: [{ host: "pub", ports: [1], src: "link" }, { host: "dht", ports: [0], src: "dht" }],
+    probe: Array.from({ length: 20 }, (_, i) => ({ host: "p" + i, ports: [1], src: "probe" as const })),
+    attempt: async (h, _p, signal) => {
+      if (h === "pub") throw new ChannelError("closed", "hung up");
+      if (h === "dht") { await new Promise((ok) => setTimeout(ok, 150)); return "via dht"; }
+      return new Promise<string>((_, f) => signal.addEventListener("abort", () => f(new Error("aborted"))));
+    }, concurrency: 8, overallMs: 5000 });
+  assert.equal(r.value, "via dht"); assert.equal(r.stats.rejected, 1, "the refusal is still counted, for the log");
+  // and when the rendezvous fails too, the refusal is reported as before: "code", not "unreachable"
+  const t0 = Date.now();
+  await assert.rejects(dialAny({ fixed: [{ host: "pub", ports: [1], src: "link" }, { host: "dht", ports: [0], src: "dht" }],
+    attempt: async (h) => { if (h === "pub") throw new ChannelError("closed", "hung up"); await new Promise((ok) => setTimeout(ok, 100)); throw new Error("connection timed out"); }, overallMs: 5000 }),
+    (e: any) => e.reason === "code");
+  assert.ok(Date.now() - t0 < 1500, "it waits for the rendezvous attempt, not for the overall timeout");
+});
+
 test("enter only the code: the LAN probe finds the device showing it (well-known port, no address typed)", async () => {
   const lan = new FakeLan(); const A = await dev("A", lan, "192.168.7.10"), B = await dev("B", lan, "192.168.7.44");
   const p = await A.call("syncStartPairing", {}); lan.host("192.168.7.10", { to: p.port }); lan.host("192.168.7.44");

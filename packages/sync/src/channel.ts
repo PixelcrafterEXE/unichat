@@ -6,6 +6,7 @@
 // while its inbox is full, so a slow peer slows the sender down instead of growing memory.
 import type { Socket } from "node:net";
 import { randomBytes } from "node:crypto";
+import { AeadUnavailable } from "@unimsg/core";
 import { Handshake, type KeyPair } from "./noise.js";
 
 export const MAX_FRAME = 512 * 1024, MAX_HANDSHAKE_FRAME = 1024, PROTOCOL_VERSION = 1;
@@ -87,7 +88,7 @@ function wrap(f: Framed, hs: Handshake, hello: any, remoteStatic: Buffer): Secur
     async recv(t = 0) {
       const ct = await f.next(t);
       try { return JSON.parse(recv.decrypt(Buffer.alloc(0), ct).toString("utf8")); }
-      catch { f.close(); throw new ChannelError("auth", "frame failed authentication (tampered, replayed or reordered)"); }
+      catch (e) { f.close(); if (e instanceof AeadUnavailable) throw e; throw new ChannelError("auth", "frame failed authentication (tampered, replayed or reordered)"); }
     },
     close: () => f.close(),
   };
@@ -104,7 +105,7 @@ export function dial(socket: Socket, o: DialOpts): Promise<Secure> {
     let raw: Buffer, hello: any;
     try { raw = await f.hello(tm); }
     catch (e) { throw e instanceof ChannelError ? e : new ChannelError("closed", "the other device stopped answering during the handshake"); }
-    try { hello = JSON.parse(hs.read(raw).toString("utf8")); } catch { throw new ChannelError("auth", "the other device did not accept the code / group key"); }
+    try { hello = JSON.parse(hs.read(raw).toString("utf8")); } catch (e) { if (e instanceof AeadUnavailable) throw e; throw new ChannelError("auth", "the other device did not accept the code / group key"); }
     o.checkRemote(hs.remoteStatic!, hello);
     await f.write(hs.write(enc(o.hello)));
     return wrap(f, hs, hello, hs.remoteStatic!);
@@ -127,11 +128,11 @@ export function accept(socket: Socket, o: AcceptOpts): Promise<Secure & { mode: 
       let sel = verdict ? undefined : o.pskFor(h.mode!, tags);
       if (!sel) { verdict ??= new ChannelError("auth", "no matching key", true); sel = { psk: randomBytes(32) }; }
       const hs = new Handshake({ initiator: false, s: o.s, psk: sel.psk, prologue: pro });
-      try { hs.read(await f.hello(tm)); } catch (e) { if (e instanceof ChannelError && e.code === "closed") throw e; if (verdict) throw verdict; if (e instanceof ChannelError) throw e; throw new ChannelError("auth", "wrong code or group key"); }
+      try { hs.read(await f.hello(tm)); } catch (e) { if (e instanceof AeadUnavailable) throw e; if (e instanceof ChannelError && e.code === "closed") throw e; if (verdict) throw verdict; if (e instanceof ChannelError) throw e; throw new ChannelError("auth", "wrong code or group key"); }
       if (verdict) throw verdict; // (a random decoy key matching is not a thing that happens)
       await f.write(hs.write(enc(o.hello)));
       let hello: any;
-      try { hello = JSON.parse(hs.read(await f.hello(tm)).toString("utf8")); } catch (e) { if (e instanceof ChannelError) throw e; throw new ChannelError("auth", "handshake failed"); }
+      try { hello = JSON.parse(hs.read(await f.hello(tm)).toString("utf8")); } catch (e) { if (e instanceof AeadUnavailable || e instanceof ChannelError) throw e; throw new ChannelError("auth", "handshake failed"); }
       o.checkRemote(hs.remoteStatic!, hello, h.mode!);
       return Object.assign(wrap(f, hs, hello, hs.remoteStatic!), { mode: h.mode!, tag: sel.tag });
     } catch (e) {

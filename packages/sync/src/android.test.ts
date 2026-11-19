@@ -41,7 +41,7 @@ test("android: HyperDHT (native add-ons udx-native / sodium-native) is only ever
   assert.ok(!/^import .* from "hyperdht"/m.test(t) && /await import\("hyperdht"\)/.test(t), "dynamic import only (a static one would load the add-ons at start-up)");
   assert.match(t, /not available on this platform/);
 });
-test("android: every crypto primitive the sync channel needs exists with the Node 18 signatures (X25519, ChaCha20-Poly1305 with AAD, HKDF, scrypt, HMAC, AES-GCM)", () => {
+test("android: every crypto primitive the sync channel needs exists with the Node 18 signatures (X25519, ChaCha20-Poly1305 with AAD, HKDF, scrypt, HMAC, AES-GCM)", { skip: process.versions.electron ? "Electron's BoringSSL has no chacha20-poly1305 in node:crypto by design (core/chacha.ts covers it); this pins the phone's OpenSSL" : false }, () => {
   const a = generateKeyPairSync("x25519"), b = generateKeyPairSync("x25519");
   assert.ok(diffieHellman({ privateKey: a.privateKey, publicKey: b.publicKey }).equals(diffieHellman({ privateKey: b.privateKey, publicKey: a.publicKey })));
   const k = randomBytes(32), n = randomBytes(12), c = createCipheriv("chacha20-poly1305", k, n, { authTagLength: 16 }); c.setAAD(Buffer.from("aad"), { plaintextLength: 2 });
