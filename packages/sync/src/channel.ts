@@ -6,7 +6,7 @@
 // while its inbox is full, so a slow peer slows the sender down instead of growing memory.
 import type { Socket } from "node:net";
 import { randomBytes } from "node:crypto";
-import { AeadUnavailable } from "@unimsg/core";
+import { AeadUnavailable } from "@unimsg/core/chacha";
 import { Handshake, type KeyPair } from "./noise.js";
 
 export const MAX_FRAME = 512 * 1024, MAX_HANDSHAKE_FRAME = 1024, PROTOCOL_VERSION = 1;

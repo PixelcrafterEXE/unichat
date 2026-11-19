@@ -6,7 +6,7 @@
 // `prologue` (plaintext header both sides saw) is hashed into the transcript. After the handshake `split()` yields two CipherStates whose
 // nonces are strict 64-bit counters: a replayed, reordered, duplicated or modified frame fails authentication.
 import { createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, timingSafeEqual } from "node:crypto";
-import { chachaOpen, chachaSeal } from "@unimsg/core";
+import { chachaOpen, chachaSeal } from "@unimsg/core/chacha";
 
 const NAME = "Noise_XXpsk0_25519_ChaChaPoly_SHA256";
 const SPKI = Buffer.from("302a300506032b656e032100", "hex"), PKCS8 = Buffer.from("302e020100300506032b656e04220420", "hex");

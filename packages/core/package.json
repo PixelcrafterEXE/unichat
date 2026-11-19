@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./store": "./src/store.ts"
+    "./store": "./src/store.ts",
+    "./chacha": "./src/chacha.ts"
   },
   "scripts": {
     "typecheck": "tsc -p .",
