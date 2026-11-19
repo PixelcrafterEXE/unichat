@@ -1,4 +1,5 @@
 export * from "./model.js";
+export * from "./chacha.js";
 export * from "./provider.js";
 export * from "./hub.js";
 export * from "./mesh.js";

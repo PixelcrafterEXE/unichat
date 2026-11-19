@@ -595,19 +595,20 @@ class DiscordConnector implements Connector {
     return [...out.values()];
   }
 
-  async downloadAttachment(chatId: string, messageId: string, attachmentId: string) {
+  async downloadAttachment(chatId: string, messageId: string, attachmentId: string, opts?: { urgent?: boolean }) {
+    const prio = opts?.urgent ? 0 : 1; // a tap goes ahead of the pictures loading by themselves (see Api.mediaEnqueue)
     const api = this.ready();
     const get = () => this.refs.get(`${messageId}/${attachmentId}`);
     let ref = get();
     if (!ref) { this.raw.delete(messageId); await this.fetchRaw(chatId, messageId); ref = get(); }
     if (!ref) throw new Error("That attachment is no longer available.");
-    try { const r = await api.fetchMedia(ref.url); return { data: r.data, mime: ref.mime || r.mime, ...(ref.name ? { name: ref.name } : {}) }; }
+    try { const r = await api.fetchMedia(ref.url, prio); return { data: r.data, mime: ref.mime || r.mime, ...(ref.name ? { name: ref.name } : {}) }; }
     catch (e) { // signed CDN links expire: refresh the message once and retry
       if (!(e instanceof DcError) || e.kind !== "notfound") throw e;
       this.raw.delete(messageId); this.refs.delete(`${messageId}/${attachmentId}`);
       await this.fetchRaw(chatId, messageId);
       const fresh = get(); if (!fresh) throw new Error("That attachment is no longer available.");
-      const r = await api.fetchMedia(fresh.url); return { data: r.data, mime: fresh.mime || r.mime, ...(fresh.name ? { name: fresh.name } : {}) };
+      const r = await api.fetchMedia(fresh.url, prio); return { data: r.data, mime: fresh.mime || r.mime, ...(fresh.name ? { name: fresh.name } : {}) };
     }
   }
 

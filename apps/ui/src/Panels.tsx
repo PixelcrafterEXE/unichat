@@ -191,6 +191,33 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
     return () => clearTimeout(t);
   }, []);
   useEffect(() => { const f = () => setSec("sync"); addEventListener("unichat-sync-link", f); return () => removeEventListener("unichat-sync-link", f); }, []);
+  // Phone: every chapter is rendered, one under the other, and the bar above them says which one is in view -- a top bar
+  // of tabs on a 360px screen could only ever show two of ten. Desktop keeps the side nav and one chapter at a time.
+  const [narrow, setNarrow] = useState(() => typeof matchMedia === "function" && matchMedia("(max-width: 720px)").matches);
+  useEffect(() => { if (typeof matchMedia !== "function") return; const q = matchMedia("(max-width: 720px)"); const f = () => setNarrow(q.matches); q.addEventListener("change", f); return () => q.removeEventListener("change", f); }, []);
+  const show = (k: Section) => narrow || sec === k;
+  // While a tap is scrolling the list, the chapters it passes must not steal the marker: the bar used to follow every
+  // chapter on the way and scroll itself to each one, which is the flashing. The observer is muted until it settles.
+  const jumping = useRef(0);
+  const scrollTo = (k: Section) => {
+    jumping.current = Date.now() + 1200;
+    setSec(k);
+    const el = document.getElementById("set-" + k), box = el?.closest("section");
+    if (!el) return;
+    if (box) box.scrollTo({ top: box.scrollTop + el.getBoundingClientRect().top - box.getBoundingClientRect().top - 8, behavior: "smooth" });
+    else el.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  useEffect(() => { if (narrow) setTimeout(() => scrollTo(sec), 0); }, [narrow]); // eslint-disable-line react-hooks/exhaustive-deps
+  // which chapter the list is on: the bar marks it and keeps it in view
+  useEffect(() => {
+    if (!narrow || typeof IntersectionObserver !== "function") return;
+    const io = new IntersectionObserver((es) => { const v = es.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (Date.now() < jumping.current) return; // a tap is still scrolling there: it decides, not what passes by
+      const k = (v?.target as HTMLElement | undefined)?.dataset.chapter as Section | undefined; if (k) setSec(k); }, { rootMargin: "-10% 0px -75% 0px" });
+    document.querySelectorAll("[data-chapter]").forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [narrow]);
+  useEffect(() => { if (narrow) document.querySelector(`[data-chip="${sec}"]`)?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); }, [sec, narrow]);
   const [notifMsg, setNotifMsg] = useState("");
   const [retention, setRetention] = useState(0);
   const [collapse, setCollapse] = useState(true);
@@ -209,24 +236,28 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
   ];
   return (
     <div className="settings">
-      <nav><h5>Settings</h5>{NAV.map((g) => <div className="navgroup" key={g.title || "more"}>{g.title && <h6>{g.title}</h6>}{g.items.map(([k, l]) => <button key={k} className={sec === k ? "on" : ""} onClick={() => setSec(k)}>{l}</button>)}</div>)}</nav>
+      {narrow
+        ? <div className="chapterbar" id="settings-chapters" role="tablist">{NAV.flatMap((g) => g.items).map(([k, l]) => <button key={k} role="tab" aria-selected={sec === k} className={sec === k ? "on" : ""} onClick={() => scrollTo(k)} data-chip={k}>{l}</button>)}</div>
+        : <nav><h5>Settings</h5>{NAV.map((g) => <div className="navgroup" key={g.title || "more"}>{g.title && <h6>{g.title}</h6>}{g.items.map(([k, l]) => <button key={k} className={sec === k ? "on" : ""} onClick={() => setSec(k)}>{l}</button>)}</div>)}</nav>}
       <section>
         <button className="closex" onClick={onClose} title="Close (Esc)"><X size={18} /></button>
-        {sec === "accounts" && <>
-          <h2>Accounts</h2><p className="hint"><b>Sign out</b> keeps your chats as a read-only archive. <b>Remove</b> deletes the account and its data from this device.</p>
+        {show("accounts") && <div className="chapter" id="set-accounts" data-chapter="accounts">
+<h2>Accounts</h2><p className="hint"><b>Sign out</b> keeps your chats as a read-only archive. <b>Remove</b> deletes the account and its data from this device.</p>
           {recv.history && accounts.length > 0 && <p className="hint" data-receiving-history>Receiving chats and messages from your other device… the accounts below are already here.</p>}
           {accounts.map((a) => <AccountCard key={a.id} a={a} p={providers.find((x) => x.name === a.provider)} onLogin={() => onLogin(a.id)} onAction={(k) => onAccountAction(k, a)} />)}
           {!accounts.length && <p className="hint" data-loading={loading ? "accounts" : undefined}>{recv.accounts ? "Receiving your accounts from your other device…" : loading ? "Still loading your accounts…" : "No accounts yet."}</p>}
-          <button className="primary inline" onClick={onAdd}><Plus size={16} /> Add account</button></>}
-        {sec === "appearance" && <>
-          <h2>Appearance</h2>
+          <button className="primary inline" onClick={onAdd}><Plus size={16} /> Add account</button>
+        </div>}
+        {show("appearance") && <div className="chapter" id="set-appearance" data-chapter="appearance">
+<h2>Appearance</h2>
           <label className="row"><span><b>Theme</b></span><select value={settings.theme} onChange={(e) => set("theme", e.target.value as Settings["theme"])}><option value="dark">Dark</option><option value="light">Light</option><option value="system">Follow system</option></select></label>
           <label className="row"><span><b>Message style</b><small className="rowhint">Bubbles show your messages on the right, like WhatsApp; Flat lists everything on the left, like Discord.</small></span><select value={settings.messageStyle} onChange={(e) => set("messageStyle", e.target.value as Settings["messageStyle"])}><option value="bubbles">Bubbles</option><option value="flat">Flat</option></select></label>
           <label className="row"><span><b>Date format</b><small className="rowhint">How dates are written in the chat, search and info panels. Times always follow your system.</small></span><select id="dateFormat" value={settings.dateFormat ?? "system"} onChange={(e) => set("dateFormat", e.target.value as DateFormat)}>{DATE_FORMATS.map(([k, l]) => <option key={k} value={k}>{l}{k === "system" ? "" : ` (${fmtDate(new Date(2026, 10, 16), {}, k)})`}</option>)}</select></label>
           <label className="toggle"><span><b>Show communities with only one chat as a normal chat</b><small>A community that holds just one chat gets no entry in the left bar; its chat is listed under Personal. Chats you moved into a folder count too.</small></span>
-            <input type="checkbox" id="collapseSingle" checked={collapse} onChange={(e) => { setCollapse(e.target.checked); core.call("setSetting", { key: "collapseSingleChatCommunities", value: e.target.checked }).catch(() => setCollapse(!e.target.checked)); }} /><i /></label></>}
-        {sec === "notifications" && <>
-          <h2>Notifications</h2>
+            <input type="checkbox" id="collapseSingle" checked={collapse} onChange={(e) => { setCollapse(e.target.checked); core.call("setSetting", { key: "collapseSingleChatCommunities", value: e.target.checked }).catch(() => setCollapse(!e.target.checked)); }} /><i /></label>
+        </div>}
+        {show("notifications") && <div className="chapter" id="set-notifications" data-chapter="notifications">
+<h2>Notifications</h2>
           {(window as any).UnimsgNative && <AndroidNotifPermission />}
           {(window as any).UnimsgNative && <p className="hint" data-android-notif>On Android, UniChat shows its own system notifications for messages that arrive while the app is not on screen. Turn them off per chat (mute) or in Android's settings for UniChat; there is no separate switch here.</p>}
           {!(window as any).UnimsgNative && <label className="toggle"><span><b>Desktop notifications</b><small>Show a notification for messages in chats you're not looking at</small></span>
@@ -243,9 +274,10 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
           {notifMsg && <p className="hint err">{notifMsg}</p>}
           <label className="row"><span><b>What notifications show</b><small className="rowhint">Full: sender and text. Sender only: who wrote, not what. Hidden: just “New message”. Applies to desktop notifications and, on Android, to notifications while the app is in the background.</small></span>
             <select id="notifyContent" value={settings.notifyContent} onChange={(e) => set("notifyContent", e.target.value as Settings["notifyContent"])}><option value="full">Full</option><option value="sender">Sender only</option><option value="hidden">Hidden</option></select></label>
-          {(window as any).UnimsgNative && <AndroidBackground settings={settings} set={set} />}</>}
-        {sec === "privacy" && <>
-          <h2>Privacy & chats</h2>
+          {(window as any).UnimsgNative && <AndroidBackground settings={settings} set={set} />}
+        </div>}
+        {show("privacy") && <div className="chapter" id="set-privacy" data-chapter="privacy">
+<h2>Privacy & chats</h2>
           <label className="row"><span><b>Keep message history</b><small className="rowhint">UniChat stores your messages on this device, encrypted. Older ones are deleted automatically.</small></span>
             <select value={retention} onChange={(e) => { const v = Number(e.target.value); if (v > 0 && !confirm(`Messages older than ${e.target.selectedOptions[0].text.toLowerCase()} will be deleted from this device now. Continue?`)) return; setRetention(v); core.call("setSetting", { key: "retentionDays", value: v }).catch((er) => alert(er.message)); }}>
               <option value={0}>Forever</option><option value={365}>1 year</option><option value={180}>6 months</option><option value={90}>3 months</option><option value={30}>1 month</option><option value={7}>1 week</option></select></label>
@@ -256,13 +288,26 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
           <Toggle k="sendTyping" label="Send typing indicators" />
           <Toggle k="autoDownloadMedia" label="Auto-download photos and voice messages" hint="Off: tap to load, saves data" />
           <Toggle k="mapPreviews" label="Show map previews for locations" hint="Loads map tiles from OpenStreetMap, which tells their server roughly which area you viewed" />
-          <Toggle k="enterToSend" label="Press Enter to send" hint="Shift+Enter always inserts a new line" /></>}
-        {sec === "scheduled" && <ScheduledList chats={chats} />}
-        {sec === "storage" && <StoragePanel accounts={accounts} providers={providers} chats={chats} loading={loading} />}
-        {sec === "backup" && <BackupPanel part="backup" />}
-        {sec === "move" && <BackupPanel part="move" />}
-        {sec === "sync" && <SyncPanel />}
-        {sec === "updates" && <><h2>Updates</h2><UpdatesSection /><section className="aboutapp"><h3>About UniChat</h3><p>One app for all your messengers. Providers: {providers.map((p) => p.displayName).join(", ") || "none"}.</p><p className="hint">Messages stay on your device; accounts are linked as secondary devices.</p></section></>}
+          <Toggle k="enterToSend" label="Press Enter to send" hint="Shift+Enter always inserts a new line" />
+        </div>}
+        {show("scheduled") && <div className="chapter" id="set-scheduled" data-chapter="scheduled">
+<ScheduledList chats={chats} />
+        </div>}
+        {show("storage") && <div className="chapter" id="set-storage" data-chapter="storage">
+<StoragePanel accounts={accounts} providers={providers} chats={chats} loading={loading} />
+        </div>}
+        {show("backup") && <div className="chapter" id="set-backup" data-chapter="backup">
+<BackupPanel part="backup" />
+        </div>}
+        {show("move") && <div className="chapter" id="set-move" data-chapter="move">
+<BackupPanel part="move" />
+        </div>}
+        {show("sync") && <div className="chapter" id="set-sync" data-chapter="sync">
+<SyncPanel />
+        </div>}
+        {show("updates") && <div className="chapter" id="set-updates" data-chapter="updates">
+<h2>Updates</h2><UpdatesSection /><section className="aboutapp"><h3>About UniChat</h3><p>One app for all your messengers. Providers: {providers.map((p) => p.displayName).join(", ") || "none"}.</p><p className="hint">Messages stay on your device; accounts are linked as secondary devices.</p></section>
+        </div>}
       </section>
     </div>
   );

@@ -10,6 +10,7 @@ import createTestnet from "hyperdht/testnet";
 import DHT from "hyperdht";
 import { cleanBootstrap, cleanDhtSetting, dhtSeed, DhtTransport, DhtUnavailable } from "./dht.js";
 import { cleanAddrs, mergeMembership, newGroup, newIdentity, type Dev } from "./group.js";
+import { createServer } from "node:net";
 import { orderAddrs, raceConnect, setInterfaceOverride } from "./addrs.js";
 import { msg, node, pairUp, until, type Node } from "./testkit.js";
 
@@ -241,6 +242,97 @@ test("pairing across networks: with no address at all, the code alone finds the 
   await Promise.all([B.call("syncConfirmJoin", { keepListening: true }), A.call("syncApproveJoin", { accept: true })]);
   await until(() => B.svc.status().devices.length === 2 && A.svc.status().devices.length === 2, "both devices in the group");
   await until(() => !!onlineVia(A, B)?.online && !!onlineVia(B, A)?.online, "the paired devices connect (settles every dial before the test ends)");
+});
+
+test("pairing by QR link across networks: the addresses in the link are dead, the rendezvous carries it, and the pinned key still matches", async () => {
+  const t = await net(), A = await node("qrA", "memory"), B = await node("qrB", "memory");
+  await enable(t, A, B);
+  const p = await A.call("syncStartPairing", { deviceName: "qrA", keepListening: true });
+  await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "pairing DHT ready");
+  // what a phone really scans when the other device's addresses cannot be reached from its network (TEST-NET-1 goes nowhere):
+  // only the code and the pinned key survive, so the join has to run over the rendezvous and still satisfy checkRemote.
+  const dead = p.link.replace(/h=[^&]*/, "h=192.0.2.1");
+  assert.match(dead, /c=[a-z]{16}/); assert.match(dead, /k=[\w-]+/);
+  const j = await B.call("syncJoin", { link: dead, deviceName: "qrB" });
+  assert.equal(j.via, "the internet (DHT)");
+  await until(async () => !!(await A.call("syncStatus")).approval, "approval request shown on the showing device");
+  await Promise.all([B.call("syncConfirmJoin", { keepListening: true }), A.call("syncApproveJoin", { accept: true })]);
+  await until(() => B.svc.status().devices.length === 2 && A.svc.status().devices.length === 2, "both devices in the group");
+  await until(() => !!onlineVia(A, B)?.online && !!onlineVia(B, A)?.online, "the paired devices connect");
+  for (const n of [A, B]) await n.stop();
+});
+
+test("a link address that answers and hangs up does not cancel the code's rendezvous: the pairing still completes", async () => {
+  // The phone on a campus network: its QR named its public address, its listener refused connections there (accepted the
+  // TCP connection, closed it at once), and the joining device took that for "wrong code" and cancelled everything --
+  // including the DHT rendezvous for this very code, which was on its way and would have worked.
+  const t = await net(), A = await node("hangA", "memory"), B = await node("hangB", "memory");
+  await enable(t, A, B);
+  const hangup = createServer((s) => s.destroy()); await new Promise<void>((r) => hangup.listen(0, "127.0.0.1", r));
+  try {
+    const p = await A.call("syncStartPairing", { deviceName: "hangA", keepListening: true });
+    await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "A's rendezvous ready");
+    const link = p.link.replace(/h=[^&]*/, "h=127.0.0.1").replace(/p=\d+/, `p=${(hangup.address() as any).port}`);
+    const j = await B.call("syncJoin", { link, deviceName: "hangB" });
+    assert.equal(j.via, "the internet (DHT)", "the rendezvous carried it after the named address hung up");
+    await until(async () => !!(await A.call("syncStatus")).approval, "approval request shown on the showing device");
+    await B.call("syncCancelJoin").catch(() => {});
+  } finally { hangup.close(); for (const n of [A, B]) await n.stop(); }
+});
+
+test("a phone on a network with only a public address does not put that address in its pairing link", async () => {
+  // Android binds the wildcard and refuses connections that did not arrive on a private address (acceptTcp). The link
+  // used to fall back to every interface address, public ones included -- an address the phone then refused.
+  const t = await net(), A = await node("pubphone", "memory", undefined, undefined, undefined, { opts: { bindHost: undefined, wildcardLan: true } });
+  await enable(t, A);
+  setInterfaceOverride([{ name: "wlan0", address: "134.28.188.181", family: 4, internal: false, netmask: "255.255.240.0" }]);
+  try {
+    await A.call("syncSetListen", { enabled: true, scope: "lan" });
+    const p = await A.call("syncStartPairing", { deviceName: "pubphone", keepListening: true });
+    assert.doesNotMatch(p.link, /134\.28\.188\.181/, "the public address it refuses is not offered");
+    assert.deepEqual(p.hosts, [], "no address it would answer on: the rendezvous carries the pairing");
+    await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "the rendezvous is still open");
+  } finally { setInterfaceOverride(undefined); await A.stop(); }
+});
+
+test("a device that is showing its own code can still join another one (it must not answer its own rendezvous)", async () => {
+  const t = await net(), A = await node("bothA", "memory"), B = await node("bothB", "memory");
+  await enable(t, A, B);
+  const pa = await A.call("syncStartPairing", { deviceName: "bothA", keepListening: true });
+  await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "A's rendezvous ready");
+  // B is showing a code of its own at the same time (both users pressed "show the code"), then B scans A's
+  const pb = await B.call("syncStartPairing", { deviceName: "bothB", keepListening: true });
+  await until(async () => (await B.call("syncStatus")).pairing?.dht === "ready", "B's rendezvous ready");
+  assert.notEqual(pa.code, pb.code);
+  const dead = pa.link.replace(/h=[^&]*/, "h=192.0.2.1"); // only A's code and key survive: it has to go over the rendezvous
+  const j = await B.call("syncJoin", { link: dead, deviceName: "bothB" });
+  assert.equal(j.via, "the internet (DHT)");
+  await until(async () => !!(await A.call("syncStatus")).approval, "A shows the approval request");
+  await Promise.all([B.call("syncConfirmJoin", { keepListening: true }), A.call("syncApproveJoin", { accept: true })]);
+  await until(() => B.svc.status().devices.length === 2 && A.svc.status().devices.length === 2, "both devices in the group");
+  for (const n of [A, B]) await n.stop();
+});
+
+test("a code shown, cancelled and shown again leaves no DHT node running once the device stops", async () => {
+  // A stopped code's rendezvous gets 90 s for a handshake still in flight. A second stop inside that window used to clear
+  // the first one's timer and forget it, so it ran for good: sockets open, answering a code nobody showed any more. Doing
+  // exactly this all day on two devices left a trail of them -- and kept this file's process from ever exiting.
+  const t = await net(), A = await node("regraced", "memory"); await enable(t, A);
+  const live = new Set<DhtTransport>(), start = DhtTransport.prototype.start, stop = DhtTransport.prototype.stop;
+  DhtTransport.prototype.start = function (this: DhtTransport) { live.add(this); return start.call(this); };
+  DhtTransport.prototype.stop = function (this: DhtTransport) { live.delete(this); return stop.call(this); };
+  try {
+    for (let i = 0; i < 3; i++) {
+      await A.call("syncStartPairing", { deviceName: "regraced" });
+      await until(async () => (await A.call("syncStatus")).pairing?.dht === "ready", "rendezvous ready");
+      await A.call("syncStopPairing");
+    }
+    // (showing a code also starts the device's group, whose own DHT node is not a pairing rendezvous)
+    const rendezvous = () => [...live].filter((x) => (x as any).o?.via === "dht-pair").length;
+    assert.equal(rendezvous(), 1, "only the last one is still in its grace period");
+    await A.stop();
+    assert.equal(live.size, 0, "and shutting down stops everything");
+  } finally { DhtTransport.prototype.start = start; DhtTransport.prototype.stop = stop; }
 });
 
 test("pairing over the DHT is refused when no pairing is open, and the group DHT key never accepts a pairing handshake", async () => {

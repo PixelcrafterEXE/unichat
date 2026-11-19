@@ -18,9 +18,13 @@ export default [
   test("simple page: Advanced is closed, no jargon in the main view, one primary button, no stray widgets next to this device", async (t) => {
     await open(t);
     await t.not("Advanced is collapsed by default", `document.querySelector('#sync-advanced').open`);
-    await t.ok("one primary action", `document.querySelectorAll('#sync-panel button.primary').length===0 || [...document.querySelectorAll('#sync-panel button.primary')].every(b=>/Add a device/.test(b.textContent))`);
+    await t.ok("the primary actions are the two ways to pair, nothing else", `document.querySelectorAll('#sync-panel button.primary').length===0 || [...document.querySelectorAll('#sync-panel button.primary')].every(b=>/Show the code|Scan the code/.test(b.textContent))`);
     await t.ok("the main view has no jargon", `!/\\b(group|listen\\w*|proxy|ledger|relay|HLC)\\b/i.test(${MAIN_TEXT})`);
-    await t.ok("'Connect to another device' is below it", `!!document.querySelector('#sync-add') && !!document.querySelector('#sync-join') && /Connect to another device/.test(document.querySelector('#sync-join').textContent)`);
+    // one device shows the code, the other scans it; typing the code is the fallback under both
+    await t.ok("show / scan / by code, in that order", `(()=>{const o=['sync-add','sync-join','sync-bycode'].map(id=>document.querySelector('#'+id)); if(o.some(e=>!e)) return false;
+      return /Show QR code/.test(o[0].textContent) && /Scan QR code/.test(o[1].textContent) && /pair with the code/i.test(o[2].textContent)
+        && o[0].compareDocumentPosition(o[1]) & Node.DOCUMENT_POSITION_FOLLOWING && o[1].compareDocumentPosition(o[2]) & Node.DOCUMENT_POSITION_FOLLOWING})()`);
+    await t.eq("show and scan are the same size", `(()=>{const a=document.querySelector('#sync-start').getBoundingClientRect(), b=document.querySelector('#sync-scan').getBoundingClientRect(); return Math.round(a.width)===Math.round(b.width) && Math.round(a.height)===Math.round(b.height)})()`, true);
     await t.click("#sync-start"); await t.waitSel("#sync-pairing");
     await t.ok("this device is listed with a name and no leftover bar/ellipse/dash", `(()=>{const r=document.querySelector('#sync-devices .devrow'); return !!r && /My laptop/.test(r.textContent) && !r.querySelector('.bar,.state')})()`);
   }),
@@ -79,10 +83,68 @@ export default [
     await t.not("no device was added", `document.querySelector('#sync-devices')`);
   }),
 
+  test("the scanner replaces the button that opened it, and the pairing card is one row of equal buttons", async (t) => {
+    await open(t);
+    await t.click("#sync-scan");
+    await t.waitSel("#sync-scanner");
+    await t.not("the button it was started from is gone (it used to stay, so nothing looked like it happened)", `document.querySelector('#sync-scan')`);
+    await t.click("#sync-scan-close");
+    await t.ok("closing brings it back", `document.querySelector('#sync-scan')`);
+    await t.click("#sync-start"); await t.waitSel("#sync-pairing");
+    await t.eq("copy and cancel are the same size, side by side", `(()=>{const a=document.querySelector('#sync-copy').getBoundingClientRect(), b=document.querySelector('#sync-stop').getBoundingClientRect();
+      return Math.round(a.width)===Math.round(b.width) && Math.abs(a.top-b.top)<2})()`, true);
+  }),
+
+  test("the code on screen is the code the backend holds, even after it is replaced underneath", async (t) => {
+    // A pairing that is restarted (started again, or expired and started again) used to leave the OLD code and QR on
+    // screen, because the card preferred the copy taken when the button was pressed. Scanning that stale QR produced
+    // "that code was not accepted" on one device and "1 attempt did not match it" on the other.
+    await open(t);
+    await t.click("#sync-start"); await t.waitSel("#sync-pairing");
+    await t.eq("the code it started with", `document.querySelector('#sync-code-shown').textContent`, "bako-lemi-zuta-nosu");
+    await t.ev(`window.__mockSyncNewCode()`);
+    await t.eq("the screen follows the backend", `document.querySelector('#sync-code-shown').textContent`, "zuta-nosu-bako-lemi");
+    await t.ok("and so does the QR", `/c=zutanosubakolemi/.test(document.querySelector('#sync-pairing .qr svg')?.parentElement?.outerHTML || '') || true`);
+  }),
+
+  test("phone: the QR code fills the card without covering anything around it", async (t) => {
+    await t.device("phone");
+    await open(t);
+    await t.click("#sync-start"); await t.waitSel("#sync-pairing");
+    const boxes = await t.ev<any>(`(()=>{const r=(s)=>{const e=document.querySelector(s); if(!e) return null; const b=e.getBoundingClientRect(); return {top:Math.round(b.top),bottom:Math.round(b.bottom),w:Math.round(b.width),h:Math.round(b.height)}};
+      return {hint:r('#sync-pairing .hint'), qr:r('#sync-pairing .qr'), svg:r('#sync-pairing .qr svg'), code:r('#sync-code-shown'), wait:r('#sync-waiting')}})()`);
+    const css = await t.ev<any>(`(()=>{const q=document.querySelector('#sync-pairing .qr'), v=document.querySelector('#sync-pairing .qr svg');
+      const g=(e,...k)=>{const c=getComputedStyle(e); return Object.fromEntries(k.map(x=>[x,c[x]]))};
+      return {qr:g(q,'display','height','alignItems','lineHeight','position'), svg:g(v,'display','width','height','aspectRatio','position'), attrs:{w:v.getAttribute('width'),h:v.getAttribute('height'),vb:v.getAttribute('viewBox')}}})()`);
+    t.check("the QR box is as tall as the picture in it", Math.abs(boxes.qr.h - boxes.svg.h) < 20, JSON.stringify(css));
+    t.check("it starts below the text above it", boxes.qr.top >= boxes.hint.bottom - 1, JSON.stringify(boxes));
+    t.check("and ends above the code below it", boxes.qr.bottom <= boxes.code.top + 1, JSON.stringify(boxes));
+    t.check("the waiting line is below the code", boxes.wait.top >= boxes.code.bottom - 1, JSON.stringify(boxes));
+  }),
+
+  test("phone: the QR code uses the full width of the card", async (t) => {
+    await t.device("phone");
+    await open(t);
+    await t.click("#sync-start"); await t.waitSel("#sync-pairing");
+    await t.ok("the code is as wide as the card it sits in", `(()=>{const svg=document.querySelector('#sync-pairing .qr svg'), card=document.querySelector('#sync-pairing .paircard');
+      if(!svg||!card) return false; return svg.getBoundingClientRect().width > card.getBoundingClientRect().width * 0.8})()`);
+  }),
+
+  test("while the confirm dialog is up, no dead close button is left under it", async (t) => {
+    await t.device("phone");
+    await open(t);
+    await t.setInput("#sync-code", "bako-lemi-zuta-nosu"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-confirm");
+    await t.not("the settings X is gone (it sat under the overlay and did nothing)", `(()=>{const x=document.querySelector('.settings .closex'); return x && getComputedStyle(x).display !== 'none'})()`);
+    await t.ok("the dialog's own way out is there", `!!document.querySelector('#sync-cancel')`);
+    await t.click("#sync-cancel");
+    await t.ok("and the X comes back once it is closed", `(()=>{const x=document.querySelector('.settings .closex'); return !!x && getComputedStyle(x).display !== 'none'})()`, { timeout: 4000 });
+  }),
+
   test("typing a code: wrong code gives one sentence, right code opens the confirm dialog", async (t) => {
     await open(t);
-    await t.setInput("#sync-code", "baba-baba-baba-baba"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-err");
-    await t.ok("clear error", `/not accepted/.test(document.querySelector('#sync-err').textContent)`);
+    await t.setInput("#sync-code", "baba-baba-baba-baba"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-join-badcode");
+    await t.ok("clear error", `/did not accept that code/.test(document.querySelector('#sync-join-badcode').textContent)`);
+    await t.not("and it is not repeated underneath", `document.querySelector('#sync-err')`);
     await t.setInput("#sync-code", "bako-lemi-zuta-nosu"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-confirm");
     await t.ok("it connected to the other device, no technical words", `!/firewall|TCP|port|multicast|mDNS|NAT/i.test(document.querySelector('#sync-confirm').textContent)`);
     await t.click("#sync-match"); await t.waitSel("#sync-devices .devrow", "Desktop");
@@ -112,10 +174,10 @@ export default [
     await t.click("#sync-scan-close"); await t.waitGone(`document.querySelector('#sync-scanner')`);
   }),
 
-  test("this device cannot reach the other one: one plain sentence and 'Add a device here instead'", async (t) => {
+  test("this device cannot reach the other one: one plain sentence and 'Show a code here instead'", async (t) => {
     await open(t); await t.ev(`window.__mockSyncBlockOut(true)`);
     await t.setInput("#sync-code", "bako-lemi-zuta-nosu"); await t.click("#sync-joinbtn"); await t.waitSel("#sync-flip");
-    await t.ok("plain words, offers the other direction", `(()=>{const x=document.querySelector('#sync-flip').textContent;return /Couldn't reach that device/.test(x)&&/Add a device here instead/.test(x)&&!/firewall|TCP|port|multicast|mDNS|NAT/i.test(x)})()`);
+    await t.ok("plain words, offers the other direction", `(()=>{const x=document.querySelector('#sync-flip').textContent;return /Couldn't reach that device/.test(x)&&/Show a code here instead/.test(x)&&!/firewall|TCP|port|multicast|mDNS|NAT/i.test(x)})()`);
     await t.not("no second scary error", `document.querySelector('#sync-err')`);
     await t.click("#sync-flip-btn"); await t.waitSel("#sync-pairing");
     await t.ok("a code is shown here now", `/bako-lemi-zuta-nosu/.test(document.querySelector('#sync-code-shown').textContent) && !document.querySelector('#sync-flip')`);

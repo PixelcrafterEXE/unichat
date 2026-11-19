@@ -39,13 +39,15 @@ export function SyncPanel() {
     const report = () => { const m = c.type === "cellular" || c.saveData === true; if (m !== !!st.media?.metered) core.call("syncSetMetered", { metered: m }).catch(() => {}); };
     report(); c.addEventListener?.("change", report); return () => c.removeEventListener?.("change", report);
   }, [st?.enabled, st?.media?.metered]);
-  const run: Run = async (f) => { setBusy(true); setErr(""); try { await f(); await load(); } catch (e: any) { setErr(e.message); load(); } finally { setBusy(false); } };
+  // `shown`: the failure has its own place in the panel (joining into the "Connect to another device" box), so the general
+  // error line stays empty instead of printing the same sentence a second time underneath it.
+  const run: Run = async (f) => { setBusy(true); setErr(""); try { await f(); await load(); } catch (e: any) { if (!e?.shown) setErr(e.message); load(); } finally { setBusy(false); } };
 
   const midJoin = !!st && !!st.joining && (st.joining.state === "confirm" || st.joining.state === "waiting");
   // keep nearby discovery running while the "Connect to another device" list is visible
   useEffect(() => { if (!st || midJoin) return; const f = () => core.call("syncBrowse").catch(() => {}); f(); const t = setInterval(f, 20_000); return () => clearInterval(t); }, [!!st, midJoin]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const join = (p: any) => run(() => core.call("syncJoin", p));
+  const join = (p: any) => run(async () => { try { await core.call("syncJoin", p); } catch (e: any) { throw Object.assign(e, { shown: true }); } });
   const joinNearby = (d: any) => run(() => core.call("syncJoinNearby", { host: d.host, port: d.port }));
   const startAdd = () => run(async () => setPair(await core.call("syncStartPairing", { keepListening: true })));
   // a pairing link (QR scanned by the system camera, pasted into the web URL as ?pair=) starts joining by itself; only the number comparison is left
@@ -97,25 +99,36 @@ export function SyncPanel() {
             <button className="secondary" onClick={() => run(() => core.call("syncConfirmCredentials", { accountId: c.accountId, accept: false }))}>Ignore</button></div></div>))}
 
       <div className="box" id="sync-add">
-        {!adding ? <><button className="primary inline big" id="sync-start" disabled={busy || st.revoked || !!st.unlinking} onClick={startAdd}>Add a device</button>
-          <p className="hint">Shows a code on this screen for your other device to scan or find.</p></>
-          : <Pairing p={pair ?? st.pairing} copied={copied} onCopy={(l) => { navigator.clipboard?.writeText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={() => run(() => core.call("syncStopPairing"))} />}
+        {!adding ? <><h4 style={{ marginTop: 0 }}>Show QR code</h4>
+          <p className="hint">On this device. The other one scans it.</p>
+          <div className="btns"><button className="primary inline big pairbtn" id="sync-start" disabled={busy || st.revoked || !!st.unlinking} onClick={startAdd}>Show the code</button></div></>
+          : <Pairing p={st.pairing ?? pair} copied={copied} onCopy={(l) => { navigator.clipboard?.writeText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={() => run(() => core.call("syncStopPairing"))} />}
       </div>
 
-      {!midJoin && !st.approval && <div className="box small" id="sync-join">
-        <h4>Connect to another device</h4>
-        {st.discovery?.available !== false && <div id="sync-nearby"><small className="sub">Nearby devices</small>
-          {nearby.map((d: any) => <div className="row2 nearby" key={d.instance} data-nearby={d.name}><span style={{ flex: 1 }}><b>{d.name}</b></span><button className="secondary" disabled={busy} onClick={() => joinNearby(d)}>Connect</button></div>)}
-          {!nearby.length && <p className="sub"><span className="spin" /> Looking for devices that show "Add a device"…</p>}</div>}
-        <div className="btns" style={{ marginTop: 6 }}>{typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && <button className="secondary" id="sync-scan" disabled={busy} onClick={() => setScan(true)}>Scan QR code</button>}</div>
-        {scan && <Scanner onClose={() => setScan(false)} onLink={(l) => { setScan(false); join({ link: l }); }} />}
-        <label className="sub">Or type its code<input type="text" id="sync-code" placeholder="bako-lemi-zuta-nosu" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} /></label>
-        <div className="btns"><button className="secondary" id="sync-joinbtn" disabled={busy || !code.trim()} onClick={() => join(isSyncLink(code.trim()) ? { link: code.trim() } : { code, host: host.trim() || undefined, port: port.trim() ? Number(port) : undefined })}>{busy && code ? "Looking for the other device…" : "Connect"}</button></div>
+      {!midJoin && !st.approval && <>
+        <div className="box" id="sync-join">
+          <h4 style={{ marginTop: 0 }}>Scan QR code</h4>
+          <p className="hint">Of the device that is showing one.</p>
+          {scan ? <Scanner onClose={() => setScan(false)} onLink={(l) => { setScan(false); join({ link: l }); }} />
+            : typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia
+              ? <div className="btns"><button className="primary inline big pairbtn" id="sync-scan" disabled={busy} onClick={() => setScan(true)}>Scan the code</button></div>
+              : <p className="hint">This device has no camera UniChat may use. Type the code below instead.</p>}
+        </div>
+
+        <div className="box small" id="sync-bycode">
+          <h4 style={{ marginTop: 0 }}>Or pair with the code</h4>
+          <label className="sub">The code shown on the other device<input type="text" id="sync-code" placeholder="bako-lemi-zuta-nosu" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} /></label>
+          <div className="btns"><button className="secondary" id="sync-joinbtn" disabled={busy || !code.trim()} onClick={() => join(isSyncLink(code.trim()) ? { link: code.trim() } : { code, host: host.trim() || undefined, port: port.trim() ? Number(port) : undefined })}>{busy && code ? "Looking for the other device…" : "Connect"}</button></div>
+          {st.discovery?.available !== false && <div id="sync-nearby"><small className="sub">Nearby devices</small>
+            {nearby.map((d: any) => <div className="row2 nearby" key={d.instance} data-nearby={d.name}><span style={{ flex: 1 }}><b>{d.name}</b></span><button className="secondary" disabled={busy} onClick={() => joinNearby(d)}>Connect</button></div>)}
+            {!nearby.length && <p className="sub"><span className="spin" /> Looking for devices that are showing a code…</p>}</div>}
+        </div>
+
         {flip && <div className="warn" id="sync-flip"><b>Couldn't reach that device.</b> Some devices don't accept connections from others. Show a code here instead and enter it there.
-          <div className="btns"><button className="primary inline" id="sync-flip-btn" disabled={busy} onClick={startAdd}>Add a device here instead</button></div></div>}
-        {st.joining?.state === "failed" && st.joining.reason === "code" && <p className="err" id="sync-join-badcode">That code wasn't accepted. Check the letters, and that the other device still shows its code.</p>}
-        {st.joining?.state === "failed" && !st.joining.reason && <p className="err" id="sync-join-failed">{st.joining.error}</p>}
-      </div>}
+          <div className="btns"><button className="primary inline" id="sync-flip-btn" disabled={busy} onClick={startAdd}>Show a code here instead</button></div>
+          <p className="sub">If neither device lets the other in, swapping makes no difference: leave "Reach my devices from anywhere" switched on under Advanced, which works without either device accepting connections.</p></div>}
+        {st.joining?.state === "failed" && st.joining.reason === "code" && <p className="err" id="sync-join-badcode">A device answered but did not accept that code. Codes run out after a few minutes: check the letters, and that the other device is still showing <em>this</em> code (start a new one there if not).</p>}
+        {st.joining?.state === "failed" && !st.joining.reason && <p className="err" id="sync-join-failed">{st.joining.error}</p>}</>}
       {err && !flip && <p className="err" id="sync-err">{err}</p>}
 
       <details id="sync-advanced" className="adv"><summary>Advanced</summary>
@@ -206,11 +219,12 @@ export function Pairing({ p, onStop, onCopy, copied }: { p: any; onStop: () => v
       <div className="paircard">
         <div className="qr"><QRCodeSVG value={p.link} size={150} /></div>
         <div className="codebox"><div id="sync-code-shown" className="code">{p.code}</div>
-          <small className="sub">{left > 0 ? `Valid for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Expired"}</small>
-          <div className="btns"><button className="secondary" id="sync-copy" onClick={() => onCopy(p.link)}>{copied ? "Copied" : "Copy link"}</button></div></div></div>
+          <small className="sub">{left > 0 ? `Valid for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Expired"}</small></div></div>
       <p className="sub" id="sync-waiting"><span className="spin" /> Waiting for the other device…</p>
+      {p.failures > 0 && <p className="err" id="sync-pair-wrong">A device tried to pair with a code that is not this one ({p.failures} attempt{p.failures === 1 ? "" : "s"}). If that was your other device, it is reading an old code: let it scan or type the code above as it is now.</p>}
       {p.dht && p.dht !== "off" && <p className="sub" id="sync-pair-net">{p.dht === "ready" ? "Also reachable through the internet: the other device can be on a different network (university, mobile data)." : p.dht === "starting" ? "Opening the internet route for devices on other networks…" : "The internet route is not available here; only devices on the same Wi-Fi can pair."}</p>}
-      <div className="btns"><button className="secondary" id="sync-stop" onClick={onStop}>Cancel</button></div></div>);
+      <div className="btns pairactions"><button className="secondary" id="sync-copy" onClick={() => onCopy(p.link)}>{copied ? "Copied" : "Copy link"}</button>
+        <button className="secondary" id="sync-stop" onClick={onStop}>Cancel</button></div></div>);
 }
 
 /** Camera QR scanner (getUserMedia + jsQR, bundled; the decoder is loaded only when the camera opens). Falls back to a message when there is no camera or no permission. */
@@ -325,6 +339,7 @@ function Network({ st, busy, run }: { st: any; busy: boolean; run: Run }) {
   return (
     <div className="box" id="sync-network"><h3 style={{ marginTop: 0 }}>Network</h3>
       <label className="opt"><input type="checkbox" id="sync-listen" checked={!!L.enabled} disabled={busy} onChange={(e) => set({ enabled: e.target.checked })} /><span>Stay reachable on my network<small className="sub">{L.enabled ? (st.listening ? `On ${st.binds.join(", ")}.` : L.error || "Not available right now.") : "Off: this device only connects out. At least one of your devices should stay reachable."}</small></span></label>
+      {L.enabled && st.listening && <p className="hint" id="sync-firewall">If another device cannot reach this one, this computer's firewall is dropping the connection: allow TCP port {st.port || 45045} there. Nothing has to be opened to pair, though — show the code on the other device and scan it here instead, which only needs an outgoing connection.</p>}
       {L.enabled && <><label className="sub">Who can reach it
         <select id="sync-scope" value={pickAddr ? "address" : L.scope} disabled={busy} onChange={(e) => { if (e.target.value === "address") setPickAddr(true); else { setPickAddr(false); set({ scope: e.target.value }); } }}>
           <option value="loopback">Only this computer (testing, SSH tunnels)</option><option value="lan">My local network</option><option value="address">One specific address (VPN / Tailscale)…</option></select></label>

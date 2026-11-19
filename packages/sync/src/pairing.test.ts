@@ -8,6 +8,15 @@ import { ChannelError } from "./channel.js";
 import { tcpConnect, type Connector, type Iface } from "./addrs.js";
 import { dialAny, isPrivateLan, listenPorts, probeHosts, SYNC_PORT, SYNC_PORT_SPAN, wellKnownPorts } from "./discover.js";
 import { node, pairUp, until, type Node } from "./testkit.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomBytes } from "node:crypto";
+import { deviceIdOf } from "./noise.js";
+import { dial } from "./channel.js";
+import { NEARBY_PSK } from "./nearby.js";
+import { newIdentity } from "./group.js";
+import { Ledger } from "./ledger.js";
 
 const refused = () => Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
 /** A fake LAN: addresses -> loopback ports. `drop` = firewall that silently drops (connect hangs until the caller's timeout); alive hosts answer RST on closed ports. */
@@ -126,6 +135,24 @@ test("dialAny: an explicitly named host that rejects the code ends it at once; p
   assert.deepEqual(timeouts, [1], "a host that drops packets is not tried on the other ports");
 });
 
+test("dialAny: a named host that hangs up stops the scan, but the code's rendezvous already on its way may still win", async () => {
+  // Without this, a refused link address cancelled the DHT attempt for the same code -- the one path that worked.
+  const r = await dialAny<string>({ fixed: [{ host: "pub", ports: [1], src: "link" }, { host: "dht", ports: [0], src: "dht" }],
+    probe: Array.from({ length: 20 }, (_, i) => ({ host: "p" + i, ports: [1], src: "probe" as const })),
+    attempt: async (h, _p, signal) => {
+      if (h === "pub") throw new ChannelError("closed", "hung up");
+      if (h === "dht") { await new Promise((ok) => setTimeout(ok, 150)); return "via dht"; }
+      return new Promise<string>((_, f) => signal.addEventListener("abort", () => f(new Error("aborted"))));
+    }, concurrency: 8, overallMs: 5000 });
+  assert.equal(r.value, "via dht"); assert.equal(r.stats.rejected, 1, "the refusal is still counted, for the log");
+  // and when the rendezvous fails too, the refusal is reported as before: "code", not "unreachable"
+  const t0 = Date.now();
+  await assert.rejects(dialAny({ fixed: [{ host: "pub", ports: [1], src: "link" }, { host: "dht", ports: [0], src: "dht" }],
+    attempt: async (h) => { if (h === "pub") throw new ChannelError("closed", "hung up"); await new Promise((ok) => setTimeout(ok, 100)); throw new Error("connection timed out"); }, overallMs: 5000 }),
+    (e: any) => e.reason === "code");
+  assert.ok(Date.now() - t0 < 1500, "it waits for the rendezvous attempt, not for the overall timeout");
+});
+
 test("enter only the code: the LAN probe finds the device showing it (well-known port, no address typed)", async () => {
   const lan = new FakeLan(); const A = await dev("A", lan, "192.168.7.10"), B = await dev("B", lan, "192.168.7.44");
   const p = await A.call("syncStartPairing", {}); lan.host("192.168.7.10", { to: p.port }); lan.host("192.168.7.44");
@@ -230,4 +257,96 @@ test("link (QR) with addresses and the pinned key; typed address keeps working",
   const C = await nd("C", "memory"); const p2 = await A.call("syncStartPairing", {}); (A.svc as any).src.clear();
   const j2 = await C.call("syncJoin", { host: "127.0.0.1", port: p2.port, code: p2.code }); await confirm(A, C, "joiner", j2.sas);
   await until(async () => (await C.call("syncStatus")).enabled, "C joined with host/port");
+});
+
+test("an identity whose id is not the hash of its key is replaced at startup (nothing could ever pair with it)", async () => {
+  const dir = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "sync-brokenid-"));
+  const key = new Uint8Array(randomBytes(32));
+  // first start: a healthy identity, which is then corrupted in the ledger the way a half-written or migrated one would be
+  const first = await nd("broken", "sqlite", dir, undefined, key);
+  const good = (first.svc as any).me;
+  await first.stop();
+  const l = new Ledger(join(dir, "sync.db"), key);
+  l.kvSet("identity", { ...good, id: "0".repeat(32) });
+  l.close();
+
+  const again = await nd("broken", "sqlite", dir, undefined, key);
+  const me = (again.svc as any).me;
+  assert.notEqual(me.id, "0".repeat(32), "the broken id is gone");
+  assert.equal(me.id, deviceIdOf(Buffer.from(me.pub, "base64")), "and the new one matches its key");
+  assert.equal(again.svc.status().deviceId, me.id);
+  await again.stop();
+
+  // in a group it must NOT be replaced behind the user's back: that would orphan the ledger
+  const dir2 = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "sync-brokenid2-"));
+  const key2 = new Uint8Array(randomBytes(32));
+  const A = await nd("grpA", "sqlite", dir2, undefined, key2), B = await nd("grpB", "memory");
+  await pairUp(A, B);
+  const meA = (A.svc as any).me; await A.stop(); await B.stop();
+  const l2 = new Ledger(join(dir2, "sync.db"), key2); l2.kvSet("identity", { ...meA, id: "1".repeat(32) }); l2.close();
+  const A2 = await nd("grpA", "sqlite", dir2, undefined, key2);
+  assert.equal((A2.svc as any).me.id, "1".repeat(32), "a device that is in a group keeps its identity; the problem is reported instead");
+  await A2.stop();
+});
+
+/** mDNS stand-in: a table a test fills by hand, the way a real browser hears every announcement on the link -- its own included. */
+class TableMdns {
+  table: { instance: string; host: string; port: number; txt: Record<string, string>; addrs: string[]; seen: number }[] = [];
+  async start() {} stop() {} query() {} refresh() {} unadvertise() {} advertise() {}
+  services() { return this.table; }
+  add(instance: string, port: number, addrs: string[]) { this.table.push({ instance, host: instance + ".local", port, txt: { v: "1", m: "pair", n: instance }, addrs, seen: Date.now() }); return this; }
+}
+
+test("a device that is showing a code does not dial its own mDNS announcement while joining", async () => {
+  // Both devices show a code, so both announce over mDNS -- and a browser hears its own announcement. The joining one
+  // used to dial ITSELF, be refused by its own listener (it holds a different code), and because an announced host counts
+  // as decisive, that refusal aborted the pairing with "that code wasn't accepted" while the real handshake was running.
+  // The other device's answer is slowed down here so the self-dial always loses the race it used to win.
+  const browse = new TableMdns();
+  const A = await nd("mdnsA", "memory");
+  const pa = await A.call("syncStartPairing", { deviceName: "mdnsA" });
+  const slowToA: Connector = (host, port, timeout, signal) =>
+    (port === pa.port ? new Promise((r) => setTimeout(r, 500)) : Promise.resolve()).then(() => tcpConnect(host, port, timeout, signal));
+  const B = await nd("mdnsB", "memory", undefined, undefined, undefined, { opts: { mdns: browse as any, net: { connect: slowToA } } });
+  const pb = await B.call("syncStartPairing", { deviceName: "mdnsB" });
+  const idOf = (n: typeof A) => "unichat-" + n.svc.status().deviceId.slice(0, 10);
+  browse.add(idOf(B), pb.port, ["127.0.0.1"]).add(idOf(A), pa.port, ["127.0.0.1"]); // B's own announcement first, and it answers at once
+  const j = await B.call("syncJoin", { code: pa.code, deviceName: "mdnsB" });
+  await confirm(A, B, "joiner", j.sas);
+  await until(async () => (await B.call("syncStatus")).enabled, "B joined A instead of being refused by itself");
+});
+
+test("every device is paired with every other one: three devices joined through one hub know each other and sync without it", async () => {
+  // Pairing is one-to-one, but the group is not: a device that joins learns the whole membership (and its keys), so a
+  // phone that only ever met the laptop still talks to the tablet directly. This is what keeps it that way.
+  const hub = await nd("hub", "memory"), phone = await nd("phone", "memory"), tablet = await nd("tablet", "memory");
+  await pairUp(hub, phone);
+  await pairUp(hub, tablet); // phone and tablet never meet during pairing
+  const names = (n: Node) => n.svc.status().devices.map((d: any) => d.name).sort().join(",");
+  await until(async () => names(phone) === "hub,phone,tablet" && names(tablet) === "hub,phone,tablet",
+    "each device knows all three");
+  await hub.stop(); // and they are not talking THROUGH the hub: with it gone they still find each other
+  await until(async () => !!phone.svc.status().devices.find((d: any) => d.name === "tablet")?.online
+    && !!tablet.svc.status().devices.find((d: any) => d.name === "phone")?.online, "phone and tablet are connected to each other");
+});test("showing a code again clears the lock-out that failed attempts left behind", async () => {
+  // Attempts that start the nearby handshake and vanish lock that address out (nearby.test.ts pins that: it is what a
+  // stranger spamming prompts looks like). The lock-out is silent, it doubles -- 30s, a minute, two, up to an hour --
+  // and the device that is locked out only ever reads "couldn't reach that device". Retrying is what a user does, so
+  // there has to be a way back: putting a code on the screen is the user saying "accept connections now".
+  const host = await nd("host", "memory"), joiner = await nd("joiner", "memory");
+  const p = await host.call("syncStartPairing", { deviceName: "host", keepListening: true });
+  const me = newIdentity("ghost"), keys = { pub: Buffer.from(me.pub, "base64"), priv: Buffer.from(me.priv, "base64") };
+  for (let i = 0; i < 4; i++) { // handshake, then gone before the number exchange
+    const sock = await tcpConnect("127.0.0.1", p.port, 2000);
+    try { const ch = await dial(sock, { mode: "nearby", psk: NEARBY_PSK, s: keys, hello: { id: me.id, name: "ghost", grp: 1 }, checkRemote: () => {}, timeoutMs: 3000 }); ch.close(); }
+    catch { sock.destroy(); }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  await assert.rejects(joiner.call("syncJoinNearby", { host: "127.0.0.1", port: p.port, deviceName: "joiner" }),
+    /not showing a pairing code|reach/, "locked out, and nothing says so");
+
+  const p2 = await host.call("syncStartPairing", { deviceName: "host", keepListening: true }); // the user shows a code again
+  const j = await joiner.call("syncJoinNearby", { host: "127.0.0.1", port: p2.port, deviceName: "joiner" });
+  assert.match(j.sas, /^\d{3} \d{3}$/, "which is the way back: the connect goes through again");
+  await until(async () => !!(await host.call("syncStatus")).approval, "and the prompt is shown");
 });

@@ -70,6 +70,7 @@ function dotOrder(c: Chat, members?: Chat[]): string | undefined {
 export default function App() {
   const q = new URLSearchParams(location.search); // ?space=..&chat=..&settings=1&info=1 (deep links / screenshots)
   const [error, setError] = useState<string>();
+  const errorFrom = useRef<string>(); // the account whose non-fatal problem is on screen: cleared when it connects again
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [watchers, setWatchers] = useState(false); useEffect(() => { const t = setTimeout(() => setWatchers(true), 0); return () => clearTimeout(t); }, []); // after the first paint: the hosts load while the first snapshot is in flight
@@ -292,8 +293,10 @@ export default function App() {
         // Only on a REAL change: a provider that re-announces the state it already has (e.g. "connected" again) must not blank the open chat.
         const was = acctStateRef.current.get(d.id); acctStateRef.current.set(d.id, d.state);
         if (was !== d.state && ["signed-out", "needs-login", "connected"].includes(d.state)) { setMsgs((m) => Object.fromEntries(Object.entries(m).filter(([k]) => !k.startsWith(d.id + ":") && !k.startsWith("merge:")))); setHistTick((t) => t + 1); }
-        if (d.state === "connected") { setLogin(undefined); fresh.current.delete(d.id); relinking.current.delete(d.id); } refreshSoon(); }
-      if (ev === "error") setError(d.message);
+        // A problem message belongs to the account that reported it: once that account is connected again it is history,
+        // and leaving it on screen made a connection that had already recovered look broken.
+        if (d.state === "connected") { setLogin(undefined); fresh.current.delete(d.id); relinking.current.delete(d.id); if (errorFrom.current === d.id) { errorFrom.current = undefined; setError(undefined); } } refreshSoon(); }
+      if (ev === "error") { errorFrom.current = d.fatal ? undefined : d.id; setError(d.message); }
         };
     // High-frequency events (a busy account can deliver hundreds per second) are applied together once per 40 ms: one render, not one per event.
     const HF = new Set(["message", "message-update", "receipt", "typing", "presence"]);

@@ -23,7 +23,7 @@ import { Avatars } from "./avatars.js";
 import { Blobs, cleanPolicy, DEFAULT_POLICY, HARD_MAX, acctOfChat, refOf, type MediaPolicy } from "./blobs.js";
 import { Clock } from "./hlc.js";
 import { Ledger } from "./ledger.js";
-import { lanAddresses, Mdns, SERVICE } from "./mdns.js";
+import { Mdns, SERVICE } from "./mdns.js";
 import { deviceIdOf, sameKey } from "./noise.js";
 import { NEARBY_PSK, nearbyHost, nearbyJoin } from "./nearby.js";
 import { Proxies } from "./proxy.js";
@@ -136,6 +136,14 @@ export class SyncService {
   private async init() {
     const L = this.ledger;
     this.me = L.kvGet<Identity>("identity") ?? (() => { const i = newIdentity(this.o.deviceName ?? hostname()); L.kvSet("identity", i); return i; })();
+    // A stored identity whose id is not the hash of its own key can never pair: every peer checks exactly that and hangs up
+    // with "device id does not match its key", while this device is told the code was refused and nobody logs anything here.
+    // It cannot be repaired, only replaced -- which is harmless as long as this device is not in a group yet.
+    if (this.me.id !== deviceIdOf(Buffer.from(this.me.pub, "base64"))) {
+      const broken = this.me.id;
+      if (L.kvGet("group")) console.error(`[sync] the stored identity ${broken} does not match its key, but this device is in a sync group: leave the group here and set it up again.`);
+      else { this.me = newIdentity(this.me.name); L.kvSet("identity", this.me); console.warn(`[sync] the stored identity ${broken} did not match its key (nothing could ever pair with it); a new one was made: ${this.me.id}`); }
+    }
     if (this.o.deviceName && this.me.name === "localhost") { this.me.name = this.o.deviceName; L.kvSet("identity", this.me); } // Android used to default to the hostname "localhost"
     this.clock = new Clock(this.me.id, () => this.now()); this.clock.restore(L.kvGet("clock"));
     this.modes = L.kvGet<Record<string, SyncMode>>("modes") ?? {};
@@ -237,8 +245,14 @@ export class SyncService {
   /** Addresses worth telling peers about: the bound ones, or, for the wildcard listener, every private address this device has right now. */
   private advHosts(): string[] { return this.servers.has("0.0.0.0") ? lanBindAddresses(interfaces()) : advertisable(this.boundHosts()); }
   /** wildcard listener on Android: only connections that arrived on a private address of this device are served (the "local network" exposure promise). */
+  private refusedOn = new Map<string, number>();
   private acceptTcp(sock: Socket, boundTo: string) {
-    if (boundTo === "0.0.0.0" && !isLanAddress(sock.localAddress ?? "")) { sock.destroy(); return; }
+    if (boundTo === "0.0.0.0" && !isLanAddress(sock.localAddress ?? "")) {
+      // Said once per address and ten minutes: this was silent, and to the other device it looked like a refused code.
+      const a = sock.localAddress ?? "?", last = this.refusedOn.get(a) ?? 0;
+      if (this.now() - last > 600_000) { this.refusedOn.set(a, this.now()); console.warn(`[sync] turned away a connection from ${this.srcOf(sock)} to ${a}: not a private address, and UniChat only accepts connections on the local network by itself`); }
+      sock.destroy(); return;
+    }
     this.onInbound(sock);
   }
   private listeningPort() { return this.servers.size ? this.port : 0; }
@@ -329,7 +343,8 @@ export class SyncService {
         addrs: d.id === this.me.id ? undefined : (d.addrs ?? []).map((a) => ({ kind: a.kind, host: a.host, port: a.port, url: a.url, src: a.src, good: a.good, bad: a.bad })), audit: this.proxies.audit[d.id] };
     });
     const self = "unichat-" + this.me.id.slice(0, 10) + "." + SERVICE;
-    const discovered = this.mdns ? this.mdns.services().filter((s) => s.txt.m === "pair" && s.instance !== self).map((s) => ({ instance: s.instance, name: s.txt.n ?? s.instance, host: s.addrs[0] ?? s.host, port: s.port, nearby: s.txt.nb === "1" })) : [];
+    const fresh = this.now() - 45_000;
+    const discovered = this.mdns ? this.mdns.services().filter((s) => s.txt.m === "pair" && s.instance !== self && s.seen > fresh).map((s) => ({ instance: s.instance, name: s.txt.n ?? s.instance, host: s.addrs[0] ?? s.host, port: s.port, nearby: s.txt.nb === "1" })) : [];
     const binds = this.boundHosts().map((h) => (h.includes(":") ? `[${h}]` : h) + ":" + this.port);
     return { enabled: !!g, paused: this.paused, revoked: this.selfRevoked, removedNotice: this.removedNotice, unlinking: this.unlinkPending && { peer: this.unlinkPending.peer, name: this.unlinkPending.name, since: this.unlinkPending.since, reason: this.unlinkPending.reason, online: this.sessions.has(this.unlinkPending.peer) }, deviceId: this.me.id, deviceName: this.me.name, groupId: g?.id, listening: this.servers.size > 0, port: this.port || undefined, binds,
       listen: { ...this.listen, error: this.listenErr || undefined, pairingOnly: this.servers.size > 0 && !this.listen.enabled, interfaces: interfaces().filter((i) => !i.internal && i.family === 4).map((i) => ({ name: i.name, address: i.address })) },
@@ -481,7 +496,11 @@ export class SyncService {
 
   // ============================================================ pairing
   private pairingLink(p: Pairing) {
-    const hosts = this.o.bindHost ? [this.o.bindHost] : this.advHosts().length ? this.advHosts() : lanAddresses();
+    // Only addresses this device will actually answer on. The old fallback to every interface address put a campus
+    // network's PUBLIC address into the QR of a phone whose listener (rightly, see acceptTcp) refuses connections to it:
+    // the other device dialled it, was hung up on, and took that for "wrong code". No address is fine -- the code's DHT
+    // rendezvous carries the pairing then.
+    const hosts = this.o.bindHost ? [this.o.bindHost] : this.advHosts();
     const k = Buffer.from(this.me.pub, "base64").toString("base64url");
     return { hosts, port: this.port, link: `unichat-sync://pair?h=${hosts.join(",")}&p=${this.port}&c=${normalizeCode(p.code)}&k=${k}` };
   }
@@ -493,6 +512,7 @@ export class SyncService {
     else if (this.group.devices[this.me.id].name !== this.me.name) { this.group.devices[this.me.id].name = this.me.name; this.persist(); }
     this.paused = false; this.ledger.kvSet("paused", false);
     this.stopPairing("restarted"); this.joinResult = undefined;
+    this.src.clear(); // the user is asking for connections right now: earlier failures do not get to lock them out
     const code = newPairingCode(), ttl = this.o.pairingTtlMs ?? 5 * 60_000;
     const pr: Pairing = { code, psk: pairingPsk(code), expiresAt: this.now() + ttl, failures: 0, nearbyPrompts: 0, keepListening: !!p?.keepListening, timer: setTimeout(() => this.stopPairing("expired"), ttl) };
     pr.timer.unref?.(); this.pairing = pr;
@@ -507,21 +527,37 @@ export class SyncService {
   }
   /** Pairing across networks: while a code is shown, also listen on the code-derived HyperDHT key (see pairingDhtSeed). Best effort and in the background: the local network works without it. */
   private pairDht?: DhtTransport; private pairDhtState: DhtState = "off";
+  /** First 8 hex of sha256(psk): tells two pairings apart in a log without putting the code (or anything derived from it that helps a guess) in it. */
+  private pairTag(pr: Pairing) { return createHash("sha256").update(pr.psk).digest("hex").slice(0, 8); }
   private startPairDht(pr: Pairing) {
     if (!this.dhtSet.enabled) return;
     const o = this.o.dht ?? {}; this.pairDhtState = "starting";
     const t = new DhtTransport({ seed: pairingDhtSeed(pr.psk), bootstrap: this.dhtSet.bootstrap, loader: o.loader, requireBootstrap: o.requireBootstrap, startTimeoutMs: o.startTimeoutMs, open: true, via: "dht-pair", allow: () => [],
-      onInbound: (sock) => { if (this.pairing === pr) this.onInbound(sock); else sock.destroy(); } });
+      onInbound: (sock) => {
+        if (this.pairing === pr) { console.warn(`[sync] someone reached the rendezvous of the code ${this.pairTag(pr)}; answering it`); this.onInbound(sock); }
+        else { console.warn(`[sync] someone reached the rendezvous of the code ${this.pairTag(pr)}, which is not the code shown here any more: hanging up`); sock.destroy(); }
+      } });
     this.pairDht = t;
-    t.start().then(() => { if (this.pairDht === t) { this.pairDhtState = "ready"; this.changedDevices(); } else void t.stop(); },
-      (e) => { if (this.pairDht === t) { this.pairDht = undefined; this.pairDhtState = e instanceof DhtUnavailable ? "unavailable" : "error"; this.changedDevices(); } void t.stop(); });
+    t.start().then(() => { if (this.pairDht === t) { this.pairDhtState = "ready"; console.warn(`[sync] showing a code (${this.pairTag(pr)}): its rendezvous is open`); this.changedDevices(); } else void t.stop(); },
+      (e) => { if (this.pairDht === t) { this.pairDht = undefined; this.pairDhtState = e instanceof DhtUnavailable ? "unavailable" : "error"; console.warn(`[sync] showing a code (${this.pairTag(pr)}): its rendezvous could NOT be opened: ${errmsg(e)}`); this.changedDevices(); } void t.stop(); });
   }
-  private stopPairDht() {
+  private pairDhtGrace?: { t: DhtTransport; timer: ReturnType<typeof setTimeout> };
+  private stopPairDht(now = false) {
     const t = this.pairDht; this.pairDht = undefined; this.pairDhtState = "off";
-    if (t) { const k = setTimeout(() => void t.stop(), 90_000); k.unref?.(); } // a pairing handshake that is still running gets time to finish (new callers are refused: no pairing is open)
+    // An older rendezvous still in its grace period is stopped now, not forgotten. This used to clear its timer and drop
+    // the reference: a code shown, cancelled and shown again within 90 s (or a shutdown in that window) left a DHT node
+    // running for good -- sockets open, answering a code nobody shows any more.
+    const g = this.pairDhtGrace; this.pairDhtGrace = undefined;
+    if (g) { clearTimeout(g.timer); void g.t.stop(); }
+    if (!t) return;
+    if (now) { void t.stop(); return; }
+    // a pairing handshake that is still running gets time to finish (new callers are refused: no pairing is open)
+    const timer = setTimeout(() => { if (this.pairDhtGrace?.t === t) this.pairDhtGrace = undefined; void t.stop(); }, 90_000); timer.unref?.();
+    this.pairDhtGrace = { t, timer };
   }
   private stopPairing(reason: string) {
     if (!this.pairing) return;
+    console.warn(`[sync] the code ${this.pairTag(this.pairing)} is no longer shown here (${reason})`);
     clearTimeout(this.pairing.timer); this.pairing = undefined; this.stopPairDht();
     if (this.pendingJoin) this.finishJoin(false, "Pairing was closed.");
     void this.syncListeners().then(() => { if (!this.disposed) this.host.emit("sync-devices", { ...this.status(), pairingEnded: reason }); }, () => {});
@@ -562,7 +598,8 @@ export class SyncService {
     let startedMdns = false, poll: (() => Cand[]) | undefined;
     if (!explicit && this.o.mdns) {
       if (!this.mdns) { this.mdns = this.o.mdns === true ? new Mdns() : this.o.mdns; this.ownMdns = this.o.mdns === true; if (this.ownMdns) { startedMdns = true; await this.mdns.start().catch(() => { this.mdns = undefined; startedMdns = false; }); } }
-      const m = this.mdns; if (m) poll = () => m.services().filter((x) => x.txt.m === "pair" && x.port).flatMap((x) => (x.addrs.length ? x.addrs : [x.host]).filter((h) => /^\d+\.\d+\.\d+\.\d+$/.test(h)).map((host) => ({ host, ports: [x.port], src: "mdns" as const })));
+      const ownInstance = "unichat-" + this.me.id.slice(0, 10);
+      const m = this.mdns; if (m) poll = () => m.services().filter((x) => x.txt.m === "pair" && x.port && x.instance !== ownInstance).flatMap((x) => (x.addrs.length ? x.addrs : [x.host]).filter((h) => /^\d+\.\d+\.\d+\.\d+$/.test(h)).map((host) => ({ host, ports: [x.port], src: "mdns" as const })));
     }
     const keys = { pub: Buffer.from(this.me.pub, "base64"), priv: Buffer.from(this.me.priv, "base64") };
     // across networks (a university network, CGNAT): the code also names a HyperDHT key, hole punched like the group sync (see pairingDhtSeed). Raced with everything above; the first handshake wins.
@@ -597,8 +634,14 @@ export class SyncService {
       this.joinBusy = false; void jd?.stop();
       if (startedMdns && !this.servers.size) { this.mdns?.stop(); this.mdns = undefined; }
       if (e instanceof DialFailure) {
-        const msg = nearby && e.reason !== "other" ? "Couldn't reach that device. Make sure both are on the same Wi-Fi and it still shows \"Add a device\"." : e.reason === "code" ? "The pairing code was not accepted (wrong code, expired, or too many attempts)." + (pin ? " If you scanned a QR code, check that it is the one on the other device's screen." : "")
-          : e.reason === "unreachable" ? "Couldn't reach a device showing that code. Both the local network and the internet (HyperDHT hole punching) were tried. If the other device is on a very restrictive network (symmetric NAT, UDP blocked), try the other direction: show a code on this device instead and type it there." : e.message;
+        // What the dial actually did, in the log of the device that tried: "the code was not accepted" and "nobody answered"
+        // look the same from the outside, and without these numbers a pairing complaint cannot be told apart from a typo.
+        const st = e.stats;
+        console.warn(`[sync] pairing failed: reason=${e.reason} candidates=${st.tried} answered=${st.connected} refusedTheCode=${st.rejected} connectionRefused=${st.refused} timedOut=${st.timedOut}${st.rejectedBy ? ` refusedBy=${st.rejectedBy}` : ""}${st.rejectedWhy ? ` why="${st.rejectedWhy}"` : ""}${pin ? " link=yes" : ""}${nearby ? " nearby=yes" : ""}`);
+        const msg = nearby && e.reason !== "other" ? "That device is not showing a pairing code any more (it was a moment ago, which is why it is still listed). Start \"Show QR code\" on it again, or scan its code." : e.reason === "code" ? "The pairing code was not accepted (wrong code, expired, or too many attempts)." + (pin ? " If you scanned a QR code, check that it is the one on the other device's screen." : "")
+          : e.reason === "unreachable" ? (this.liveCount() > 1
+            ? "Couldn't reach a device showing that code. This device is already synced with another one: if the other device also has devices of its own, neither can join the other. Use \"Stop syncing here\" on the device that should join, then pair it again."
+            : "Couldn't reach a device showing that code. Both the local network and the internet (HyperDHT hole punching) were tried. If the other device is on a very restrictive network (symmetric NAT, UDP blocked), try the other direction: show a code on this device instead and type it there.") : e.message;
         this.joinResult = { state: "failed", error: msg, reason: e.reason }; this.changedDevices(); throw new Error(msg);
       }
       this.changedDevices(); throw e;
@@ -712,7 +755,15 @@ export class SyncService {
   private onInbound(sock: Socket) {
     const ip = this.srcOf(sock), st = this.srcState(ip), now = this.now(), viaPairDht = (sock as any).unichatVia === "dht-pair", viaDht = (sock as any).unichatVia === "dht" || viaPairDht, viaRelay = ip === "relay"; // viaRelay: no source address (relay or DHT): only the firewall / unauthenticated cap apply
     st.conns = st.conns.filter((t) => now - t < 60_000); st.conns.push(now);
-    if ((!viaRelay && (st.until > now || st.conns.length > 40 || st.open >= 3)) || this.unauth >= 8) { sock.destroy(); return; } // per-source lockout, connection rate, concurrent half-open
+    if ((!viaRelay && (st.until > now || st.conns.length > 40 || st.open >= 3)) || this.unauth >= 8) {
+      // Every way of turning a connection away before the handshake is named here: these were silent, and a device that
+      // answered and immediately hung up could not be told apart from one refusing the code.
+      const why = st.until > now ? `locked out for another ${Math.ceil((st.until - now) / 1000)}s after repeated failures from it`
+        : this.unauth >= 8 ? `${this.unauth} handshakes are already in progress on this device`
+        : st.open >= 3 ? `${st.open} handshakes from that address are already in progress`
+        : `${st.conns.length} connections from that address in the last minute`;
+      console.warn(`[sync] dropping a connection${viaPairDht ? " to the code's DHT rendezvous" : ` from ${ip}`} before the handshake: ${why}`);
+      sock.destroy(); return; } // per-source lockout, connection rate, concurrent half-open
     this.unauth++; st.open++; sock.setNoDelay?.(true); sock.setTimeout?.(30_000, () => sock.destroy());
     let mode = "", done = false; const leave = () => { if (!done) { done = true; this.unauth--; st.open--; } };
     accept(sock, {
@@ -734,9 +785,9 @@ export class SyncService {
       leave(); sock.setTimeout?.(0);
       if (ch.mode === "nearby") {
         const pr = this.pairing;
-        if (!pr || !this.nearbyOpen()) return ch.close();
-        pr.nearbyPrompts++; // counted when the attempt starts: aborted attempts use up the budget too
-        try { await nearbyHost(ch); } catch { this.srcFail(ip, 2); return ch.close(); }
+        if (!pr || !this.nearbyOpen()) { if (pr) console.warn(`[sync] a nearby connect from ${ip} was turned down: ${pr.nearbyPrompts} prompts have been shown for this code already`); return ch.close(); }
+        try { await nearbyHost(ch); } catch { this.srcFail(ip, 2); return ch.close(); } // started and abandoned: a stranger spamming prompts looks exactly like this
+        pr.nearbyPrompts++; // from here a prompt really is put in front of the user
         if (Number(ch.hello?.grp) > 1 && this.liveCount() <= 1) return this.joinInbound(ch, ip, true);
         return this.pairHost(ch, ip, pr, false, true);
       }
@@ -745,11 +796,31 @@ export class SyncService {
       return this.runSession(ch, deviceIdOf(ch.remoteStatic), false, viaRelay ? undefined : sock.remoteAddress, viaDht ? "dht" : viaRelay ? "relay" : undefined);
     }, (e) => {
       leave(); sock.destroy();
-      if (viaRelay) return;
+      // No source address (relay, DHT): nothing to lock out -- but the reason still belongs in this log. This used to
+      // return in silence, so a pairing over the code's DHT rendezvous that failed left the showing device saying nothing
+      // at all while the other one reported "it answered and then hung up".
+      if (viaRelay) {
+        if (mode === "pair" || mode === "nearby" || viaPairDht) console.warn(`[sync] turned down a pairing attempt that came over ${viaPairDht ? "the code's DHT rendezvous" : "a relay"}: mode=${mode || "(none offered)"} ${e instanceof ChannelError ? `${e.code}: ${e.message}` : errmsg(e)}`);
+        return;
+      }
       if ((mode === "pair" || mode === "nearby") && this.pairing && !(e instanceof ChannelError && (e.code === "closed" || e.soft))) { // a wrong code (or garbage): counts against THIS source, the pairing stays open for others
         this.srcFail(ip);
+        // The other device is told "that code was not accepted"; without this line the device that SHOWS the code stays
+        // silent, and the two sides cannot be told apart: a code that does not match, or one nobody ever brought here.
+        console.warn(`[sync] refused a pairing attempt from ${ip}: ${e instanceof ChannelError ? e.code : "error"} (this device is showing a code; ${this.pairing.failures + 1} attempt(s) did not match it)`);
         if (++this.pairing.failures >= (this.o.maxPairingGlobal ?? 20)) this.stopPairing("too many wrong attempts"); else this.changedDevices();
-      } else if (!(e instanceof ChannelError && ((e.code === "closed" && !mode) || e.soft))) this.srcFail(ip, 6); // soft = a known kind of mismatch (old key, revoked member), not a guessing attempt
+      } else if (mode === "pair" || mode === "nearby") {
+        // Every refusal looks the same from outside (channel.ts closes the socket without a word), so the device that
+        // dialled can only report "couldn't reach that device". The reason belongs in THIS log, named.
+        const why = e instanceof ChannelError ? (e.soft ? e.message : e.code) : "error";
+        console.warn(`[sync] turned down a pairing attempt from ${ip}: ${why}${this.pairing ? "" : " (no code is open here)"}${/already have a group/.test(String((e as Error)?.message)) ? " -- neither device can join the other while both are in one; use \"Stop syncing here\" on the one that should join" : ""}`);
+        if (!(e instanceof ChannelError && ((e.code === "closed" && !mode) || e.soft))) this.srcFail(ip, 6);
+      } else {
+        // It never said what it wanted (no prologue), or it wanted to sync. Named too, but without the noise of a peer that
+        // simply went away before saying anything.
+        if (!(e instanceof ChannelError && e.code === "closed" && !mode)) console.warn(`[sync] an incoming connection from ${ip} failed${mode ? ` (mode=${mode})` : " before it said what it wanted"}: ${e instanceof ChannelError ? `${e.code}: ${e.message}` : errmsg(e)}`);
+        if (!(e instanceof ChannelError && ((e.code === "closed" && !mode) || e.soft))) this.srcFail(ip, 6); // soft = a known kind of mismatch (old key, revoked member), not a guessing attempt
+      }
     });
   }
   /** This device's group DHT public key without starting a node (derived, see dhtSeed): pairing hands it to the other device, which has no session to learn it from yet. */
@@ -850,7 +921,7 @@ export class SyncService {
     // the responder picks the key by tag; a lagging device only knows older keys, so try the newest first and fall back (it is then upgraded in-session)
     for (const k of [...g.keys].sort((x, y) => y.revoked.length - x.revoked.length).slice(0, 3)) {
       let r;
-      try { r = await raceConnect(cands, (a, signal) => (a.kind === "tcp" ? tcpConnect(a.host!, a.port!, upgrade ? 1500 : 4000, signal) : a.kind === "dht" ? this.dht!.connect(d.dht!, signal, this.o.dht?.connectMs) : openRelay(a.url!, rendezvousId(k.key, this.me.id, d.id), { signal })), { relayDelay: this.o.relayDelayMs, dhtDelay: this.o.dht?.delayMs }); }
+      try { r = await raceConnect(cands, (a, signal) => (a.kind === "tcp" ? tcpConnect(a.host!, a.port!, upgrade ? 1500 : 4000, signal) : a.kind === "dht" ? (this.dht ? this.dht.connect(d.dht!, signal, this.o.dht?.connectMs) : Promise.reject(new Error("the DHT is not running"))) : openRelay(a.url!, rendezvousId(k.key, this.me.id, d.id), { signal })), { relayDelay: this.o.relayDelayMs, dhtDelay: this.o.dht?.delayMs }); }
       catch (e) { for (const a of cands) markAddr(d, a, false); throw e; } // (a DHT candidate is not stored in d.addrs, markAddr ignores it)
       for (const a of r.failed) markAddr(d, a, false);
       try {
@@ -1398,6 +1469,7 @@ export class SyncService {
   async dispose() {
     this.disposed = true; await this.ready.catch(() => {}); this.moves?.dispose();
     clearTimeout(this.wakeT); clearTimeout(this.reloadT); clearTimeout(this.statusT); this.avatars?.stop(); this.store.onAvatar = undefined;
+    this.stopPairDht(true); // not in 90 seconds: this service is going away now
     this.teardown(true); await this.dhtBusy.catch(() => {}); try { this.persist(); } catch { /* closed */ }
     this.store.ctx = undefined; this.ledger.close();
   }

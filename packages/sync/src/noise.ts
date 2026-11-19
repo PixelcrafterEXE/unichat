@@ -5,7 +5,8 @@
 //   -> s, se
 // `prologue` (plaintext header both sides saw) is hashed into the transcript. After the handshake `split()` yields two CipherStates whose
 // nonces are strict 64-bit counters: a replayed, reordered, duplicated or modified frame fails authentication.
-import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, timingSafeEqual } from "node:crypto";
+import { chachaOpen, chachaSeal } from "@unimsg/core/chacha";
 
 const NAME = "Noise_XXpsk0_25519_ChaChaPoly_SHA256";
 const SPKI = Buffer.from("302a300506032b656e032100", "hex"), PKCS8 = Buffer.from("302e020100300506032b656e04220420", "hex");
@@ -33,14 +34,12 @@ export class CipherState {
   encrypt(ad: Buffer, pt: Buffer): Buffer {
     if (!this.k) return pt;
     if (this.n >= 2n ** 63n) throw new Error("noise: nonce exhausted");
-    const c = createCipheriv("chacha20-poly1305", this.k, nonce(this.n++), { authTagLength: 16 }); c.setAAD(ad, { plaintextLength: pt.length });
-    const ct = Buffer.concat([c.update(pt), c.final()]); return Buffer.concat([ct, c.getAuthTag()]);
+    return chachaSeal(this.k, nonce(this.n++), pt, ad); // not createCipheriv: Electron's crypto has no chacha20-poly1305 (see core/chacha.ts)
   }
   decrypt(ad: Buffer, ct: Buffer): Buffer {
     if (!this.k) return ct;
     if (ct.length < 16) throw new Error("noise: short ciphertext");
-    const d = createDecipheriv("chacha20-poly1305", this.k, nonce(this.n), { authTagLength: 16 }); d.setAAD(ad, { plaintextLength: ct.length - 16 }); d.setAuthTag(ct.subarray(ct.length - 16));
-    const pt = Buffer.concat([d.update(ct.subarray(0, ct.length - 16)), d.final()]); this.n++; return pt; // the counter only advances on success
+    const pt = chachaOpen(this.k, nonce(this.n), ct, ad); this.n++; return pt; // the counter only advances on success
   }
 }
 

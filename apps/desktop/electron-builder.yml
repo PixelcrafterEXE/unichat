@@ -16,9 +16,9 @@ linux:
   target: [AppImage, deb, pacman]
   category: Network
   maintainer: UniChat <noreply@unichat.invalid>
-  icon: build/icon.png
+  icon: build/icons
   executableName: unichat
-  desktop: { entry: { Name: UniChat, Comment: Unified messenger, StartupWMClass: UniChat } }
+  desktop: { entry: { Name: UniChat, Comment: Unified messenger, StartupWMClass: unichat } }
 deb:
   depends: [libsecret-1-0]
   recommends: [gnome-keyring]

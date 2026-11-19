@@ -26,6 +26,7 @@ if (typeof window !== "undefined") {
   Object.assign(window, {
     __mockSyncJoinRequest: (nearby = false) => { S.approval = { direction: "incoming", deviceName: "Pixel phone", sas: SAS, since: Date.now(), expiresAt: Date.now() + 120_000, nearby: !!nearby }; changed(); },
     /** a device that shows "Add a device" appears (or disappears) in the nearby list */
+    __mockSyncNewCode: (code = "zuta-nosu-bako-lemi") => { if (S.pairing) { S.pairing = { ...S.pairing, code, link: `unichat-sync://pair?h=192.168.1.20&p=43210&c=${code.replace(/-/g, "")}&k=AAAA` }; changed(); } },
     __mockSyncNearby: (on = true) => { S.discovered = on ? [{ instance: "unichat-x", name: "Desktop", host: "192.168.1.31", port: 45045, nearby: true }] : []; changed(); },
     __mockSyncDhtUnavailable: (b = true) => { dhtUnavailable = !!b; },
     __mockSyncBlockOut: (b: boolean) => { blockOut = !!b; },

@@ -90,3 +90,19 @@ test("blobs: a partial download is sealed on disk and resumes at the byte where 
 });
 import { readFileSync } from "node:fs";
 const readPart = (f: string) => readFileSync(f).toString("hex");
+
+test("raceConnect: an opener that throws instead of rejecting is one failed attempt, not an uncaught exception", async () => {
+  // The DHT can go away (shutdown, setting turned off) while a DHT candidate waits its start delay; its opener then threw
+  // inside the timer -- an uncaughtException in the backend -- and the race never settled.
+  let uncaught: unknown; const h = (e: unknown) => { uncaught = e; }; process.on("uncaughtException", h);
+  try {
+    await assert.rejects(raceConnect([{ kind: "dht", src: "dht" } as any, { kind: "tcp", host: "h", port: 1, src: "manual" } as any],
+      (a) => { if (a.kind === "dht") throw new TypeError("Cannot read properties of undefined (reading 'connect')"); return Promise.reject(new Error("refused")); },
+      { dhtDelay: 10, stagger: 5 }), /refused|connect/);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(uncaught, undefined, "nothing escaped");
+    const r = await raceConnect([{ kind: "dht", src: "dht" } as any, { kind: "tcp", host: "h", port: 1, src: "manual" } as any],
+      (a) => { if (a.kind === "dht") throw new Error("gone"); return new Promise((ok) => setTimeout(() => ok({ destroy() {} } as any), 40)); }, { dhtDelay: 10, stagger: 5 });
+    assert.equal((r.addr as any).kind, "tcp", "the other candidate still wins");
+  } finally { process.off("uncaughtException", h); }
+});
