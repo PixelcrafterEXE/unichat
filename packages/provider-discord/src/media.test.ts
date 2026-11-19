@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { Api } from "./api.ts";
+import { Api } from "./api.js";
 
 /** A stand-in CDN: answers each picture after `ms`, and records the order and how many were in flight at once. */
 async function cdn(ms: number) {
