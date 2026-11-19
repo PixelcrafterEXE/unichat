@@ -82,6 +82,10 @@ export interface ApiOpts {
 const LONG_WAIT = 15000;
 type Prio = 0 | 1; // 0 = interactive (user clicked), 1 = background
 interface Job { run: () => Promise<void>; fail: (e: Error) => void; prio: Prio }
+interface MediaJob { url: string; prio: Prio; start: () => void; fail: (e: Error) => void; done: Promise<{ data: Uint8Array; mime: string }> }
+/** CDN downloads at once. The API's pacing is for API calls (a user account must look like a person); pictures come
+ *  from the CDN without the token, and the official client loads a chat's worth of them in parallel. */
+const MEDIA_PARALLEL = 4;
 
 const FRIENDLY: Record<number, string> = {
   400: "Discord rejected the request", 401: "the token is no longer valid", 403: "you do not have permission to do this here",
@@ -94,6 +98,12 @@ export class Api {
   private readonly o: ApiOpts;
   private queue: Job[] = [];
   private busy = false;
+  // Pictures had their own place in the API queue above: one at a time, 0.7-1.4 s apart for a user account, first come
+  // first served. A chat with thirty pictures took most of a minute, top to bottom -- so the newest, at the bottom where
+  // the chat opens, came last, a tap on one just waited its turn, and sending a message waited behind all of them.
+  private media: MediaJob[] = [];
+  private mediaRunning = 0;
+  private mediaByUrl = new Map<string, MediaJob>();
   private lastEnd = 0;
   private globalUntil = 0;
   private buckets = new Map<string, number>();
@@ -225,7 +235,7 @@ export class Api {
   /** Fetch a media URL from an allow-listed CDN. No Authorization header ever. */
   fetchMedia(url: string, prio: Prio = 0): Promise<{ data: Uint8Array; mime: string }> {
     if (!cdnAllowed(url)) return Promise.reject(new DcError("Refusing to download from an unexpected host.", "http"));
-    return this.enqueue(prio, async () => {
+    return this.mediaEnqueue(url, prio, async () => {
       let res: Response;
       try { res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(120000), headers: { "User-Agent": this.mode === "user" && this.o.identity ? this.o.identity.userAgent : "DiscordBot (https://github.com/unimsg, 0.1)" } }); }
       catch (e) { throw new DcError(`Cannot reach the Discord media server (${(e as { cause?: { code?: string } }).cause?.code ?? "error"}).`, "network"); }
@@ -235,8 +245,42 @@ export class Api {
     });
   }
 
+  /**
+   * A media download: a few at a time, not paced. Within a priority the most recent request goes first -- a chat opens
+   * at its newest message, at the bottom, and those pictures are asked for last. One download per URL: asking again
+   * while it waits (a tap on a picture that is still queued) moves it forward instead of fetching it twice.
+   */
+  private mediaEnqueue(url: string, prio: Prio, f: () => Promise<{ data: Uint8Array; mime: string }>): Promise<{ data: Uint8Array; mime: string }> {
+    const had = this.mediaByUrl.get(url);
+    if (had) {
+      const i = this.media.indexOf(had);
+      if (i >= 0 && prio <= had.prio) { this.media.splice(i, 1); had.prio = prio; this.placeMedia(had); } // still waiting: forward
+      return had.done;
+    }
+    let start!: () => void, fail!: (e: Error) => void;
+    const done = new Promise<{ data: Uint8Array; mime: string }>((ok, bad) => {
+      fail = bad;
+      start = () => { this.mediaRunning++; f().then(ok, bad).finally(() => { this.mediaRunning--; this.mediaByUrl.delete(url); this.mediaPump(); }); };
+    });
+    const job: MediaJob = { url, prio, start, fail, done };
+    this.mediaByUrl.set(url, job); this.placeMedia(job); this.mediaPump();
+    return done;
+  }
+  /** ahead of everything of the same or a lower priority (0 = a tap, 1 = everything else) */
+  private placeMedia(j: MediaJob) { let i = 0; while (i < this.media.length && this.media[i].prio < j.prio) i++; this.media.splice(i, 0, j); }
+  private mediaPump() {
+    while (this.mediaRunning < MEDIA_PARALLEL && this.media.length) {
+      const j = this.media.shift()!;
+      if (this.stopped) { this.mediaByUrl.delete(j.url); j.fail(new DcError("Stopped.", "network")); continue; }
+      j.start();
+    }
+  }
+
   /** Cancel queued work (stop/logout). */
-  close() { this.stopped = true; const q = this.queue; this.queue = []; for (const j of q) j.fail(new DcError("Stopped.", "network")); }
+  close() {
+    this.stopped = true; const q = this.queue; this.queue = []; for (const j of q) j.fail(new DcError("Stopped.", "network"));
+    const m = this.media; this.media = []; for (const j of m) { this.mediaByUrl.delete(j.url); j.fail(new DcError("Stopped.", "network")); }
+  }
 }
 
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

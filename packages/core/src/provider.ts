@@ -264,7 +264,8 @@ export interface Connector {
   /** Optional: the communities (native space ids) that you and this person are both members of, when the network can tell (Discord: the profile's mutual servers). Resolves to [] when it cannot. */
   mutualSpaces?(contactId: string): Promise<string[]>;
   /** Fetch bytes of an attachment seen in a Message. */
-  downloadAttachment(chatId: string, messageId: string, attachmentId: string): Promise<{ data: Uint8Array; mime: string; name?: string }>;
+  /** `urgent`: the user tapped this one and is waiting for it -- a provider that queues downloads puts it first. */
+  downloadAttachment(chatId: string, messageId: string, attachmentId: string, opts?: { urgent?: boolean }): Promise<{ data: Uint8Array; mime: string; name?: string }>;
 
   // ----- write -----
   /** Send; resolve with the message as it will appear (id, time, status "sent"). For a chat returned by startChat with `provisional: true` the

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Core } from "./api";
 import type { Attachment, DeliveryStatus, Space } from "./types";
 import { siDiscord, siInstagram, siMatrix, siMattermost, siSignal, siTelegram, siWhatsapp } from "simple-icons";
@@ -322,16 +322,20 @@ export function Linkified({ text, emojiScope }: { text: string; emojiScope?: str
 
 // ---- attachment bytes (lazy, cached per message attachment) ----
 const blobCache = new Map<string, Promise<{ url: string; mime: string; name?: string }>>();
-export function loadAttachment(chatId: string, messageId: string, attachmentId: string) {
+const blobDone = new Set<string>();
+/** `urgent`: a tap. A picture that is still on its way is asked for again as urgent, which moves it to the front of the
+ *  provider's queue (Discord downloads it once either way); one that already arrived is simply returned. */
+export function loadAttachment(chatId: string, messageId: string, attachmentId: string, urgent = false) {
   const key = `${chatId}|${messageId}|${attachmentId}`;
   let p = blobCache.get(key);
-  if (!p) {
-    p = core.call("attachment", { chatId, messageId, attachmentId }).then((r: { dataBase64: string; mime: string; name?: string }) => {
+  if (!p || (urgent && !blobDone.has(key))) {
+    p = core.call("attachment", { chatId, messageId, attachmentId, ...(urgent ? { urgent: true } : {}) }).then((r: { dataBase64: string; mime: string; name?: string }) => {
       const bin = atob(r.dataBase64); const u8 = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
       return { url: URL.createObjectURL(new Blob([u8], { type: r.mime })), mime: r.mime, name: r.name };
     });
-    p.catch(() => blobCache.delete(key));
+    const mine = p;
+    mine.then(() => blobDone.add(key), () => { if (blobCache.get(key) === mine) blobCache.delete(key); });
     blobCache.set(key, p);
   }
   return p;
@@ -339,8 +343,31 @@ export function loadAttachment(chatId: string, messageId: string, attachmentId: 
 export function useAttachment(chatId: string, messageId: string, a: Attachment, eager: boolean) {
   const [r, setR] = useState<{ url: string; mime: string; name?: string }>();
   const [err, setErr] = useState(false);
-  useEffect(() => { if (eager) loadAttachment(chatId, messageId, a.id).then(setR, () => setErr(true)); }, [chatId, messageId, a.id, eager]);
-  return { r, err, load: () => loadAttachment(chatId, messageId, a.id).then((x) => { setR(x); return x; }, () => { setErr(true); return undefined; }) };
+  const [loading, setLoading] = useState(false);
+  // a retry that works clears the failure (it used to stay "not available" even after the picture arrived)
+  const get = (urgent: boolean) => { setLoading(true); return loadAttachment(chatId, messageId, a.id, urgent).then((x) => { setR(x); setErr(false); setLoading(false); return x; }, () => { setErr(true); setLoading(false); return undefined; }); };
+  useEffect(() => { if (eager) void get(false); }, [chatId, messageId, a.id, eager]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { r, err, loading, load: () => get(true) };
+}
+
+/**
+ * True once the element comes within about two screens of the visible part of its chat (the `.messages` scroller, else
+ * the window), and from then on. A chat's pictures used to be requested all at once, top to bottom, the moment it
+ * opened; now they load as they come near -- which starts where the chat opens, at the bottom.
+ */
+export function useNearView<T extends Element>(watch: boolean): [(el: T | null) => void, boolean] {
+  const [near, setNear] = useState(false);
+  const io = useRef<IntersectionObserver | undefined>(undefined);
+  const ref = useCallback((el: T | null) => {
+    io.current?.disconnect(); io.current = undefined;
+    if (!el || !watch || near) return;
+    if (typeof IntersectionObserver === "undefined") { setNear(true); return; }
+    io.current = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { io.current?.disconnect(); setNear(true); } },
+      { root: el.closest(".messages"), rootMargin: "200% 0px" });
+    io.current.observe(el);
+  }, [watch, near]);
+  useEffect(() => () => io.current?.disconnect(), []);
+  return [ref, near];
 }
 
 // ---- local settings ----

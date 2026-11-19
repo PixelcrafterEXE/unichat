@@ -483,7 +483,7 @@ export class Hub {
             r = await fromPeer();
             if (!r) throw new Error("This file isn't available offline: it was never opened before the account was signed out.");
           } else {
-            try { r = await a.conn.downloadAttachment(native, p.messageId, p.attachmentId); }
+            try { r = await a.conn.downloadAttachment(native, p.messageId, p.attachmentId, p.urgent === true ? { urgent: true } : undefined); }
             catch (e) { r = await fromPeer(); if (!r) throw e; }
           }
           try { this.media.put(a.info.id, k, r); } catch { /* cache is best effort */ }

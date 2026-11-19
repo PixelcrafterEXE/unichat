@@ -4,7 +4,7 @@ import { viaNote } from "./relay";
 import { capsOf, cardsOf, type Account, type Attachment, type Capabilities, type Card, type Chat, type Contact, type Location, type Message, type ProviderInfo, type SharedContact } from "./types";
 import { measureMedia, isGif } from "./measure";
 import { placeholderOf } from "../../../packages/core/src/placeholder";
-import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, type Settings } from "./util";
+import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, useNearView, type Settings } from "./util";
 import { MoreHorizontal, Camera, Check, ChevronDown, Calendar, Clock3, Phone, ShoppingBag, List as ListIcon, CreditCard, ExternalLink, Users as UsersIcon, MousePointerClick, FileQuestion, BarChart3, CheckCircle2, Circle, CheckSquare, Square, Info, LogOut, MessageSquareWarning, RotateCcw, ArrowDown, AlertCircle, Ban, Copy, Download, FileText, Forward, ImageIcon, MapPin, Mic, Paperclip, Pencil, Play, Plus, Reply, SendHorizontal, Smile, SmilePlus, Trash2, User, X } from "./icons";
 import { ReactorsModal, loadMembers, useNames } from "./Reactors";
 import type { VoiceClip } from "./Voice";
@@ -789,12 +789,13 @@ function CardView({ c, m, chat, auto, onImage, canEdit }: { c: Card; m: Message;
 /** Preview image of a card. It loads through the backend like any attachment (never hot-linked from the remote host). */
 function CardPicture({ chat, m, img, auto, onImage }: { chat: Chat; m: Message; img: NonNullable<Card["image"]>; auto: boolean; onImage: (i: { url: string; name?: string; video?: boolean }) => void }) {
   const att: Attachment = { id: img.attachmentId, kind: "image", mime: "image/*" };
-  const { r, err: failed, load } = useAttachment(chat.id, m.id, att, auto);
+  const [nearRef, near] = useNearView<HTMLButtonElement>(auto);
+  const { r, err: failed, loading, load } = useAttachment(chat.id, m.id, att, auto && near);
   const src = r?.url ?? img.thumbnailDataUrl;
   return (
-    <button type="button" className="cardpic" style={img.width && img.height && img.layout !== "thumb" ? { aspectRatio: `${img.width} / ${img.height}` } : undefined} title={img.alt ?? "Open image"}
+    <button ref={nearRef} type="button" className="cardpic" style={img.width && img.height && img.layout !== "thumb" ? { aspectRatio: `${img.width} / ${img.height}` } : undefined} title={img.alt ?? "Open image"}
       onClick={async () => { const x = r ?? await load(); if (x) onImage({ url: x.url, name: img.alt }); }}>
-      {src ? <img src={src} alt={img.alt ?? ""} loading="lazy" decoding="async" /> : <span className="imgph">{failed ? <><AlertCircle size={16} /> Failed to load</> : <><ImageIcon size={16} /> Tap to load</>}</span>}
+      {src ? <img src={src} alt={img.alt ?? ""} loading="lazy" decoding="async" /> : <span className="imgph">{failed ? <><AlertCircle size={16} /> Failed to load</> : loading ? <><i className="spinner" /> Loading…</> : <><ImageIcon size={16} /> Tap to load</>}</span>}
     </button>);
 }
 
@@ -891,13 +892,15 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: 
 
 function AttachmentView({ chat, m, a, auto, onImage, size }: { size: number; chat: Chat; m: Message; a: Attachment; auto: boolean; onImage: (i: { url: string; name?: string; video?: boolean }) => void }) {
   const eager = auto && !isPending(m) && (a.kind === "image" || a.kind === "sticker" || a.kind === "voice" || a.kind === "audio" || a.kind === "video" || !!a.gif);
-  const { r, err: failed, load } = useAttachment(chat.id, m.id, a, eager);
+  const picture = a.kind === "image" || a.kind === "sticker";
+  const [nearRef, near] = useNearView<HTMLButtonElement>(eager && picture);
+  const { r, err: failed, loading, load } = useAttachment(chat.id, m.id, a, eager && (!picture || near));
   if (a.kind === "image" || a.kind === "sticker") {
     const src = r?.url ?? a.thumbnailDataUrl;
     const side = a.kind === "sticker" ? 150 : size; // pictures are always shown as squares (cropped to fill); the viewer shows the whole picture
     return (
-      <button style={sq(side)} className={"imgwrap" + (a.kind === "sticker" ? " sticker" : "")} onClick={async () => { const x = r ?? await load(); if (x) onImage({ url: x.url, name: a.name ?? x.name }); }} title={a.name}>
-        {src ? <img src={src} alt={a.name ?? "image"} loading="lazy" decoding="async" /> : <span className="imgph">{failed ? <><AlertCircle size={18} /> {a.kind === "sticker" ? "Sticker" : "Photo"} not available</> : <><ImageIcon size={18} /> Tap to load</>}</span>}
+      <button ref={nearRef} style={sq(side)} className={"imgwrap" + (a.kind === "sticker" ? " sticker" : "")} onClick={async () => { const x = r ?? await load(); if (x) onImage({ url: x.url, name: a.name ?? x.name }); }} title={a.name}>
+        {src ? <img src={src} alt={a.name ?? "image"} loading="lazy" decoding="async" /> : <span className="imgph">{failed ? <><AlertCircle size={18} /> {a.kind === "sticker" ? "Sticker" : "Photo"} not available</> : loading ? <><i className="spinner" /> Loading…</> : <><ImageIcon size={18} /> Tap to load</>}</span>}
         {!r && src && !failed && <span className="imgdl"><Download size={12} /> {fmtBytes(a.size)}</span>}
       </button>);
   }
