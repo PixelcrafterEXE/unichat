@@ -2,7 +2,7 @@
 // Main view = your devices, ONE "Add a device" flow, a small "Connect to another device" for the other side. Everything technical lives under "Advanced" (closed).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { core, fmtDateTime } from "./util";
+import { copyText, core, fmtDateTime } from "./util";
 import { viaNote } from "./relay";
 import { isSyncLink, takeSyncLink } from "./syncLink";
 import "./backup.css";
@@ -102,7 +102,7 @@ export function SyncPanel() {
         {!adding ? <><h4 style={{ marginTop: 0 }}>Show QR code</h4>
           <p className="hint">On this device. The other one scans it.</p>
           <div className="btns"><button className="primary inline big pairbtn" id="sync-start" disabled={busy || st.revoked || !!st.unlinking} onClick={startAdd}>Show the code</button></div></>
-          : <Pairing p={st.pairing ?? pair} copied={copied} onCopy={(l) => { navigator.clipboard?.writeText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={() => run(() => core.call("syncStopPairing"))} />}
+          : <Pairing p={st.pairing ?? pair} copied={copied} onCopy={(l) => { copyText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={() => run(() => core.call("syncStopPairing"))} />}
       </div>
 
       {!midJoin && !st.approval && <>

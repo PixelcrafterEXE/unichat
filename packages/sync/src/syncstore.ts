@@ -3,7 +3,7 @@
 // Changes written by replication go through `applyRemote`, which talks to the inner store directly, so they are never echoed back.
 import type { StoredAvatar, Chat, ChatFlags, ChatMerge, Folder, Job, MeshGroup, Message, Space, StateRecord, Store, StoredAccount, AccountEventKind } from "@unimsg/core";
 import { canon, contentOf, pinSig, fullPatch, joinMessage, key, parseKey, recSig, rxDiff, rxFromReactions, rxSanitize, SYNCED_SETTINGS, isSyncedSetting, accountOfKey, type Kind, type MsgRec, type Rx } from "./crdt.js";
-import { type Clock, maxStamp, zeroStamp } from "./hlc.js";
+import { type Clock, maxStamp, parseStamp, zeroStamp } from "./hlc.js";
 import type { Entity, Ledger } from "./ledger.js";
 
 export type SyncMode = "none" | "archive-only" | "credentials";
@@ -133,6 +133,7 @@ export class SyncStore implements Store {
     let cs = row?.meta?.c ?? z, rs = row?.meta?.r ?? z, ps: string | undefined = row?.meta?.p, dirty = false, x: Rx | undefined = row?.meta?.x;
     const rx = (m: Message | undefined) => canon(m?.deleted ? [] : m?.reactions ?? null);
     if (!pre || canon(contentOf(pre)) !== canon(contentOf(post))) { cs = c.clock.tick(); dirty = true; }
+    else if (canon(pre.system ?? null) !== canon(post.system ?? null)) { cs = c.clock.tick(); dirty = true; } // a line marked as a notice afterwards (#102): the other devices must hear of it too
     if (!pre || rx(pre) !== rx(post)) {
       rs = c.clock.tick(); dirty = true;
       // per-(emoji, sender) elements: unchanged ones keep their stamp, new ones get `rs`, removed ones become tombstones (see crdt.ts)
@@ -171,12 +172,16 @@ export class SyncStore implements Store {
     return { k: e.key, h: e.hlc, ...(kind === "msg" ? { m: e.meta } : {}), v };
   }
 
+  /** current values of the global kinds, read once per applied batch (only for writes that arrive again, see applyOne) */
+  private batchMaps?: Maps;
   // ------------------------------------------------------------------ applying what a peer sent (never echoed: inner store + ledger only)
   async applyRemote(entries: WireEntry[], src: string): Promise<ApplyResult> {
     const c = this.ctx; if (!c) throw new Error("sync is not active");
     const r: ApplyResult = { applied: 0, skipped: 0, invalid: 0, chats: new Set(), accounts: false, global: false };
     const t0 = Date.now();
+    this.batchMaps = undefined;
     await this.inner.inTransaction(() => c.ledger.tx(() => { for (const e of entries) this.applyOne(c, e, src, r); }));
+    this.batchMaps = undefined;
     const ms = Date.now() - t0; if (ms > 150) (globalThis as any).__unimsgPlog?.("sync.applyRemote", { entries: entries.length, applied: r.applied, ms }); // slow batches only (Android stage log)
     return r;
   }
@@ -188,7 +193,18 @@ export class SyncStore implements Store {
     if (kind === "cr") { if (e.v) c.credentials(id, e.v, e.h, src); r.applied++; return; }
     const cur = c.ledger.get(e.k);
     if (kind === "msg") return this.applyMsg(c, e, id, id2 ?? "", cur, src, r);
-    if (cur && cur.hlc >= e.h) { r.skipped++; return; }
+    if (cur && cur.hlc > e.h) { r.skipped++; return; }
+    if (cur && cur.hlc === e.h) {
+      // The same write again (a peer re-sending its log). Normally identical: skip. But a device that ran an older
+      // version when it first arrived stored it without fields it did not know yet (a chat's `starred` flag was lost that
+      // way). Only the device that made the write (its id ends the stamp) is believed: an old device re-sending its
+      // incomplete copy must not undo the complete one here.
+      if (parseStamp(e.h)?.device !== src) { r.skipped++; return; }
+      const mine = cur.tomb ? undefined : this.entry(cur, (this.batchMaps ??= this.maps()));
+      const norm = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([, x]) => x !== false && x !== undefined && x !== null && x !== "")) : v ?? null); // false / empty fields are stored as absent
+      if (!!cur.tomb === !!e.t && canon(norm(mine?.v)) === canon(norm(e.v))) { r.skipped++; return; }
+      this.batchMaps = undefined;
+    }
     const tomb = !!e.t, v = e.v, i = this.inner;
     try {
       switch (kind) {

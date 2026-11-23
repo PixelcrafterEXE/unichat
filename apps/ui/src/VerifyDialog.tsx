@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Copy, Info, KeyRound, Laptop, Loader2, Shield, ShieldAlert, ShieldCheck, ShieldQuestion, UserCheck } from "lucide-react";
 import type { VerificationAction, VerificationState, VerificationStatus } from "../../../packages/core/src/provider";
-import { core } from "./util";
+import { copyText, core } from "./util";
 import "./verify.css";
 
 type Target = { userId?: string; chatId?: string; name?: string };
@@ -188,7 +188,7 @@ function SetupDialog({ accountId, onClose }: { accountId: string; onClose: () =>
     try { const r = await core.call("verificationSetup", { accountId, password: pw }); setPw(""); setKey(r?.recoveryKey ?? ""); fire("changed"); } // the password is dropped at once
     catch (e) { setErr(msg(e)); } finally { setBusy(false); }
   };
-  const copy = async () => { try { await navigator.clipboard.writeText(key ?? ""); setCopied(true); } catch { setErr("Could not copy. Select the key and copy it by hand."); } };
+  const copy = async () => { try { await copyText(key ?? ""); setCopied(true); } catch { setErr("Could not copy. Select the key and copy it by hand."); } };
   if (key !== undefined) return (
     <Dialog title="Save your recovery key" onClose={onClose} label="setup-done" closable={false}>
       {key ? <>

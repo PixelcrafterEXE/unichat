@@ -314,8 +314,8 @@ export function CustomEmoji({ scope, name, size = 22 }: { scope: string; name: s
   return src ? <img className="cemoji" src={src} alt={`:${name}:`} title={`:${name}:`} style={{ height: size }} /> : <>{`:${name}:`}</>;
 }
 /** Text with links and, when `emojiScope` (the account id) is given, inline custom emoji. A message that is only one emoji is shown large. */
-export function Linkified({ text, emojiScope }: { text: string; emojiScope?: string }) {
-  const lone = emojiScope && /^\s*:[A-Za-z0-9_+-]{2,64}:\s*$/.test(text);
+export function Linkified({ text, emojiScope, big }: { text: string; emojiScope?: string; /** the whole message is one custom emoji (decided by the caller when the text is split up) */ big?: boolean }) {
+  const lone = big ?? (emojiScope && /^\s*:[A-Za-z0-9_+-]{2,64}:\s*$/.test(text));
   return <>{text.split(URL_RE).map((p, i) => i % 2 ? <a key={i} href={p} target="_blank" rel="noreferrer noopener">{p}</a>
     : emojiScope ? p.split(EMOJI_TOKEN).map((q, j) => (j % 2 ? <CustomEmoji key={j} scope={emojiScope} name={q.slice(1, -1)} size={lone ? 48 : 22} /> : q)) : p)}</>;
 }
@@ -420,3 +420,15 @@ export function useLongPress(fire: (x: number, y: number) => void, ms = 400) {
 
 /** Square media tile of `size` px that never outgrows a phone: min(size, 70vw for 300 / 38vw for 148), always square. */
 export const sq = (size: number): React.CSSProperties => ({ width: `min(${size}px, ${size >= 200 ? 70 : 38}vw)`, aspectRatio: "1 / 1", height: "auto" });
+
+/** Copy text: the desktop app through its own bridge (the page may not write the clipboard there, #104), else the browser's
+ *  clipboard, else the old selection trick. Rejects when nothing worked, so callers can say so. */
+export async function copyText(text: string): Promise<void> {
+  const bridge = (window as any).unimsg?.copyText as ((t: string) => Promise<void>) | undefined;
+  if (bridge) { await bridge(text); return; }
+  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return; } } catch { /* try the fallback */ }
+  const ta = document.createElement("textarea"); ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  const ok = (() => { try { return document.execCommand("copy"); } catch { return false; } })(); ta.remove();
+  if (!ok) throw new Error("Copying is not allowed here.");
+}

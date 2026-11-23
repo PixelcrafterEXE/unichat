@@ -12,12 +12,12 @@ export default [
     await t.not("no badge while off", `document.querySelector('.dtbadge')`);
     await t.ev(pick(604800));
     await t.ok("header badge shows 7d", `document.querySelector('main header .dtbadge')?.textContent === '7d'`);
-    await t.ok("system note in the timeline", `[...document.querySelectorAll('.sysmsg.info')].some(e=>e.textContent.includes('Disappearing messages: 7 days') && e.querySelector('[data-timer-note]'))`);
+    await t.ok("system note in the timeline", `[...document.querySelectorAll('.sysmsg.k-info')].some(e=>e.textContent.includes('Disappearing messages: 7 days') && e.querySelector('[data-timer-note]'))`);
     await t.eq("select shows the current value", `document.querySelector('[data-act=disappearing-select]').value`, "604800");
     await t.shot("badge"); await t.ev("document.querySelector('.infobody').scrollTop=99999;true"); await t.shot("info");
     await t.ev(pick(0));
     await t.not("badge gone after turning it off", `document.querySelector('.dtbadge')`);
-    await t.ok("off note", `[...document.querySelectorAll('.sysmsg.info')].some(e=>e.textContent.includes('Disappearing messages turned off'))`);
+    await t.ok("off note", `[...document.querySelectorAll('.sysmsg.k-info')].some(e=>e.textContent.includes('Disappearing messages turned off'))`);
   }),
 
   test("disappearing: a message that carries a timer shows the mark; plain ones do not", async (t) => {

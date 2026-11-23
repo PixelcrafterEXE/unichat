@@ -10,17 +10,20 @@ import { node, pairUp, until, type Node } from "./testkit.js";
 const CAPS = { ...NO_CAPABILITIES, attachments: true, backfill: true, reactions: true, edits: true, polls: true, profile: { displayName: true, about: true, avatar: true }, privacy: true } as typeof NO_CAPABILITIES;
 const ACCT = "relayfake-1", CHAT = ACCT + ":c1";
 /** a fake messenger: every device that holds the login gets its own world; `calls` records what the REAL connector was asked to do */
-interface World { prof: { displayName: string; about: string; avatar?: Uint8Array }; priv: Record<string, string>; calls: string[]; sent: string[]; emit?: (e: CoreEvent) => void; gate?: Promise<void> }
+interface World { threads?: Set<string>; sentTo?: string[]; prof: { displayName: string; about: string; avatar?: Uint8Array }; priv: Record<string, string>; calls: string[]; sent: string[]; emit?: (e: CoreEvent) => void; gate?: Promise<void> }
 const mk = () => {
   const w: World = { calls: [], sent: [], prof: { displayName: "Real Name", about: "hi" }, priv: { lastSeen: "everyone" } };
   const f: ProviderFactory = { name: "relayfake", displayName: "RelayFake", login: "qr", capabilities: NO_CAPABILITIES, create: () => ({
     capabilities: CAPS,
     async start(emit: (e: CoreEvent) => void) { w.emit = emit; emit({ type: "account", data: { id: "x", state: "connected" } }); }, async stop() {}, async logout() {}, async submitLogin() {},
-    async spaces() { return []; }, async chats() { return [{ id: "c1", accountId: "", provider: "relayfake", kind: "dm", name: "Anna" } as unknown as Chat]; }, async members() { return []; },
-    async history() { w.calls.push("history"); return [{ id: "h1", chatId: "c1", sender: "Anna", senderId: "anna", text: "old hello", time: "2026-01-01T00:00:00Z", fromMe: false }]; },
+    async spaces() { return []; }, async chats() { return [{ id: "c1", accountId: "", provider: "relayfake", kind: "dm", name: "Anna" } as unknown as Chat, ...[...(w.threads ?? [])].map((t) => ({ id: t, accountId: "", provider: "relayfake", kind: "dm", name: "A thread" }) as unknown as Chat)]; }, async members() { return []; },
+    async history(chatId: string) { w.calls.push("history");
+      if (chatId.startsWith("thread~")) return [{ id: "r1", chatId, sender: "Anna", senderId: "anna", text: "thread start", time: "2026-01-01T00:00:00Z", fromMe: false }, { id: "r2", chatId, sender: "Ben", senderId: "ben", text: "in the thread", time: "2026-01-01T00:01:00Z", fromMe: false }];
+      return [{ id: "h1", chatId: "c1", sender: "Anna", senderId: "anna", text: "old hello", time: "2026-01-01T00:00:00Z", fromMe: false }]; },
+    async openThread(id: string) { w.calls.push("openThread:" + id); if (!id.startsWith("thread~")) throw new Error("Unknown thread."); (w.threads ??= new Set()).add(id); return { id, accountId: "", provider: "relayfake", kind: "dm", name: "A thread" } as unknown as Chat; },
     async downloadAttachment() { w.calls.push("attachment"); return { data: new Uint8Array([7, 7]), mime: "image/png" }; },
     async avatar() { w.calls.push("avatar"); return { data: new Uint8Array([1]), mime: "image/png" }; },
-    async send(chatId: string, m: { text: string }) { w.calls.push("send"); if (w.gate) await w.gate; w.sent.push(m.text); return { id: "s" + w.sent.length + "-" + w.sent.join("|").length, chatId, sender: "me", senderId: "me", text: m.text, time: new Date().toISOString(), fromMe: true, status: "sent" } as Message; },
+    async send(chatId: string, m: { text: string }) { w.calls.push("send"); (w.sentTo ??= []).push(chatId); if (w.gate) await w.gate; w.sent.push(m.text); return { id: "s" + w.sent.length + "-" + w.sent.join("|").length, chatId, sender: "me", senderId: "me", text: m.text, time: new Date().toISOString(), fromMe: true, status: "sent" } as Message; },
     async react(_c: string, id: string, e: string | null) { w.calls.push(`react:${id}:${e}`); }, async edit(_c: string, id: string, t: string) { w.calls.push(`edit:${id}:${t}`); },
     async delete(_c: string, id: string) { w.calls.push(`delete:${id}`); }, async markRead(_c: string, id: string) { w.calls.push(`markRead:${id}`); },
     async getProfile() { w.calls.push("getProfile"); return { displayName: w.prof.displayName, about: w.prof.about, handle: "+49 1", ...(w.prof.avatar ? { avatar: { data: w.prof.avatar, mime: "image/png" } } : {}) }; },
@@ -95,6 +98,23 @@ test("allow: B uses the holder automatically (no manual proxy click); online, 'v
   const seen: string[] = []; B.hub.subscribe((e, d: any) => { if (e === "message") seen.push(d.text); });
   w.emit!({ type: "message", data: { id: "n1", chatId: "c1", sender: "Anna", senderId: "anna", text: "live from the laptop", time: new Date().toISOString(), fromMe: false } });
   await until(() => seen.includes("live from the laptop"), "event reached the phone");
+  await stop(A, B);
+});
+
+test("threads through the holder: open one (#103), it is listed, its history and a reply in it go to the holder's connector", async () => {
+  const { n: A, w } = await holder("Laptop"); const { n: B } = await mirror("Phone");
+  await pairUp(A, B); await hasMirror(B); await allow(A, B, true);
+  await until(async () => (await acct(B))?.state === "connected" && (await acct(B))?.via?.kind === "relay", "B online via the holder", 15_000);
+  const TID = ACCT + ":thread~r1";
+  const c = await B.call("openThread", { chatId: TID });
+  assert.equal(c.id, TID); assert.equal(c.accountId, ACCT);
+  assert.ok(w.calls.includes("openThread:thread~r1"), "the holder's connector opened it");
+  await until(async () => (await B.call("snapshot")).chats.some((x: any) => x.id === TID && !x.offline), "thread chat listed on the phone", 10_000);
+  const h = await B.call("history", { chatId: TID, limit: 20 });
+  assert.deepEqual(h.filter((m: any) => !m.system).map((m: any) => [m.chatId, m.text]), [[TID, "thread start"], [TID, "in the thread"]]);
+  const sent = await B.call("send", { chatId: TID, text: "reply in thread" });
+  assert.equal(sent.chatId, TID); assert.deepEqual(w.sentTo, ["thread~r1"]);
+  await assert.rejects(B.call("openThread", { chatId: ACCT + ":nope" }), /Unknown thread/);
   await stop(A, B);
 });
 

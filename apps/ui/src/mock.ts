@@ -231,7 +231,7 @@ m("dc-1:dev-talk", "kit", "And a third follow-up that is long enough to wrap ont
 m("dc-1:dev-talk", "dana", "Flaky, I will restart it", 120);
 m("dc-1:welcome", "ferris", "Start here: read the rules", 900); m("dc-1:rules", "ferris", "Be kind.", 900);
 m("dc-2:general", "Anna Becker", "Anyone up for climbing on Saturday?", 60, { poll: { question: "Saturday or Sunday?", multiple: false, mine: [], options: [{ id: "1", text: "Saturday", voters: ["Anna Becker"], count: 5 }, { id: "2", text: "Sunday", voters: [], count: 2 }] } });
-m("dc-2:gdm", "Ben Fischer", "Who brings the rope?", 30); m("dc-2:dana", "dana", "hey, got a minute?", 20);
+m("dc-2:gdm", "Ben Fischer", "Who brings the rope?", 30); m("dc-2:dana", "dana", "# **Trip plan**\n-# draft, ask before sharing\nWe meet at *7:30*, ~~8:00~~ __sharp__. Bring:\n- rope\n- harness\n  - spare carabiner\n1. drive\n2. climb\n> the forecast says sun\nCode for the gate: ||4711||, route list in [the topo](https://example.org/topo_v2), snake_case_stays and `npm i **not bold**`\n```js\nconst grade = \"6a\"; // **no markup here**\n```\nOld link trick: [https://bank.example](https://evil.example/login)", 200); m("dc-2:dana", "dana", "hey, got a minute?", 20);
 // ---- Instagram: shared reel with preview image, a message request ----
 { const id = "m" + ++seq;
   (store["ig-1:alice"] ??= []).push({ id, chatId: "ig-1:alice", sender: "Alice Anderson", senderId: "Alice", text: "Shared a reel by @bob", time: ago(25), fromMe: false,

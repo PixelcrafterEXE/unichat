@@ -258,7 +258,7 @@ html:not(.bubbles) .msg:not(.mine) .foot { display: none; }
 /* read-only archive, timeline markers, confirm */
 .composer.ro.offline { gap: 12px; flex-wrap: wrap; justify-content: center; text-align: center; }
 .sysmsg { display: flex; justify-content: center; margin: 14px 16px; } .sysmsg span { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 560px; text-align: center; background: var(--bg2); border: 1px solid var(--border); color: var(--muted); border-radius: var(--r-card); padding: 6px 12px; font-size: 12.5px; }
-.sysmsg time { opacity: .7; margin-left: 6px; } .sysmsg.signed-out span, .sysmsg.unlinked span { border-color: #f0a03066; background: #f0a03018; }
+.sysmsg time { opacity: .7; margin-left: 6px; } .sysmsg.k-signed-out span, .sysmsg.k-unlinked span { border-color: #f0a03066; background: #f0a03018; }
 .confirmbody { color: var(--fg); line-height: 1.5; margin: 4px 0 8px; } .btnrow { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .danger.solid { background: var(--danger); color: #fff; border-color: var(--danger); }
 .chats li .pinned[aria-label^="Signed"] { color: #f0a030; }
@@ -344,7 +344,7 @@ button.quote.linkquote { background: none; border-top: 0; border-right: 0; borde
 .crows { margin: 8px 0 0; display: grid; gap: 2px; font-size: 13px; } .crows > div { display: flex; justify-content: space-between; gap: 12px; } .crows dt { opacity: .7; } .crows dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
 .cbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; } .cbtn { border: 1px solid #ffffff33; border-radius: var(--r-chip); padding: 3px 12px; font-size: 12.5px; opacity: .75; } .cfoot { margin-top: 6px; font-size: 12px; opacity: .65; }
 a.cbtn-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; text-decoration: none; color: inherit; }
-.sysmsg.info span { border-color: var(--border); background: var(--bg2); }
+.sysmsg.k-info span { border-color: var(--border); background: var(--bg2); }
 
 /* connect screen + reconnect banner */
 .connect { min-height: 100%; display: grid; place-items: center; padding: 24px; } .connectcard { background: var(--bg2); border-radius: 12px; padding: 24px 28px; width: min(440px, 100%); box-shadow: 0 8px 40px #0006; } .connectcard h2 { margin-top: 0; } .connectcard label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; margin: 12px 0 4px; } .connectcard input { width: 100%; padding: 10px; border: 0; border-radius: 4px; background: var(--bg3); }
@@ -463,7 +463,7 @@ html:not(.bubbles) .msg.merged:not(.grouped) .foot .netbadge { display: none; } 
 .loginlead { margin: 0 0 8px; } .loginchk { display: flex !important; flex-direction: row !important; gap: 10px; align-items: flex-start; } .loginchk input { width: auto; margin-top: 3px; } .loginchk .req { color: var(--danger); }
 .mentionpop { position: absolute; left: 6px; bottom: calc(100% + 4px); min-width: 240px; max-width: 360px; max-height: 280px; overflow-y: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px #0006; padding: 4px; z-index: 20; }
 .mentionpop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0; color: var(--fg); padding: 5px 8px; border-radius: 6px; } .mentionpop button.on { background: var(--sel); } .mentionpop small { color: var(--muted); margin-left: auto; }
-.ctext .name { display: flex; align-items: center; min-width: 0; } .ctext .name .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; } .ctext .name .reqtag, .ctext .name .inl { flex-shrink: 0; } .ctext .name .starred { color: #e8b730; fill: #e8b730; margin: 0 3px 0 4px; }
+.ctext .name { display: flex; align-items: center; min-width: 0; } .ctext .name .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; } .ctext .name .reqtag, .ctext .name .inl { flex-shrink: 0; }
 .loginwarn p { color: var(--fg); } .loginchk span { text-transform: none; letter-spacing: 0; font-size: 13.5px; font-weight: 500; color: var(--fg); line-height: 1.4; }
 
 .fieldhelp { margin: 4px 0 8px; font-size: 13px; color: var(--muted); } .fieldhelp summary { cursor: pointer; color: var(--accent); } .fieldhelp ol { margin: 6px 0 6px 18px; padding: 0; } .fieldhelp li { margin: 3px 0; } .fieldwrap { display: block; }
@@ -633,7 +633,20 @@ html:not(.bubbles) .msg.merged:not(.grouped) .foot .netbadge { display: none; } 
 /* ---- message area: one radius scale, compact reactions, meta (time, ticks, messenger) inline in the last text line ---- */
 /* radii: bubble --r-bubble (speaker-side bottom corner --r-tail on every bubble), cards/quotes --r-card/--r-sm, pictures --r-media, pills --r-chip, composer --r-input, popups --r-menu */
 .avatar, .avatar img { border-radius: var(--r-avatar); }
-.msg p.tx { display: flow-root; } /* contains the floated meta */
+.msg p.tx, .msg .tx.rich { display: flow-root; } /* contains the floated meta */
+/* Discord markdown (#98): RichText.tsx */
+.msg .tx.rich { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tx.rich .mdh { font-weight: 700; line-height: 1.25; margin: 6px 0 2px; } .tx.rich .mdh.h1 { font-size: 1.5em; } .tx.rich .mdh.h2 { font-size: 1.25em; } .tx.rich .mdh.h3 { font-size: 1.08em; }
+.tx.rich > .mdh:first-child { margin-top: 0; }
+.tx.rich .mdsub { font-size: 12px; color: var(--muted); }
+.tx.rich .icode { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; background: color-mix(in srgb, currentColor 12%, transparent); padding: 1px 4px; border-radius: 4px; }
+.tx.rich .codeblock { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; white-space: pre; overflow-x: auto; max-width: 100%; margin: 4px 0; padding: 8px 10px; border-radius: var(--r-sm, 6px); background: color-mix(in srgb, currentColor 9%, transparent); border: 1px solid color-mix(in srgb, currentColor 14%, transparent); }
+.tx.rich .mdquote { border-inline-start: 3px solid color-mix(in srgb, currentColor 35%, transparent); padding-inline-start: 9px; margin: 2px 0; }
+.tx.rich .mdli { position: relative; } .tx.rich .mdmark { position: absolute; width: 1.1em; text-align: end; opacity: .8; }
+.tx.rich .spoiler { background: color-mix(in srgb, currentColor 85%, transparent); color: transparent; border-radius: 4px; cursor: pointer; padding: 0 1px; }
+.tx.rich .spoiler > span { visibility: hidden; } .tx.rich .spoiler.open { background: color-mix(in srgb, currentColor 12%, transparent); color: inherit; cursor: auto; } .tx.rich .spoiler.open > span { visibility: visible; }
+.tx.rich .linkdest { font-size: 11.5px; color: var(--muted); }
+.bubbles .msg.mine .tx.rich .linkdest { color: inherit; opacity: .75; }
 .mfoot { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 14px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mfoot .ticks { flex-shrink: 0; } .mfoot .netbadge { margin: 0; }
 .mfoot.inl { float: right; margin: 5px 0 -2px 12px; position: relative; }       /* floats into the last line when there is room, else wraps to a right-aligned row of its own */
@@ -706,7 +719,7 @@ html:not(.bubbles) .mfoot time, html:not(.bubbles) .mfoot .netbadge { display: n
 .dtsec select { width: 100%; min-height: 38px; appearance: none; -webkit-appearance: none; padding: 8px 34px 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg3) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8b94' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center; color: var(--fg); cursor: pointer; }
 .dtsec select:hover:not(:disabled) { border-color: var(--muted); } .dtsec select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dtsec .hint { font-size: 12px; margin: 6px 2px 0; }
-.sysmsg.info span { width: fit-content; border-radius: 999px; }
+.sysmsg.k-info span { width: fit-content; border-radius: 999px; } /* the kind is a k- class: a bare "info" also matched the sidebar's .info rules (background, border, column layout: #107) */
 .msg.sending{opacity:.7} /* not .pend: that is the composer's file chip (max-width 220px), which squeezed the bubble */
 
 /* captcha prompt (provider human check, hCaptcha widget or e2e stub) */

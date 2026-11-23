@@ -40,9 +40,10 @@ export const ChatRow = memo(function ChatRow({ c, api, active, menuOpen, selecte
       {(c.kind === "channel" && !away) ? <span className="hash hb"><Hash size={18} /><span className="avbadge"><ProviderIcon provider={c.provider} size={13} /></span></span>
         : <Avatar name={away && c.kind === "channel" ? origin!.name : c.name} url={c.avatarUrl} of={{ kind: "chat", id: c.id }} size={36} provider={c.provider} online={online}
             providers={memberProviders ? memberProviders.split(",") : undefined} fallback={away ? { kind: "space", id: origin!.id, url: origin!.iconUrl } : undefined} />}
-      <span className="ctext"><span className="name"><span className="nm">{c.name}</span>{c.starred && <Star size={12} className="inl starred" aria-label="Starred" data-starred />}{muted && <BellOff size={12} className="inl" />}</span>{(c.preview || c.request) && <small>{c.request && <em className="reqtag">Message request</em>}{c.preview}</small>}</span>
+      <span className="ctext"><span className="name"><span className="nm">{c.name}</span>{muted && <BellOff size={12} className="inl" />}</span>{(c.preview || c.request) && <small>{c.request && <em className="reqtag">Message request</em>}{c.preview}</small>}</span>
       {c.offline && <LogOut size={12} className="pinned" aria-label="Signed out: read-only" />}
       {c.offline && noOffline > 0 && <CloudOff size={13} className="nooffline" data-nooffline={noOffline} aria-label="Some media is not available offline" />}
+      {c.starred && <Star size={12} className="pinned" aria-label="Starred" data-starred />}
       {pinned && <Pin size={12} className="pinned" />}
       {!!c.unread && (c.unreadApprox ? <i className={"unreaddot" + (muted ? " muted" : "")} title="New messages" aria-label="New messages" /> : <b className={"unread" + (muted ? " muted" : "")}>{c.unread}</b>)}
       <button className="icon more" aria-label="Chat options" onClick={(e) => { e.stopPropagation(); api.more(e, c); }}><MoreHorizontal size={16} /></button>

@@ -1,5 +1,6 @@
 // Application layer: accounts, id namespacing, routing, mesh. Transport-agnostic:
 // Electron IPC, the Android bridge and the web WebSocket server all call hub.call().
+import { looksLikeNotice } from "./notices.js";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
@@ -184,6 +185,7 @@ export class Hub {
     lap("init.accounts");
     void this.searchIndex.rebuild().then(() => pl("search.index.done", { size: this.searchIndex.size }));
     void this.cleanPlaceholdersOnce().then(() => pl("cleanPlaceholders.done"));
+    void this.repairNoticesOnce();
     if (o.background) { const t = setTimeout(() => { try { this.purge(); } catch (e) { console.error("purge failed:", (e as Error)?.message); } pl("purge.done"); }, 45_000); t.unref?.(); } // retention purge scans the whole archive: not while the first chat list is being served
     else this.purge();
     lap("init.purge");
@@ -216,6 +218,29 @@ export class Hub {
       await new Promise((r) => setImmediate(r)); // yield between pages
     }
     return { scanned, cleaned };
+  }
+  /**
+   * Once per account: network notices that lost their system mark in device sync up to 0.1.16 (#102) are marked again,
+   * recognised by their fixed wording (notices.ts). The patch goes through the store, so device sync carries it to the
+   * other devices.
+   */
+  private async repairNoticesOnce() {
+    try {
+      const scan = this.store.scanMessages?.bind(this.store); if (!scan) return;
+      for (const a of this.store.listAccounts()) {
+        const key = `notice-marks-v1:${a.id}`; if (this.store.getSetting(key)) continue;
+        let after: { chatId: string; id: string } | undefined, fixed = 0; const chats = new Set<string>();
+        for (;;) {
+          const page = scan({ ...(after ? { after } : {}), limit: 500, accountId: a.id });
+          for (const m of page) if (looksLikeNotice(a.provider, m)) { try { this.store.patchMessage(m.chatId, m.id, { system: { kind: "info" } }); this.activity.delete(m.chatId); chats.add(m.chatId); fixed++; } catch { /* best effort */ } }
+          if (page.length < 500) break;
+          const last = page[page.length - 1]!; after = { chatId: last.chatId, id: last.id };
+          await new Promise((r) => setImmediate(r));
+        }
+        this.store.setSetting(key, "1");
+        if (fixed) { console.log(`[unimsg] ${a.provider}: marked ${fixed} notice line(s) again`); for (const chatId of chats) this.emitC("history-updated", { chatId }); this.emit("chats-changed", { accountId: a.id }); }
+      }
+    } catch (e) { console.error("notice repair failed:", e); }
   }
   /** Once per account (flag in the store's settings): clean the stand-in texts of its imported history. */
   private async cleanPlaceholdersOnce() {

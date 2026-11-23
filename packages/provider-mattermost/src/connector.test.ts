@@ -44,8 +44,8 @@ test("login: password, session persisted 0600, token only in Authorization", asy
     assert.equal(saved.token, "sess-tok"); assert.equal(saved.server, s.fake.url);
     assert.deepEqual(s.fake.reqs(/^POST \/users\/login/).pop()!.body, { login_id: "me", password: "pw" });
     assert.equal(s.fake.reqs(/GET \/users\/me$/)[0].auth, "Bearer sess-tok");
+    await waitFor(() => s.fake.wsSent.some((m) => m.action === "authentication_challenge"), 5000, "websocket authentication"); // "connected" means the REST API works; the websocket opens right after
     assert.equal(s.fake.wsOrigin[0], s.fake.url);
-    assert.ok(s.fake.wsSent.some((m) => m.action === "authentication_challenge"));
     await s.conn.logout();
     assert.ok(!existsSync(sess(s.dir))); assert.ok(s.fake.reqs(/POST \/users\/logout/).length === 1);
   } finally { await s.close(); }

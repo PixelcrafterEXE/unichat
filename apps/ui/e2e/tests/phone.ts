@@ -16,6 +16,16 @@ async function noOverflow(t: Page, name: string) {
 const inViewport = (sel: string) => `(()=>{const e=document.querySelector(${JSON.stringify(sel)}); if(!e) return false; const r=e.getBoundingClientRect(); return r.left>=-1&&r.top>=-1&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1})()`;
 
 export default [
+  test("phone: notice lines are one centred pill, not boxed in a rectangle (#107)", async (t) => {
+    await t.device("phone");
+    await t.open("&chat=wa-1:family");
+    await t.waitSel(".messages .sysmsg");
+    const r = await t.ev<{ rowBg: string; rowBorder: string; pillW: number; rowW: number; offL: number; offR: number }>(`(()=>{const s=document.querySelector('.messages .sysmsg'), p=s.firstElementChild, cs=getComputedStyle(s), a=s.getBoundingClientRect(), b=p.getBoundingClientRect();
+      return { rowBg: cs.backgroundColor, rowBorder: cs.borderLeftWidth, pillW: Math.round(b.width), rowW: Math.round(a.width), offL: Math.round(b.left - a.left), offR: Math.round(a.right - b.right) }})()`);
+    t.check("the row has no background or border of its own", r.rowBg === "rgba(0, 0, 0, 0)" && r.rowBorder === "0px", JSON.stringify(r));
+    t.check("the pill is centred in the row (a long line may fill it)", r.pillW <= r.rowW && Math.abs(r.offL - r.offR) <= 2, JSON.stringify(r));
+  }),
+
   test("phone: tapping a chapter marks that chapter, not the ones it scrolls past", async (t) => {
     // The bar used to follow the scroll-spy while a tap was still scrolling, so it flashed through every chapter on
     // the way and dragged itself back and forth. A tap decides until the list settles.

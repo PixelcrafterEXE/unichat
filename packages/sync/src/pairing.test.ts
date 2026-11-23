@@ -87,7 +87,16 @@ test("listening ports: the persisted well-known port first, then the range, rand
 });
 
 test("the service takes the well-known port and falls back inside the range when it is busy", async () => {
-  const base = 47300 + Math.floor(Math.random() * 400) * 8;
+  // a random block of 6 ports that is really free: the range lies inside the OS's ephemeral ports, so a busy machine
+  // (the other packages' tests run in parallel) may hold any one of them for an outgoing connection
+  const canBind = (port: number) => new Promise<boolean>((ok) => { const s = createServer(); s.once("error", () => ok(false)); s.listen(port, "127.0.0.1", () => s.close(() => ok(true))); });
+  let base = 0;
+  for (let tries = 0; tries < 50 && !base; tries++) {
+    const b = 47300 + Math.floor(Math.random() * 400) * 8;
+    let free = true; for (let k = 0; k < 6 && free; k++) free = await canBind(b + k);
+    if (free) base = b;
+  }
+  assert.ok(base, "no free block of ports found");
   const blocker = createServer(); await new Promise<void>((ok) => blocker.listen(base, "127.0.0.1", ok));
   try {
     const A = await nd("A", "memory", undefined, undefined, undefined, { opts: { wellKnown: { base, span: 4 } } });

@@ -4,7 +4,10 @@ import { viaNote } from "./relay";
 import { capsOf, cardsOf, type Account, type Attachment, type Capabilities, type Card, type Chat, type Contact, type Location, type Message, type ProviderInfo, type SharedContact } from "./types";
 import { measureMedia, isGif } from "./measure";
 import { placeholderOf } from "../../../packages/core/src/placeholder";
-import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, useNearView, type Settings } from "./util";
+import { hasMarkup } from "./markup";
+import { withThreadLinks } from "./threadlinks";
+import { RichText } from "./RichText";
+import { copyText, downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, useNearView, type Settings } from "./util";
 import { MoreHorizontal, Camera, Check, ChevronDown, Calendar, Clock3, Phone, ShoppingBag, List as ListIcon, CreditCard, ExternalLink, Users as UsersIcon, MousePointerClick, FileQuestion, BarChart3, CheckCircle2, Circle, CheckSquare, Square, Info, LogOut, MessageSquareWarning, RotateCcw, ArrowDown, AlertCircle, Ban, Copy, Download, FileText, Forward, ImageIcon, MapPin, Mic, Paperclip, Pencil, Play, Plus, Reply, SendHorizontal, Smile, SmilePlus, Trash2, User, X } from "./icons";
 import { ReactorsModal, loadMembers, useNames } from "./Reactors";
 import type { VoiceClip } from "./Voice";
@@ -171,7 +174,7 @@ export default function Conversation(p: Props) {
     }
   }, [messages, chat.id, focused, settings.sendReadReceipts, caps, members]);
 
-  const shown = messages;
+  const shown = useMemo(() => withThreadLinks(messages, (cid) => (members?.find((c) => c.id === cid) ?? chat).provider), [messages, members, chat]);
   // ---- windowed message list: past WIN_MIN messages only the ones near the viewport are in the DOM (heights are measured, unmeasured ones estimated)
   const win = shown.length > WIN_MIN;
   const anchorTop = useRef(0), idxRef = useRef(new Map<string, number>()), anchor = useRef<{ k: string; o: number } | null>(null), selfScroll = useRef(0);
@@ -244,7 +247,7 @@ export default function Conversation(p: Props) {
     const list = picked(), dm = chat.kind === "dm";
     const text = list.map((m) => { const body = m.text || placeholderOf(m.text) || (m.attachments?.length ? "[Attachment]" : ""); return body && !dm ? `${m.fromMe ? "You" : m.sender || m.senderId}: ${body}` : body; }).filter(Boolean).join("\n");
     if (!text) return;
-    try { await navigator.clipboard.writeText(text); clearSel(); } catch { setNote("This browser did not allow copying."); setTimeout(() => setNote(undefined), 5000); }
+    try { await copyText(text); clearSel(); } catch { setNote("This browser did not allow copying."); setTimeout(() => setNote(undefined), 5000); }
   };
   const deleteSel = async () => {
     const list = picked().filter((m) => m.fromMe && !m.deleted);
@@ -680,7 +683,11 @@ function MessageView(p: {
   const reactions = useMemo(() => mergeReactions(m.reactions), [m.reactions]);
   const meta = (cls: string) => <span className={"mfoot " + cls}>{badge}<ExpiryMark seconds={m.deleted ? undefined : m.expiresIn} />{m.pinned && !m.deleted && <PinIcon size={11} className="pinmark" aria-label="Pinned" data-pinned />}<time>{fmtTime(m.time)}</time>{m.fromMe && <Ticks status={m.status} onInfo={m.status && m.status !== "sending" && (caps?.receiptDetails || p.own.kind === "dm") ? () => setInfo(true) : undefined} />}</span>;
   const attsEl = !!atts.length && <div className="atts">{atts.map((a) => <AttachmentView key={a.id} size={atts.filter((x) => x.kind === "image" || x.kind === "video" || x.gif).length > 1 ? 148 : 300} chat={p.own} m={m} a={a} auto={p.settings.autoDownloadMedia} onImage={p.onImage} />)}{metaPos === "overlay" && meta("ov")}</div>;
-  const textEl = !!text && <p className="tx"><Linkified text={text} emojiScope={caps?.customEmoji ? p.own.accountId : undefined} />{m.editedAt && <small className="edited"> (edited)</small>}{metaPos === "inline" && meta("inl")}</p>;
+  const emojiScope = caps?.customEmoji ? p.own.accountId : undefined;
+  const rich = !!text && p.own.provider === "discord" && hasMarkup(text); // Discord's markdown (#98); other networks' dialects are not parsed yet
+  const textEl = !!text && (rich
+    ? <div className="tx rich"><RichText text={text} dialect="discord" emojiScope={emojiScope} />{m.editedAt && <small className="edited"> (edited)</small>}{metaPos === "inline" && meta("inl")}</div>
+    : <p className="tx"><Linkified text={text} emojiScope={emojiScope} />{m.editedAt && <small className="edited"> (edited)</small>}{metaPos === "inline" && meta("inl")}</p>);
   return (
     <div data-mid={m.id} data-mkey={m.chatId + "|" + m.id} className={"msg k-" + chat.kind + (p.grouped ? " grouped" : "") + (m.fromMe ? " mine" : "") + (pend ? " sending" : "") + (p.net ? " merged" : "") + (p.selMode ? " selmode" : "") + (p.selected ? " sel" : "") + (!m.deleted && reactions.length ? " hasreact" : "")}
       onClickCapture={(e) => { // while selecting, the whole row is one big checkbox: links, players and action buttons must not fire
@@ -728,7 +735,7 @@ function MessageView(p: {
           {caps?.reactions && <button title="React" onClick={() => setPicker(!picker)}><SmilePlus size={16} /></button>}
           {caps?.replies && <button title="Reply" onClick={p.onReply}><Reply size={16} /></button>}
           <button title="Forward" onClick={p.onForward}><Forward size={16} /></button>
-          {m.text && <button title="Copy text" onClick={() => navigator.clipboard?.writeText(m.text)}><Copy size={16} /></button>}
+          {m.text && <button title="Copy text" onClick={() => void copyText(m.text).catch(() => {})}><Copy size={16} /></button>}
           {m.fromMe && caps?.edits && m.text && <button title="Edit" onClick={p.onEdit}><Pencil size={16} /></button>}
           {m.fromMe && caps?.deletes && <button title="Delete" onClick={del}><Trash2 size={16} /></button>}
         </div>)}
@@ -859,7 +866,7 @@ function PollCard({ m, canVote }: { m: Message; canVote: boolean }) {
 
 /** Timeline marker: the account was linked / signed out / unlinked here (possible gap in history). */
 function SystemRow({ m, onThread }: { m: Message; onThread?: () => void }) {
-  return <div className={"sysmsg " + (m.system?.kind ?? "")} role="note"><span>{m.system?.kind === "info" && /disappearing messages/i.test(m.text) ? <Timer size={13} data-timer-note /> : m.system?.kind === "linked" || m.system?.kind === "info" ? <Info size={13} /> : <LogOut size={13} />} {m.text}{onThread && <button className="linkbtn threadlink" data-open-thread onClick={onThread}><MessagesSquare size={12} /> Open thread</button>}<time>{new Date(m.time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</time></span></div>;
+  return <div className={"sysmsg k-" + (m.system?.kind ?? "note")} role="note" data-kind={m.system?.kind}><span>{m.system?.kind === "info" && /disappearing messages/i.test(m.text) ? <Timer size={13} data-timer-note /> : m.system?.kind === "linked" || m.system?.kind === "info" ? <Info size={13} /> : <LogOut size={13} />} {m.text}{onThread && <button className="linkbtn threadlink" data-open-thread onClick={onThread}><MessagesSquare size={12} /> Open thread</button>}<time>{new Date(m.time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</time></span></div>;
 }
 
 /** Right-click menu for a message (replaces the browser's own menu; selected text still gets "Copy selection"). */
@@ -885,7 +892,7 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: 
     <div ref={ref} className="ctxmenu" style={{ left: pos.left, top: pos.top }} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()} role="menu">
       {!m.deleted && !!m.reactions?.length && <Item icon={<SmilePlus size={15} />} label="Who reacted…" onClick={p.onReactors} />}
       {!m.deleted && !failed && caps?.reactions && <div className="ctxreacts">{QUICK.map((e) => <button key={e} onClick={go(() => p.onReact(e))}>{e}</button>)}<button className="more" title="More emojis" aria-label="More emojis" onClick={go(p.onMore)}>+</button></div>}
-      {p.sel && <Item icon={<Copy size={15} />} label="Copy selection" onClick={() => navigator.clipboard?.writeText(p.sel)} />}
+      {p.sel && <Item icon={<Copy size={15} />} label="Copy selection" onClick={() => void copyText(p.sel).catch(() => {})} />}
       {failed && <><Item icon={<RotateCcw size={15} />} label="Retry sending" onClick={p.onRetry} /><Item icon={<Trash2 size={15} />} label="Discard" onClick={p.onDiscard} danger /></>}
       {!m.deleted && !failed && <>
         {caps?.replies && <Item icon={<Reply size={15} />} label="Reply" onClick={p.onReply} />}
@@ -897,7 +904,7 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: 
             <button data-pin-menu aria-expanded={pinOpen} onClick={() => setPinOpen(!pinOpen)}><PinIcon size={15} />Pin…</button>
             {pinOpen && <div className="ctxsub" role="group" aria-label="Pin for">{caps.pinDurations.map((d) => <button key={d} data-default={d === 604800 ? "" : undefined} onClick={go(() => p.onPin(true, d))}>{pinDurationLabel(d)}</button>)}</div>}</>
           : <Item icon={<PinIcon size={15} />} label="Pin" onClick={() => p.onPin(true)} />)}
-        {m.text && <Item icon={<Copy size={15} />} label="Copy text" onClick={() => navigator.clipboard?.writeText(m.text)} />}
+        {m.text && <Item icon={<Copy size={15} />} label="Copy text" onClick={() => void copyText(m.text).catch(() => {})} />}
         {copyImage && <Item icon={<Download size={15} />} label="Save image" onClick={async () => { const r = await loadAttachment(m.chatId, m.id, copyImage.id).catch(() => undefined); if (!r) return; const a = document.createElement("a"); a.href = r.url; a.download = copyImage.name ?? r.name ?? "image"; a.click(); }} />}
         {m.fromMe && caps?.edits && m.text && <Item icon={<Pencil size={15} />} label="Edit" onClick={p.onEdit} />}
         {m.fromMe && caps?.deletes && <Item icon={<Trash2 size={15} />} label="Delete for everyone" onClick={p.onDelete} danger />}
