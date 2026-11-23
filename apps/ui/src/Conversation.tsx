@@ -866,7 +866,7 @@ function PollCard({ m, canVote }: { m: Message; canVote: boolean }) {
 
 /** Timeline marker: the account was linked / signed out / unlinked here (possible gap in history). */
 function SystemRow({ m, onThread }: { m: Message; onThread?: () => void }) {
-  return <div className={"sysmsg " + (m.system?.kind ?? "")} role="note"><span>{m.system?.kind === "info" && /disappearing messages/i.test(m.text) ? <Timer size={13} data-timer-note /> : m.system?.kind === "linked" || m.system?.kind === "info" ? <Info size={13} /> : <LogOut size={13} />} {m.text}{onThread && <button className="linkbtn threadlink" data-open-thread onClick={onThread}><MessagesSquare size={12} /> Open thread</button>}<time>{new Date(m.time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</time></span></div>;
+  return <div className={"sysmsg k-" + (m.system?.kind ?? "note")} role="note" data-kind={m.system?.kind}><span>{m.system?.kind === "info" && /disappearing messages/i.test(m.text) ? <Timer size={13} data-timer-note /> : m.system?.kind === "linked" || m.system?.kind === "info" ? <Info size={13} /> : <LogOut size={13} />} {m.text}{onThread && <button className="linkbtn threadlink" data-open-thread onClick={onThread}><MessagesSquare size={12} /> Open thread</button>}<time>{new Date(m.time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</time></span></div>;
 }
 
 /** Right-click menu for a message (replaces the browser's own menu; selected text still gets "Copy selection"). */

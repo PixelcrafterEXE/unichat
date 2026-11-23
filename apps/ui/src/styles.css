@@ -258,7 +258,7 @@ html:not(.bubbles) .msg:not(.mine) .foot { display: none; }
 /* read-only archive, timeline markers, confirm */
 .composer.ro.offline { gap: 12px; flex-wrap: wrap; justify-content: center; text-align: center; }
 .sysmsg { display: flex; justify-content: center; margin: 14px 16px; } .sysmsg span { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 560px; text-align: center; background: var(--bg2); border: 1px solid var(--border); color: var(--muted); border-radius: var(--r-card); padding: 6px 12px; font-size: 12.5px; }
-.sysmsg time { opacity: .7; margin-left: 6px; } .sysmsg.signed-out span, .sysmsg.unlinked span { border-color: #f0a03066; background: #f0a03018; }
+.sysmsg time { opacity: .7; margin-left: 6px; } .sysmsg.k-signed-out span, .sysmsg.k-unlinked span { border-color: #f0a03066; background: #f0a03018; }
 .confirmbody { color: var(--fg); line-height: 1.5; margin: 4px 0 8px; } .btnrow { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .danger.solid { background: var(--danger); color: #fff; border-color: var(--danger); }
 .chats li .pinned[aria-label^="Signed"] { color: #f0a030; }
@@ -344,7 +344,7 @@ button.quote.linkquote { background: none; border-top: 0; border-right: 0; borde
 .crows { margin: 8px 0 0; display: grid; gap: 2px; font-size: 13px; } .crows > div { display: flex; justify-content: space-between; gap: 12px; } .crows dt { opacity: .7; } .crows dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
 .cbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; } .cbtn { border: 1px solid #ffffff33; border-radius: var(--r-chip); padding: 3px 12px; font-size: 12.5px; opacity: .75; } .cfoot { margin-top: 6px; font-size: 12px; opacity: .65; }
 a.cbtn-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; text-decoration: none; color: inherit; }
-.sysmsg.info span { border-color: var(--border); background: var(--bg2); }
+.sysmsg.k-info span { border-color: var(--border); background: var(--bg2); }
 
 /* connect screen + reconnect banner */
 .connect { min-height: 100%; display: grid; place-items: center; padding: 24px; } .connectcard { background: var(--bg2); border-radius: 12px; padding: 24px 28px; width: min(440px, 100%); box-shadow: 0 8px 40px #0006; } .connectcard h2 { margin-top: 0; } .connectcard label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; margin: 12px 0 4px; } .connectcard input { width: 100%; padding: 10px; border: 0; border-radius: 4px; background: var(--bg3); }
@@ -719,7 +719,7 @@ html:not(.bubbles) .mfoot time, html:not(.bubbles) .mfoot .netbadge { display: n
 .dtsec select { width: 100%; min-height: 38px; appearance: none; -webkit-appearance: none; padding: 8px 34px 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg3) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8b94' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center; color: var(--fg); cursor: pointer; }
 .dtsec select:hover:not(:disabled) { border-color: var(--muted); } .dtsec select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dtsec .hint { font-size: 12px; margin: 6px 2px 0; }
-.sysmsg.info span { width: fit-content; border-radius: 999px; }
+.sysmsg.k-info span { width: fit-content; border-radius: 999px; } /* the kind is a k- class: a bare "info" also matched the sidebar's .info rules (background, border, column layout: #107) */
 .msg.sending{opacity:.7} /* not .pend: that is the composer's file chip (max-width 220px), which squeezed the bubble */
 
 /* captcha prompt (provider human check, hCaptcha widget or e2e stub) */
