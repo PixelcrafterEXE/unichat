@@ -4,6 +4,8 @@ import { viaNote } from "./relay";
 import { capsOf, cardsOf, type Account, type Attachment, type Capabilities, type Card, type Chat, type Contact, type Location, type Message, type ProviderInfo, type SharedContact } from "./types";
 import { measureMedia, isGif } from "./measure";
 import { placeholderOf } from "../../../packages/core/src/placeholder";
+import { hasMarkup } from "./markup";
+import { RichText } from "./RichText";
 import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, useNearView, type Settings } from "./util";
 import { MoreHorizontal, Camera, Check, ChevronDown, Calendar, Clock3, Phone, ShoppingBag, List as ListIcon, CreditCard, ExternalLink, Users as UsersIcon, MousePointerClick, FileQuestion, BarChart3, CheckCircle2, Circle, CheckSquare, Square, Info, LogOut, MessageSquareWarning, RotateCcw, ArrowDown, AlertCircle, Ban, Copy, Download, FileText, Forward, ImageIcon, MapPin, Mic, Paperclip, Pencil, Play, Plus, Reply, SendHorizontal, Smile, SmilePlus, Trash2, User, X } from "./icons";
 import { ReactorsModal, loadMembers, useNames } from "./Reactors";
@@ -680,7 +682,11 @@ function MessageView(p: {
   const reactions = useMemo(() => mergeReactions(m.reactions), [m.reactions]);
   const meta = (cls: string) => <span className={"mfoot " + cls}>{badge}<ExpiryMark seconds={m.deleted ? undefined : m.expiresIn} />{m.pinned && !m.deleted && <PinIcon size={11} className="pinmark" aria-label="Pinned" data-pinned />}<time>{fmtTime(m.time)}</time>{m.fromMe && <Ticks status={m.status} onInfo={m.status && m.status !== "sending" && (caps?.receiptDetails || p.own.kind === "dm") ? () => setInfo(true) : undefined} />}</span>;
   const attsEl = !!atts.length && <div className="atts">{atts.map((a) => <AttachmentView key={a.id} size={atts.filter((x) => x.kind === "image" || x.kind === "video" || x.gif).length > 1 ? 148 : 300} chat={p.own} m={m} a={a} auto={p.settings.autoDownloadMedia} onImage={p.onImage} />)}{metaPos === "overlay" && meta("ov")}</div>;
-  const textEl = !!text && <p className="tx"><Linkified text={text} emojiScope={caps?.customEmoji ? p.own.accountId : undefined} />{m.editedAt && <small className="edited"> (edited)</small>}{metaPos === "inline" && meta("inl")}</p>;
+  const emojiScope = caps?.customEmoji ? p.own.accountId : undefined;
+  const rich = !!text && p.own.provider === "discord" && hasMarkup(text); // Discord's markdown (#98); other networks' dialects are not parsed yet
+  const textEl = !!text && (rich
+    ? <div className="tx rich"><RichText text={text} dialect="discord" emojiScope={emojiScope} />{m.editedAt && <small className="edited"> (edited)</small>}{metaPos === "inline" && meta("inl")}</div>
+    : <p className="tx"><Linkified text={text} emojiScope={emojiScope} />{m.editedAt && <small className="edited"> (edited)</small>}{metaPos === "inline" && meta("inl")}</p>);
   return (
     <div data-mid={m.id} data-mkey={m.chatId + "|" + m.id} className={"msg k-" + chat.kind + (p.grouped ? " grouped" : "") + (m.fromMe ? " mine" : "") + (pend ? " sending" : "") + (p.net ? " merged" : "") + (p.selMode ? " selmode" : "") + (p.selected ? " sel" : "") + (!m.deleted && reactions.length ? " hasreact" : "")}
       onClickCapture={(e) => { // while selecting, the whole row is one big checkbox: links, players and action buttons must not fire

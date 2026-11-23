@@ -314,8 +314,8 @@ export function CustomEmoji({ scope, name, size = 22 }: { scope: string; name: s
   return src ? <img className="cemoji" src={src} alt={`:${name}:`} title={`:${name}:`} style={{ height: size }} /> : <>{`:${name}:`}</>;
 }
 /** Text with links and, when `emojiScope` (the account id) is given, inline custom emoji. A message that is only one emoji is shown large. */
-export function Linkified({ text, emojiScope }: { text: string; emojiScope?: string }) {
-  const lone = emojiScope && /^\s*:[A-Za-z0-9_+-]{2,64}:\s*$/.test(text);
+export function Linkified({ text, emojiScope, big }: { text: string; emojiScope?: string; /** the whole message is one custom emoji (decided by the caller when the text is split up) */ big?: boolean }) {
+  const lone = big ?? (emojiScope && /^\s*:[A-Za-z0-9_+-]{2,64}:\s*$/.test(text));
   return <>{text.split(URL_RE).map((p, i) => i % 2 ? <a key={i} href={p} target="_blank" rel="noreferrer noopener">{p}</a>
     : emojiScope ? p.split(EMOJI_TOKEN).map((q, j) => (j % 2 ? <CustomEmoji key={j} scope={emojiScope} name={q.slice(1, -1)} size={lone ? 48 : 22} /> : q)) : p)}</>;
 }

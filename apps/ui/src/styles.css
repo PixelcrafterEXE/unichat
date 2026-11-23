@@ -633,7 +633,20 @@ html:not(.bubbles) .msg.merged:not(.grouped) .foot .netbadge { display: none; } 
 /* ---- message area: one radius scale, compact reactions, meta (time, ticks, messenger) inline in the last text line ---- */
 /* radii: bubble --r-bubble (speaker-side bottom corner --r-tail on every bubble), cards/quotes --r-card/--r-sm, pictures --r-media, pills --r-chip, composer --r-input, popups --r-menu */
 .avatar, .avatar img { border-radius: var(--r-avatar); }
-.msg p.tx { display: flow-root; } /* contains the floated meta */
+.msg p.tx, .msg .tx.rich { display: flow-root; } /* contains the floated meta */
+/* Discord markdown (#98): RichText.tsx */
+.msg .tx.rich { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tx.rich .mdh { font-weight: 700; line-height: 1.25; margin: 6px 0 2px; } .tx.rich .mdh.h1 { font-size: 1.5em; } .tx.rich .mdh.h2 { font-size: 1.25em; } .tx.rich .mdh.h3 { font-size: 1.08em; }
+.tx.rich > .mdh:first-child { margin-top: 0; }
+.tx.rich .mdsub { font-size: 12px; color: var(--muted); }
+.tx.rich .icode { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; background: color-mix(in srgb, currentColor 12%, transparent); padding: 1px 4px; border-radius: 4px; }
+.tx.rich .codeblock { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; white-space: pre; overflow-x: auto; max-width: 100%; margin: 4px 0; padding: 8px 10px; border-radius: var(--r-sm, 6px); background: color-mix(in srgb, currentColor 9%, transparent); border: 1px solid color-mix(in srgb, currentColor 14%, transparent); }
+.tx.rich .mdquote { border-inline-start: 3px solid color-mix(in srgb, currentColor 35%, transparent); padding-inline-start: 9px; margin: 2px 0; }
+.tx.rich .mdli { position: relative; } .tx.rich .mdmark { position: absolute; width: 1.1em; text-align: end; opacity: .8; }
+.tx.rich .spoiler { background: color-mix(in srgb, currentColor 85%, transparent); color: transparent; border-radius: 4px; cursor: pointer; padding: 0 1px; }
+.tx.rich .spoiler > span { visibility: hidden; } .tx.rich .spoiler.open { background: color-mix(in srgb, currentColor 12%, transparent); color: inherit; cursor: auto; } .tx.rich .spoiler.open > span { visibility: visible; }
+.tx.rich .linkdest { font-size: 11.5px; color: var(--muted); }
+.bubbles .msg.mine .tx.rich .linkdest { color: inherit; opacity: .75; }
 .mfoot { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 14px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mfoot .ticks { flex-shrink: 0; } .mfoot .netbadge { margin: 0; }
 .mfoot.inl { float: right; margin: 5px 0 -2px 12px; position: relative; }       /* floats into the last line when there is room, else wraps to a right-aligned row of its own */
