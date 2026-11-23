@@ -133,6 +133,7 @@ export class SyncStore implements Store {
     let cs = row?.meta?.c ?? z, rs = row?.meta?.r ?? z, ps: string | undefined = row?.meta?.p, dirty = false, x: Rx | undefined = row?.meta?.x;
     const rx = (m: Message | undefined) => canon(m?.deleted ? [] : m?.reactions ?? null);
     if (!pre || canon(contentOf(pre)) !== canon(contentOf(post))) { cs = c.clock.tick(); dirty = true; }
+    else if (canon(pre.system ?? null) !== canon(post.system ?? null)) { cs = c.clock.tick(); dirty = true; } // a line marked as a notice afterwards (#102): the other devices must hear of it too
     if (!pre || rx(pre) !== rx(post)) {
       rs = c.clock.tick(); dirty = true;
       // per-(emoji, sender) elements: unchanged ones keep their stamp, new ones get `rs`, removed ones become tombstones (see crdt.ts)

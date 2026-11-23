@@ -45,6 +45,17 @@ test("reactions: concurrent reactions from two devices both survive; removal pro
   for (const n of [A, B]) await n.stop();
 });
 
+test("a line marked as a notice afterwards (#102) reaches the other device, though its text did not change", async () => {
+  const chat = "fake-n:c";
+  const A = await node("A", "memory", undefined, (s) => { s.putAccount({ id: "fake-n", provider: "fake", label: "N", status: "active" }); s.putMessages([msg(chat, "safety.x.1", "Your safety number with L has changed.", "2026-01-01T00:00:00Z")]); });
+  const B = await node("B", "memory"); await pairUp(A, B);
+  await until(() => !!B.store.getMessage(chat, "safety.x.1"), "the unmarked line on B");
+  assert.equal(B.store.getMessage(chat, "safety.x.1")?.system, undefined);
+  A.store.patchMessage(chat, "safety.x.1", { system: { kind: "info" } });
+  await until(() => B.store.getMessage(chat, "safety.x.1")?.system?.kind === "info", "the mark reached B");
+  for (const n of [A, B]) await n.stop();
+});
+
 test("chat cache: a peer's cache never overwrites a LIVE connector's account; accounts that are not live here take it", async () => {
   const mk = (id: string, name: string): { chats: Chat[]; spaces: [] } => ({ chats: [{ id: id + ":c", accountId: id, provider: "fake", kind: "dm", name } as unknown as Chat], spaces: [] });
   const A = await node("A", "memory"), B = await node("B", "memory");

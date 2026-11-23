@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p .",
-    "test": "tsx --test src/chacha.test.ts src/hub.test.ts src/pins.test.ts src/avatars.test.ts src/container.test.ts src/backup.test.ts src/movesession.test.ts src/hub-features.test.ts src/search.test.ts src/railgroups.test.ts src/categories.test.ts src/presence.test.ts src/signalimport/signalimport.test.ts src/signalimport/signalimport.hub.test.ts src/whatsappimport/whatsappimport.test.ts src/whatsappimport/whatsappimport.hub.test.ts src/placeholder.test.ts src/updater.test.ts"
+    "test": "tsx --test src/chacha.test.ts src/notices.test.ts src/hub.test.ts src/pins.test.ts src/avatars.test.ts src/container.test.ts src/backup.test.ts src/movesession.test.ts src/hub-features.test.ts src/search.test.ts src/railgroups.test.ts src/categories.test.ts src/presence.test.ts src/signalimport/signalimport.test.ts src/signalimport/signalimport.hub.test.ts src/whatsappimport/whatsappimport.test.ts src/whatsappimport/whatsappimport.hub.test.ts src/placeholder.test.ts src/updater.test.ts"
   },
   "dependencies": {
     "@signalapp/libsignal-client": "0.106.2"
