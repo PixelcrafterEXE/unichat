@@ -1,7 +1,7 @@
 import { memo } from "react";
 import type { Chat, Space } from "./types";
 import { Avatar, ProviderIcon, useLongPress } from "./util";
-import { Archive, ArchiveRestore, Bell, BellOff, CloudOff, FolderInput, GitMerge, Hash, LogOut, MoreHorizontal, Pencil, Pin, PinOff, MarkRead, Tag, Unlink } from "./icons";
+import { Archive, ArchiveRestore, Bell, BellOff, CloudOff, FolderInput, GitMerge, Hash, LogOut, MoreHorizontal, Pencil, Pin, PinOff, MarkRead, Star, StarOff, Tag, Unlink } from "./icons";
 
 /** Everything a row needs from the app. ONE stable object whose members are always the latest closures, so a row only re-renders when ITS data changes. */
 export interface RowApi {
@@ -13,7 +13,7 @@ export interface RowApi {
   dragOver(e: React.DragEvent, c: Chat): void;
   drop(e: React.DragEvent, c: Chat): void;
   closeMenu(): void;
-  togglePin(c: Chat): void; toggleMute(c: Chat): void; markRead(c: Chat): void; markUnread(c: Chat): void; archive(c: Chat): void; rename(c: Chat): void;
+  togglePin(c: Chat): void; toggleStar(c: Chat): void; toggleMute(c: Chat): void; markRead(c: Chat): void; markUnread(c: Chat): void; archive(c: Chat): void; rename(c: Chat): void;
   move(c: Chat): void; category(c: Chat): void; merge(c: Chat): void; unmerge(c: Chat): void;
 }
 export interface RowProps {
@@ -40,7 +40,7 @@ export const ChatRow = memo(function ChatRow({ c, api, active, menuOpen, selecte
       {(c.kind === "channel" && !away) ? <span className="hash hb"><Hash size={18} /><span className="avbadge"><ProviderIcon provider={c.provider} size={13} /></span></span>
         : <Avatar name={away && c.kind === "channel" ? origin!.name : c.name} url={c.avatarUrl} of={{ kind: "chat", id: c.id }} size={36} provider={c.provider} online={online}
             providers={memberProviders ? memberProviders.split(",") : undefined} fallback={away ? { kind: "space", id: origin!.id, url: origin!.iconUrl } : undefined} />}
-      <span className="ctext"><span className="name"><span className="nm">{c.name}</span>{muted && <BellOff size={12} className="inl" />}</span>{(c.preview || c.request) && <small>{c.request && <em className="reqtag">Message request</em>}{c.preview}</small>}</span>
+      <span className="ctext"><span className="name"><span className="nm">{c.name}</span>{c.starred && <Star size={12} className="inl starred" aria-label="Starred" data-starred />}{muted && <BellOff size={12} className="inl" />}</span>{(c.preview || c.request) && <small>{c.request && <em className="reqtag">Message request</em>}{c.preview}</small>}</span>
       {c.offline && <LogOut size={12} className="pinned" aria-label="Signed out: read-only" />}
       {c.offline && noOffline > 0 && <CloudOff size={13} className="nooffline" data-nooffline={noOffline} aria-label="Some media is not available offline" />}
       {pinned && <Pin size={12} className="pinned" />}
@@ -49,6 +49,7 @@ export const ChatRow = memo(function ChatRow({ c, api, active, menuOpen, selecte
       {menuOpen && (
         <div className="popmenu chatmenu" onClick={(e) => e.stopPropagation()} onMouseLeave={() => { if (!coarse) api.closeMenu(); }}>
           <button onClick={() => { api.togglePin(c); api.closeMenu(); }}>{pinned ? <><PinOff size={16} /> Unpin</> : <><Pin size={16} /> Pin to top</>}</button>
+          <button data-act="star" onClick={() => { api.toggleStar(c); api.closeMenu(); }}>{c.starred ? <><StarOff size={16} /> Unstar</> : <><Star size={16} /> Star (prioritize)</>}</button>
           <button onClick={() => { api.toggleMute(c); api.closeMenu(); }}>{muted ? <><Bell size={16} /> Unmute</> : <><BellOff size={16} /> Mute</>}</button>
           {!!c.unread ? <button data-act="mark-read" onClick={() => { api.markRead(c); api.closeMenu(); }}><MarkRead size={16} /> Mark as read</button>
             : <button data-act="mark-unread" onClick={() => { api.markUnread(c); api.closeMenu(); }}><MarkRead size={16} /> Mark as unread</button>}

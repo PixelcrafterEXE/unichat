@@ -9,6 +9,8 @@ export interface DcChannel {
   id: string; type: number; guild_id?: string; name?: string; topic?: string | null; parent_id?: string | null; position?: number;
   permission_overwrites?: DcOverwrite[]; last_message_id?: string | null; recipients?: DcUser[]; icon?: string | null; owner_id?: string;
   thread_metadata?: { archived?: boolean; locked?: boolean }; last_pin_timestamp?: string | null;
+  /** threads: messages in it (Discord leaves out the starter message) */
+  message_count?: number;
 }
 export interface DcGuild { id: string; name: string; icon?: string | null; owner_id?: string; roles?: DcRole[]; emojis?: DcEmoji[]; unavailable?: boolean; permissions?: string; channels?: DcChannel[]; threads?: DcChannel[]; member_count?: number }
 export interface DcMember { roles: string[]; nick?: string | null; communication_disabled_until?: string | null; user?: DcUser }
@@ -27,6 +29,8 @@ export interface DcMessage {
   id: string; channel_id: string; guild_id?: string; author?: DcUser; member?: DcMember; content?: string; timestamp?: string; edited_timestamp?: string | null;
   type?: number; flags?: number; mentions?: (DcUser & { member?: DcMember })[]; mention_roles?: string[]; attachments?: DcAttachment[]; embeds?: DcEmbed[];
   reactions?: { count: number; me?: boolean; emoji: DcEmoji }[]; referenced_message?: DcMessage | null; message_reference?: { message_id?: string; channel_id?: string; type?: number };
+  /** the thread started from this message */
+  thread?: DcChannel;
   pinned?: boolean; message_snapshots?: { message: DcMessage }[]; sticker_items?: DcSticker[]; poll?: DcPoll; call?: { ended_timestamp?: string | null }; webhook_id?: string;
 }
 
@@ -284,7 +288,11 @@ export function mapMessage(m: DcMessage, x: MsgCtx): { msg: Message; refs: Map<s
   if (!NORMAL.has(m.type ?? 0)) {
     const target = m.mentions?.[0] ? name(m.mentions[0]) : undefined;
     const t = systemText(m, base.sender, target) ?? (m.content ? oneLine(m.content) : "Notice from Discord");
-    return { msg: { ...base, sender: "", senderId: "", fromMe: false, text: t, system: { kind: "info" } }, refs: new Map() };
+    const msg: Message = { ...base, sender: "", senderId: "", fromMe: false, text: t, system: { kind: "info" } };
+    // "X started a thread: name": the reference points at the thread, so the line can open it
+    const tid = m.type === 18 ? m.thread?.id ?? m.message_reference?.channel_id : undefined;
+    if (tid && tid !== m.channel_id) msg.thread = threadLink(tid, m.thread ?? undefined, m.content);
+    return { msg, refs: new Map() };
   }
   // thread starter: the interesting content is the message the thread was started from
   let src = m;
@@ -306,6 +314,7 @@ export function mapMessage(m: DcMessage, x: MsgCtx): { msg: Message; refs: Map<s
   if (reactions) base.reactions = reactions;
   if (m.edited_timestamp) base.editedAt = new Date(m.edited_timestamp).toISOString();
   if (m.pinned) base.pinned = true;
+  if (m.thread?.id && m.type !== MT.THREAD_STARTER) base.thread = threadLink(m.thread.id, m.thread);
   const ref = m.message_reference;
   if (ref?.message_id && ref.type !== 1 && m.type !== MT.THREAD_STARTER) {
     const r = m.referenced_message;
@@ -313,6 +322,12 @@ export function mapMessage(m: DcMessage, x: MsgCtx): { msg: Message; refs: Map<s
   }
   if (base.fromMe) base.status = "sent";
   return { msg: base, refs: media.refs };
+}
+
+/** Message.thread for a Discord thread channel (`ch` when known: its name and reply count). */
+export function threadLink(id: string, ch?: DcChannel, name?: string): NonNullable<Message["thread"]> {
+  const n = ch?.name ?? (name || undefined);
+  return { id, ...(n ? { name: n } : {}), ...(typeof ch?.message_count === "number" ? { count: ch.message_count } : {}) };
 }
 
 /** Short text for chat-list previews. */

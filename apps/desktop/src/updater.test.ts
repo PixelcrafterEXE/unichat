@@ -16,7 +16,7 @@ test("asset selection: AppImage self-updates, other packaged Linux installs are 
 });
 
 test("version: CI versions pass, local builds are dev", () => {
-  assert.equal(appVersion("0.1.37"), "0.1.37"); assert.equal(appVersion("0.0.0-dev"), "dev"); assert.equal(appVersion("garbage"), "dev");
+  assert.equal(appVersion("0.1.37"), "0.1.37"); assert.equal(appVersion("0.0.0-dev"), "dev"); assert.equal(appVersion("garbage"), "dev"); assert.equal(appVersion("0.1.17-dev.202611231530"), "0.1.17-dev.202611231530");
 });
 
 test("replaceAppImage keeps a backup, swaps atomically and keeps the executable bit", () => {

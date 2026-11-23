@@ -8,7 +8,7 @@ import { applyFolders } from "./folders.js";
 import type { Connector, CoreEvent, OutgoingMention, OutgoingMessage, Profile, ProfilePatch, ProviderFactory } from "./provider.js";
 import { MeshRelay } from "./mesh.js";
 import { JobAbort, JobWaiting, Scheduler } from "./scheduler.js";
-import { avatarKeyId, MemoryStore, type Store } from "./store.js";
+import { avatarKeyId, MemoryStore, type Job, type Store } from "./store.js";
 import { AVATAR_MAX_BYTES, AVATAR_NEGATIVE_MS, AVATAR_OPEN_WINDOW_MS, AVATAR_TTL_HINTED_MS, AVATAR_TTL_MS, AVATAR_TTL_OPEN_MS, avatarKey, avatarSha, emptyAvatar, makeAvatar, pruneAvatarStore } from "./avatarstore.js";
 import { MediaCache } from "./media.js";
 import { BackupService, type BackupPolicy } from "./backup.js";
@@ -50,12 +50,32 @@ export interface SyncHostApi {
 }
 /** `conn` is absent while an account is signed out: its chats are then a read-only archive. */
 interface Acc { info: Account; conn?: Connector }
-interface ScheduledSend { chatId: string; text: string; clientId?: string; due?: number }
+interface ScheduledSend {
+  chatId: string; text: string; clientId?: string; due?: number;
+  /** a normal send that the device holding the account could not take (offline): it goes when that device is back */
+  queued?: boolean;
+  /** the rest of a queued message (attachments as base64) */
+  extra?: { replyToMessageId?: string; location?: unknown; contacts?: unknown; poll?: unknown; event?: unknown; mentions?: unknown; attachments?: any[] };
+}
 export interface HubOptions { /** global search index bounds (see search.ts) */ search?: SearchOptions; /** pacing of "mark all read" / "download all media" (tests use 0) */ extras?: ExtrasOptions; /** 32-byte key for the on-disk media cache (the SQLite store gets its own key from the host). */ dataKey?: Uint8Array; /** backup / migration: where file paths are accepted (default: only inside "<accounts dir>/.backup") */ backup?: BackupPolicy; appVersion?: string; /** self-update (updater.ts): platform asset key, installer, test hooks; the data dir, version and event sink are the Hub's */ update?: Partial<Omit<UpdaterOptions, "dataDir" | "emit">>; /** a scheduled message that is more than this late is not sent any more (default: setting `scheduleLateHours`, 24 h) */ scheduleLateMs?: number }
 /** Some provider calls wait for a server echo (e.g. Matrix account data over sync): never let the UI hang on them. */
 const withTimeout = <T,>(p: Promise<T>, ms: number, what: string): Promise<T> =>
   new Promise<T>((ok, fail) => { const t = setTimeout(() => fail(new Error(`${what} didn't confirm in time. Check your connection and try again.`)), ms); p.then((v) => { clearTimeout(t); ok(v); }, (e) => { clearTimeout(t); fail(e); }); });
 const fmtDate = (iso: string) => new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+/** The OutgoingMessage of a `send` call (also of a queued one, which keeps the same fields). */
+function outgoingOf(p: any): OutgoingMessage {
+  return {
+    text: p.text ?? "", replyToMessageId: p.replyToMessageId, location: p.location, contacts: p.contacts, poll: p.poll, event: p.event,
+    mentions: sanitizeMentions(p.text ?? "", p.mentions), clientId: typeof p.clientId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(p.clientId) ? p.clientId : undefined,
+    attachments: p.attachments?.map((a: any) => ({ kind: a.kind, mime: a.mime, name: a.name, durationMs: a.durationMs, waveform: a.waveform, ...outgoingHints(a), data: new Uint8Array(Buffer.from(a.dataBase64, "base64")) })),
+  };
+}
+/** A job as the UI lists it: a queued message's files are named, not carried. */
+function jobForUi(j: Job): Job {
+  const x = (j.payload as ScheduledSend | undefined)?.extra;
+  if (j.kind !== "send" || !x?.attachments?.length) return j;
+  return { ...j, payload: { ...(j.payload as object), extra: { ...x, attachments: x.attachments.map((a) => ({ kind: a.kind, mime: a.mime, name: a.name })) } } };
+}
 type Listener = (event: string, data: unknown) => void;
 /** What a deleted message no longer carries. */
 const DELETED_STRIPS = ["attachments", "card", "cards", "poll", "location", "contacts"] as const;
@@ -462,14 +482,14 @@ export class Hub {
       case "signOut": return this.signOut(p.accountId);
       case "signIn": return this.signIn(p.accountId);
       case "cancelSignIn": return this.cancelSignIn(p.accountId);
-      case "send":
+      case "send": {
         if (MeshRelay.isMesh(p.chatId)) return this.mesh.post(p.chatId, p.text);
-        return this.sendTo(this.sendTarget(p.chatId, p.via), {
-          text: p.text ?? "", replyToMessageId: p.replyToMessageId, location: p.location, contacts: p.contacts, poll: p.poll, event: p.event,
-          mentions: sanitizeMentions(p.text ?? "", p.mentions), clientId: typeof p.clientId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(p.clientId) ? p.clientId : undefined,
-          attachments: p.attachments?.map((a: any) => ({ kind: a.kind, mime: a.mime, name: a.name, durationMs: a.durationMs, waveform: a.waveform, ...outgoingHints(a), data: new Uint8Array(Buffer.from(a.dataBase64, "base64")) })),
-        });
+        const target = this.sendTarget(p.chatId, p.via), out = outgoingOf(p);
+        try { return await this.sendTo(target, out); }
+        catch (e: any) { if (e?.code === "unreachable" && this.resolve(target)[0].info.via) return this.queueSend(target, p, out); throw e; } // only while another device still sends for it
+      }
       case "commonChats": return this.commonChats(String(p.chatId));
+      case "aliases": return this.aliases(String(p.chatId));
       case "members": {
         if (isMergeId(p.chatId)) { const mg = this.merges.get(p.chatId); const all = await Promise.all((mg?.members ?? []).map((cid) => this.call("members", { chatId: cid }).then((l) => (l as any[]).map((c) => ({ ...c, chatId: cid })), () => []))); return all.flat(); }
         const [a, native] = this.resolve(p.chatId); const list = a.conn && !this.offlineKind(a) ? await a.conn.members(native) : []; return list.map((c) => { const n = this.aliasCache.get(`${a.info.id}:${c.id}`), pr = this.presence.get(`${a.info.id}:${c.id}`); const o = pr && c.online === undefined ? { ...c, online: pr.online, ...(pr.lastSeen ? { lastSeen: pr.lastSeen } : {}) } : c; return n ? { ...o, name: n } : o; }); }
@@ -508,6 +528,13 @@ export class Hub {
       case "markRead": this.clearUnreadMark(p.chatId); this.noteRead(p.chatId); if (isMergeId(p.chatId)) { const mg = this.merges.get(p.chatId); if (!mg) throw new Error("This merged chat no longer exists."); return this.markReadMerged(mg, p); }
         return this.optional(p.chatId, method, p);
       case "pins": return this.nameSenders(await this.pinsOf(p.chatId));
+      case "openThread": { // p: { chatId: the thread's global chat id (account id + Message.thread.id) }
+        const [a, native] = this.resolve(String(p.chatId)); const conn = this.need(a);
+        if (!conn.openThread) throw new Error(`${a.info.provider} threads cannot be opened here.`);
+        const c = await withTimeout(conn.openThread(native), 30_000, "The messenger");
+        const chat = { ...c, id: `${a.info.id}:${c.id}`, accountId: a.info.id, spaceId: c.spaceId && `${a.info.id}:${c.spaceId}` };
+        this.emit("chats-changed", { accountId: a.info.id, chatId: chat.id }); return chat;
+      }
       case "react": case "pin": case "edit": case "delete": case "setTyping": case "vote": case "editEvent": case "refreshChat":
       case "acceptRequest": case "declineRequest":
       case "leaveChat": case "addMembers": case "removeMember": case "renameChat": case "blockChat": case "setChatPicture": case "setChatDescription": case "setDisappearing":
@@ -515,7 +542,7 @@ export class Hub {
       case "meshCreate": return this.mesh.create(p.name, p.members);
       case "meshGroups": return this.mesh.list();
       case "syncAccount": { const [a] = this.resolveAccount(p.accountId); const c = this.need(a); if (!c.sync) throw new Error(`${a.info.provider} has nothing to sync`); await c.sync(); return; }
-      case "setChatFlags": { const prev = this.store.listChatFlags()[p.chatId]; this.store.setChatFlags(p.chatId, { pinned: !!p.pinned, muted: !!p.muted, archived: !!p.archived, unreadMark: !!p.unreadMark, ...(prev?.readUpTo && !p.unreadMark ? { readUpTo: prev.readUpTo } : {}) }); } this.emit("chats-changed", { chatId: p.chatId }); return;
+      case "setChatFlags": { const prev = this.store.listChatFlags()[p.chatId]; this.store.setChatFlags(p.chatId, { pinned: !!p.pinned, muted: !!p.muted, archived: !!p.archived, unreadMark: !!p.unreadMark, ...((p.starred === undefined ? prev?.starred : p.starred) ? { starred: true } : {}), ...(prev?.readUpTo && !p.unreadMark ? { readUpTo: prev.readUpTo } : {}) }); } this.emit("chats-changed", { chatId: p.chatId }); return;
       case "setAlias": this.store.setAlias(p.chatId, (p.name ?? "").trim() || null); this.reloadAliases(); this.emit("chats-changed", { chatId: p.chatId }); return;
       case "scheduleMessage": { // p: { chatId, text, at: epoch ms }. The schedule lives on THIS device; `clientId` makes a send through another device happen once.
         const at = Number(p.at) || Date.now();
@@ -523,7 +550,7 @@ export class Hub {
       }
       case "sendJobNow": return this.sendJobNow(String(p.id));
       case "discardJob": return this.scheduler.discard(String(p.id));
-      case "jobs": return this.store.listJobs(p?.status);
+      case "jobs": return this.store.listJobs(p?.status).map(jobForUi);
       case "cancelJob": return this.scheduler.cancel(p.id);
     }
     throw new Error(`unknown method ${method}`);
@@ -645,15 +672,17 @@ export class Hub {
   /** All spaces + chats. Live accounts are asked (and cached); signed-out or unreachable accounts come from the cache, read-only. */
   /** Newest archived message per chat (time + preview text), for chats whose provider gave no last-activity (imported history, backups). Entries live 5 min and are dropped when a message is stored. */
   private activity = new Map<string, { at: number; time?: string; preview?: string }>();
-  private archivedActivity(chatId: string): { time?: string; preview?: string } {
+  private archivedActivity(chatId: string): { time?: string; preview?: string; newest?: string } {
     const hit = this.activity.get(chatId);
     if (hit && Date.now() - hit.at < 300_000) return hit; // dropped when a message is stored here or by sync (indexMessage), and on reloadFromStore: building it costs 8 decrypts per chat per snapshot
-    let time: string | undefined, preview: string | undefined;
+    let time: string | undefined, preview: string | undefined, newest: string | undefined;
     try {
-      const m = this.store.listMessages(chatId, { limit: 8 }).reverse().find((x) => !x.system && !x.deleted);
+      let l = this.store.listMessages(chatId, { limit: 8 }).reverse(); newest = l[0]?.time;
+      if (l.length === 8 && !l.some((x) => !x.system && !x.deleted)) l = this.store.listMessages(chatId, { limit: 60 }).reverse(); // a run of notices: look a bit further back for the last real message
+      const m = l.find((x) => !x.system && !x.deleted);
       if (m) { time = m.time; preview = (m.text || "").replace(/\s+/g, " ").trim().slice(0, 120) || (m.attachments?.[0] ? ({ image: "📷 Photo", video: "🎬 Video", voice: "🎤 Voice message", audio: "🎵 Audio", sticker: "Sticker", gif: "GIF", file: "📎 File" } as Record<string, string>)[m.attachments[0].kind] ?? "📎 Attachment" : m.poll ? "📊 Poll" : m.location ? "📍 Location" : ""); }
     } catch { /* archive unreadable: no activity info */ }
-    const e = { at: Date.now(), time, preview }; this.activity.set(chatId, e); return e;
+    const e = { at: Date.now(), time, preview, newest }; this.activity.set(chatId, e); return e;
   }
   /** A DM titled by a bare id (e.g. the first 8 characters of a Signal account id, a bare phone number or a uuid) gets the sender name of the newest incoming message that has a real one. Derived from the local archive, so every synced device shows the same name. A name the user set (alias) still wins. */
   private peerNames = new Map<string, { at: number; name?: string }>();
@@ -701,8 +730,10 @@ export class Hub {
     const { spaces, chats } = await this.collect();
     for (const c of chats) if (c.kind === "dm" && Hub.idLike(c.name ?? "")) { const n = this.peerName(c.id); if (n) c.name = n; }
     for (const c of chats) { // fill missing activity from the archive (sorting + preview of chats the provider knows nothing about)
-      if (c.lastMessageAt && c.preview) continue;
       const a = this.archivedActivity(c.id);
+      // recency counts real messages only: when the archive is up to date with the network and its newest lines are notices ("safety number changed", "X joined"), the chat sorts by the last real message
+      if (c.lastMessageAt && a.newest && a.newest >= c.lastMessageAt && a.time && a.time < c.lastMessageAt) { c.lastMessageAt = a.time; if (a.preview) c.preview = a.preview; }
+      if (c.lastMessageAt && c.preview) continue;
       if (!c.lastMessageAt && a.time) c.lastMessageAt = a.time;
       if (!c.preview && a.preview && (!c.lastMessageAt || !a.time || a.time >= c.lastMessageAt)) c.preview = a.preview;
     }
@@ -710,7 +741,7 @@ export class Hub {
     this.ensureAutoMerges(chats);
     const alias = this.store.listAliases(), flags = this.store.listChatFlags();
     const spaceOut = spaces.map((s) => ({ ...s, ...(alias[s.id] ? { name: alias[s.id], originalName: s.name } : {}), ...(flags[s.id]?.muted ? { muted: true } : {}), ...(flags[s.id]?.archived ? { archived: true } : {}) }));
-    const chatOut = chats.map((c0) => { const c = this.withPresence(c0); return { ...c, ...(alias[c.id] ? { name: alias[c.id], originalName: c.name } : {}), ...(flags[c.id] ? { pinned: flags[c.id].pinned, archived: flags[c.id].archived, muted: flags[c.id].muted || c.muted } : {}), ...(flags[c.id]?.unreadMark ? { unreadMark: true, ...(c.unread ? {} : { unread: 1, unreadApprox: true }) } : {}) }; });
+    const chatOut = chats.map((c0) => { const c = this.withPresence(c0); return { ...c, ...(alias[c.id] ? { name: alias[c.id], originalName: c.name } : {}), ...(flags[c.id] ? { pinned: flags[c.id].pinned, archived: flags[c.id].archived, muted: flags[c.id].muted || c.muted, ...(flags[c.id].starred ? { starred: true } : {}) } : {}), ...(flags[c.id]?.unreadMark ? { unreadMark: true, ...(c.unread ? {} : { unread: 1, unreadApprox: true }) } : {}) }; });
     for (const c of chatOut) { // the persistent read mark (see noteRead): an unread count the provider keeps reporting although the user has read the chat
       const f = flags[c.id]; if (!f?.readUpTo || f.unreadMark || !c.unread) continue;
       if (c.lastMessageAt && c.lastMessageAt <= f.readUpTo) { c.unread = 0; delete c.unreadApprox; continue; }
@@ -895,6 +926,7 @@ export class Hub {
   /** The job handler of scheduled messages. Waiting (holder offline) is not a failure; too late or not allowed any more is final, with a plain sentence. */
   private async runScheduledSend(p: ScheduledSend, force = false) {
     const late = this.scheduleLateMs();
+    if (!force && p.due && p.queued && Date.now() - p.due > late) throw new JobAbort(`This message has waited since ${fmtDate(new Date(p.due).toISOString())} for the device that sends it, so it was not sent. Send it now or delete it.`, true);
     if (!force && p.due && Date.now() - p.due > late) throw new JobAbort(`This message was due on ${fmtDate(new Date(p.due).toISOString())} but could not be sent within ${Math.round(late / 3600_000)} hours, so it was not sent. Send it now or delete it.`, true);
     if (!MeshRelay.isMesh(p.chatId)) {
       let a: Acc | undefined; try { [a] = this.resolve(p.chatId); } catch { /* unknown chat: sendTo says so */ }
@@ -903,7 +935,7 @@ export class Hub {
       if (a && via && via.kind !== "relay") throw new JobAbort(`${via.device} doesn't allow sending as ${a.info.label}. Nothing was sent.`);
       if (a && !a.conn && !via) throw new JobAbort(`${a.info.label} is not connected on this device, and no other of your devices sends for it any more. Nothing was sent.`);
     }
-    try { await this.sendTo(p.chatId, { text: p.text, clientId: p.clientId }); }
+    try { await this.sendTo(p.chatId, p.extra ? outgoingOf({ ...p.extra, text: p.text, clientId: p.clientId }) : { text: p.text, clientId: p.clientId }); }
     catch (e: any) { if (e?.code === "unreachable") { const v = this.resolve(p.chatId)[0].info.via; throw new JobWaiting(`Waiting for ${v?.device ?? "the other device"} to come online`); } throw e; }
   }
   /** "Send now" on a message that was too late: the user decided, so the cutoff does not apply; it still uses its client id, so it is never sent twice. */
@@ -911,6 +943,22 @@ export class Hub {
     const j = this.store.getJob(id); if (!j || j.kind !== "send" || j.status !== "failed") throw new Error("That message is not waiting for a decision.");
     await this.runScheduledSend(j.payload as ScheduledSend, true).catch((e) => { throw e instanceof JobWaiting ? new Error(e.message) : e; });
     j.status = "done"; j.lastError = "sent"; this.store.putJob(j); this.emit("job", j); return true;
+  }
+  /**
+   * The device that holds this account is offline: keep the message (sealed in the job store, like a scheduled one) and send it when that
+   * device is back, instead of refusing it. Its clientId makes the later send happen once even if this attempt reached the device after all.
+   * Answers with a pending placeholder the UI shows until the real message arrives.
+   */
+  private queueSend(chatId: string, p: any, out: OutgoingMessage): Message {
+    const clientId = out.clientId ?? randomUUID().replace(/-/g, ""), now = Date.now();
+    const extra: ScheduledSend["extra"] = { replyToMessageId: out.replyToMessageId, location: out.location, contacts: out.contacts, poll: out.poll, event: out.event, mentions: out.mentions,
+      attachments: (p.attachments as any[] | undefined)?.map((a) => ({ ...a })) };
+    const job = this.scheduler.enqueue({ kind: "send", payload: { chatId, text: out.text, clientId, due: now, queued: true, waiting: true, extra } satisfies ScheduledSend & { waiting: boolean }, runAt: now + 30_000 });
+    const [a] = this.resolve(chatId);
+    job.lastError = `Waiting for ${a.info.via?.device ?? "the other device"} to come online`; this.store.putJob(job); this.emit("job", job); // said at once, not only after the first try
+    return { id: `pend-q-${job.id}`, chatId, accountId: a.info.id, sender: "You", senderId: "me", fromMe: true, status: "sending", time: new Date(now).toISOString(), text: out.text,
+      ...(out.location ? { location: out.location } : {}), ...(out.contacts ? { contacts: out.contacts } : {}),
+      ...(out.attachments?.length ? { attachments: out.attachments.map((x, i) => ({ id: "q" + i, kind: x.kind, mime: x.mime, name: x.name })) } : {}) } as Message;
   }
   private async sendTo(globalId: string, out: OutgoingMessage) {
     const [a, native] = this.resolve(globalId);
@@ -1292,6 +1340,26 @@ export class Hub {
     const v = { groups: groups.sort((x, y) => (y.lastMessageAt ?? "").localeCompare(x.lastMessageAt ?? "")), communities: spaces.filter((sp) => ids.has(sp.id)).map((sp) => ({ id: sp.id, name: sp.name, accountId: sp.accountId, provider: sp.provider, ...(sp.iconUrl ? { iconUrl: sp.iconUrl } : {}), ...(sp.avatarRev ? { avatarRev: sp.avatarRev } : {}) })) };
     this.commonCache.set(chatId, { at: Date.now(), v }); return v;
   }
+  /** The names the person of a direct chat goes by, per messenger (each chat of a merged chat): what the network reports (profile, username, community nicknames) plus the names their messages carried. */
+  private async aliases(chatId: string) {
+    const { chats, spaces } = await this.collect();
+    const dms = isMergeId(chatId) ? (this.merges.get(chatId)?.members ?? []) : [chatId];
+    const networks = await Promise.all(dms.map(async (dm) => {
+      const [a, native] = (() => { try { return this.resolve(dm); } catch { return [undefined, ""] as const; } })(); if (!a) return undefined;
+      const chat = chats.find((c) => c.id === dm), names: { name: string; kind?: string; where?: string }[] = [], seen = new Set<string>();
+      const add = (name: string | undefined, kind?: string, where?: string) => { const n = (name ?? "").trim(); const k = n.toLowerCase() + "|" + (where ?? ""); if (!n || seen.has(k)) return; seen.add(k); names.push({ name: n, ...(kind ? { kind } : {}), ...(where ? { where } : {}) }); };
+      if (a.conn?.aliases) {
+        try {
+          const got = await withTimeout(a.conn.aliases(native), 10_000, "The messenger");
+          for (const x of got) add(x.name, x.kind, x.space ? spaces.find((sp) => sp.id === `${a.info.id}:${x.space}`)?.name ?? "a community" : undefined);
+        } catch { /* what the archive knows then */ }
+      }
+      add(chat?.originalName ?? chat?.name, "profile");
+      try { for (const m of this.store.listMessages(dm, { limit: 300 })) if (!m.fromMe && !m.system && m.sender) add(m.sender, "seen"); } catch { /* none stored */ }
+      return { chatId: dm, provider: a.info.provider, account: a.info.label, names };
+    }));
+    return { networks: networks.filter((n) => !!n && n.names.length) };
+  }
   noteRead(chatId: string): void {
     if (isMergeId(chatId)) { for (const m of this.merges.get(chatId)?.members ?? []) this.noteRead(m); return; }
     try {
@@ -1303,7 +1371,7 @@ export class Hub {
   }
   /** Reading a chat (any way) drops a manual "mark as unread". */
   private clearUnreadMark(chatId: string) { const f = this.store.listChatFlags()[chatId]; if (f?.unreadMark) { this.store.setChatFlags(chatId, { ...f, unreadMark: false }); this.emit("chats-changed", { chatId }); } }
-  private withMerges(chats: Chat[], alias: Record<string, string>, flags: Record<string, { pinned?: boolean; muted?: boolean; archived?: boolean; unreadMark?: boolean }>): Chat[] {
+  private withMerges(chats: Chat[], alias: Record<string, string>, flags: Record<string, { pinned?: boolean; muted?: boolean; archived?: boolean; unreadMark?: boolean; starred?: boolean }>): Chat[] {
     if (!this.merges.size) return chats;
     const byId = new Map(chats.map((c) => [c.id, c]));
     const rows: Chat[] = [];
@@ -1319,7 +1387,7 @@ export class Hub {
       rows.push({
         id: mg.id, accountId: "", provider: "merged", kind: "dm", name: alias[mg.id] ?? def, ...(alias[mg.id] ? { originalName: def } : {}),
         avatarUrl: primary.avatarUrl, ...(unread ? { unread } : {}), ...(unread && (!have.some((c) => c.unread) || have.some((c) => c.unread && c.unreadApprox)) ? { unreadApprox: true } : {}), lastMessageAt: newest.lastMessageAt, preview: newest.preview,
-        ...(f ? { pinned: f.pinned, muted: f.muted, archived: f.archived, ...(f.unreadMark ? { unreadMark: true } : {}) } : {}),
+        ...(f ? { pinned: f.pinned, muted: f.muted, archived: f.archived, ...(f.unreadMark ? { unreadMark: true } : {}), ...(f.starred ? { starred: true } : {}) } : {}),
         ...(off ? { offline: off, readOnly: true } : {}),
         mergeMembers: ordered.map((c) => c.id), ...(mg.sendVia && mg.members.includes(mg.sendVia) ? { mergeSendVia: mg.sendVia } : {}), mergeLastVia: this.lastVia(mg) ?? newest.id,
       });

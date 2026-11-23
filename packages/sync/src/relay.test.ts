@@ -133,7 +133,7 @@ test("the per-account switch on the holder allows every paired device without a 
   await stop(A, B, C);
 });
 
-test("holder offline: archive only, sending refused (nothing queued, nothing replayed); when it returns the relay resumes by itself", async () => {
+test("holder offline: archive only, a send is queued (pending, sealed) and goes ONCE when the holder returns; the relay resumes by itself", async () => {
   const { n: A, w } = await holder("Laptop"); const { n: B } = await mirror("Phone");
   await pairUp(A, B); await hasMirror(B); await allow(A, B);
   await until(async () => (await acct(B))?.state === "connected", "online", 15_000);
@@ -141,13 +141,21 @@ test("holder offline: archive only, sending refused (nothing queued, nothing rep
   await A.call("syncPause");
   await until(async () => (await acct(B))?.via?.kind === "offline" && (await acct(B))?.state === "disconnected", "archive only", 15_000);
   assert.equal((await acct(B)).via.device, "Laptop");
-  await assert.rejects(B.call("send", { chatId: CHAT, text: "during" }), /Laptop is offline/);
+  const q = await B.call("send", { chatId: CHAT, text: "during", replyToMessageId: "h1", attachments: [{ kind: "image", mime: "image/png", name: "p.png", dataBase64: "AQID" }] });
+  assert.match(q.id, /^pend-q-/); assert.equal(q.status, "sending"); assert.equal(q.text, "during"); assert.equal(q.attachments?.length, 1);
+  const waiting = (await B.call("jobs", { status: "pending" })).filter((j: any) => j.payload.queued);
+  assert.equal(waiting.length, 1); assert.ok(waiting[0].payload.waiting); assert.equal(waiting[0].payload.extra.replyToMessageId, "h1");
+  assert.equal(waiting[0].payload.extra.attachments[0].dataBase64, undefined, "the UI listing names the file, it does not carry it");
   assert.ok((await B.call("history", { chatId: CHAT, limit: 20 })).length >= 0, "archive still readable");
+  const real: any[] = []; B.hub.subscribe((ev: string, d: any) => { if (ev === "message" && d.text === "during" && !String(d.id).startsWith("pend-")) real.push(d); });
   await A.call("syncResume");
   await until(async () => (await acct(B))?.state === "connected" && (await acct(B))?.via?.kind === "relay", "back by itself", 20_000);
+  await until(() => w.sent.includes("during"), "the queued message went out", 25_000);
+  await until(() => real.length > 0, "the real message reached the UI (it replaces the pending one)", 10_000);
   await new Promise((r) => setTimeout(r, 600));
-  assert.deepEqual(w.sent, ["before"], "the refused message was not queued or replayed");
-  await B.call("send", { chatId: CHAT, text: "after" }); assert.deepEqual(w.sent, ["before", "after"]);
+  assert.deepEqual(w.sent, ["before", "during"], "once");
+  assert.equal((await B.call("jobs", { status: "pending" })).filter((j: any) => j.payload.queued).length, 0);
+  await B.call("send", { chatId: CHAT, text: "after" }); assert.deepEqual(w.sent, ["before", "during", "after"]);
   // and it also survives a restart of the phone's side bookkeeping: the choice is remembered
   assert.equal((await st(B)).proxy.using.length, 1);
   await stop(A, B);
@@ -254,7 +262,7 @@ async function relayed() {
 
 test("lost answer: the retry (same client id) returns the ORIGINAL message and the service is asked once", async () => {
   const { A, w, B } = await relayed(); const lose = loseNextAnswer(B);
-  lose(); await assert.rejects(B.call("send", { chatId: CHAT, text: "once", clientId: CID(1) }), /offline|unreachable/);
+  lose(); assert.match((await B.call("send", { chatId: CHAT, text: "once", clientId: CID(1) })).id, /^pend-q-/, "no answer: kept pending (queued), not failed");
   assert.deepEqual(w.sent, ["once"], "the holder did send it");
   const r = await B.call("send", { chatId: CHAT, text: "once", clientId: CID(1) });
   assert.deepEqual(w.sent, ["once"], "and the retry did not send it again"); assert.ok(A.store.getMessage(CHAT, r.id), "it is the message the holder archived");
@@ -290,12 +298,12 @@ test("a failed write is not remembered: the retry runs again; other writes (reac
 
 test("holder restart: a retried send is answered from the persisted reference (no text stored), an unknown in-flight one says so", async () => {
   const { A, w, B } = await relayed(); const lose = loseNextAnswer(B);
-  lose(); await assert.rejects(B.call("send", { chatId: CHAT, text: "secret words", clientId: CID(5) }), /offline|unreachable/); assert.deepEqual(w.sent, ["secret words"]);
+  lose(); assert.match((await B.call("send", { chatId: CHAT, text: "secret words", clientId: CID(5) })).id, /^pend-q-/); assert.deepEqual(w.sent, ["secret words"]);
   const kv = JSON.stringify((A.svc as any).ledger.kvGet("relaySent")); assert.ok(kv.includes(CID(5)) && !kv.includes("secret words"), "only the reference is stored, never the text");
   const dir = A.dir, key = A.key, A2w = mk(), idA = id(A); await A.stop();
   const A2 = await node("Laptop", "sqlite", dir, undefined, key, { factories: [A2w.f] });
   await until(async () => (await st(B)).devices.find((d: any) => d.id === idA)?.online === true && (await acct(B))?.state === "connected" && (await acct(B))?.via?.kind === "relay", "B talks to the restarted holder", 25_000);
-  let r: any; for (let i = 0; i < 20 && !r; i++) { try { r = await B.call("send", { chatId: CHAT, text: "secret words", clientId: CID(5) }); } catch (e: any) { if (!/offline/.test(e.message)) throw e; await new Promise((x) => setTimeout(x, 400)); } } // (sessions may still be settling: retrying is exactly what the id is for)
+  let r: any; for (let i = 0; i < 20 && !r; i++) { try { r = await B.call("send", { chatId: CHAT, text: "secret words", clientId: CID(5) }); if (String(r.id).startsWith("pend-q-")) { r = undefined; await new Promise((x) => setTimeout(x, 400)); } } catch (e: any) { if (!/offline/.test(e.message)) throw e; await new Promise((x) => setTimeout(x, 400)); } } // (sessions may still be settling: retrying is exactly what the id is for)
   assert.deepEqual(A2w.w.sent, [], "the restarted holder did not send it again"); assert.ok(r.id && r.chatId === CHAT);
   // a send that was in flight when it died: the holder cannot know
   (A2.svc as any).proxies.setRef(id(B), CID(6), { at: Date.now(), chatId: "" });

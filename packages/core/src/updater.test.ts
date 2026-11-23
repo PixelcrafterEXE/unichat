@@ -67,6 +67,9 @@ test("versions: numeric compare, v prefix, dev", () => {
   assert.deepEqual(parseVersion("v0.1.37"), [0, 1, 37]); assert.equal(parseVersion("dev"), undefined);
   assert.ok(compareVersions("0.1.10", "0.1.9") > 0); assert.ok(compareVersions("0.1.9", "0.1.10") < 0); assert.equal(compareVersions("0.1.9", "v0.1.9"), 0);
   assert.ok(compareVersions("dev", "0.0.1") < 0); assert.ok(compareVersions("0.2.0", "0.1.99") > 0);
+  // a local build previews the next release: below it, above the one before
+  assert.ok(compareVersions("0.1.17", "0.1.17-dev.202611231530") > 0); assert.ok(compareVersions("0.1.16", "0.1.17-dev.202611231530") < 0);
+  assert.ok(compareVersions("0.1.18", "0.1.17-dev.202611231530") > 0); assert.equal(compareVersions("0.1.17+build.3", "0.1.17"), 0);
 });
 
 test("manifest parsing: valid, junk assets dropped, path-like names refused", () => {
@@ -101,6 +104,13 @@ test("prerelease filter and drafts; releases without manifest are ignored", asyn
 test("dev build: shows the latest version but never offers an install", async () => {
   const r = await rig([release(7)], { version: "dev" });
   try { const s = await r.u.check({ manual: true }); assert.equal(s.dev, true); assert.equal(s.available, false); assert.equal(s.latest?.version, "0.1.7"); await assert.rejects(r.u.download()); } finally { r.done(); }
+});
+
+test("local build (0.1.<next>-dev.<stamp>): updates to that release and newer ones, not to older ones", async () => {
+  const r = await rig([release(7)], { version: "0.1.7-dev.202611231530" });
+  try { const s = await r.u.check({ manual: true }); assert.equal(s.dev, false); assert.equal(s.available, true); assert.equal(s.state, "available"); assert.equal(s.latest?.version, "0.1.7"); } finally { r.done(); }
+  const o = await rig([release(6)], { version: "0.1.7-dev.202611231530" });
+  try { const s = await o.u.check({ manual: true }); assert.equal(s.available, false); assert.equal(s.state, "idle"); } finally { o.done(); }
 });
 
 test("private repo: token header on the API, NOT forwarded to the CDN redirect; anonymous fails clearly", async () => {

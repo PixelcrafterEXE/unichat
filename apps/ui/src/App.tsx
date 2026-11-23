@@ -254,11 +254,11 @@ export default function App() {
       if (ev === "message") {
         setMsgs((m) => (m[k] ? { ...m, [k]: upsert(m[k], d) } : m));
         // History syncs / backfills arrive as messages too: they are neither new (no unread bump) nor notification-worthy.
-        const stale = !!d.historical || Date.now() - Date.parse(d.time) > 2 * 60_000;
+        const stale = !!d.historical || Date.now() - Date.parse(d.time) > 2 * 60_000; // network notices ("safety number changed") neither move the chat up nor count as unread (d.system)
         if (!d.fromMe) setTyping((t) => ((t[k] ?? []).includes(d.senderId) ? { ...t, [k]: t[k].filter((x) => x !== d.senderId) } : t));
         const open = openRef.current === k && document.hasFocus();
-        setChats((cs) => cs.map((c) => (c.id === d.chatId || c.id === d.mergeId ? { ...c, ...(stale ? {} : { preview: d.text || c.preview, lastMessageAt: d.time, unread: d.fromMe || open ? c.unread : (c.unread ?? 0) + 1 }) } : c)));
-        if (!d.fromMe && !open && !stale && listReadyRef.current && chatsRef.current.some((c) => c.id === k || c.id === d.chatId) && settingsRef.current.notifications && !mutedRef.current.has(k) && "Notification" in window && Notification.permission === "granted")
+        setChats((cs) => cs.map((c) => (c.id === d.chatId || c.id === d.mergeId ? { ...c, ...(stale || d.system ? {} : { preview: d.text || c.preview, lastMessageAt: d.time, unread: d.fromMe || open ? c.unread : (c.unread ?? 0) + 1 }) } : c)));
+        if (!d.fromMe && !open && !stale && listReadyRef.current && chatsRef.current.some((c) => c.id === k || c.id === d.chatId) && settingsRef.current.notifications && !mutedRef.current.has(k) && (settingsRef.current.notifyScope !== "starred" || chatsRef.current.some((c) => (c.id === k || c.id === d.chatId) && c.starred)) && "Notification" in window && Notification.permission === "granted")
           { const mode = settingsRef.current.notifyContent; const title = mode === "hidden" ? "UniChat" : (d.mergeId && chatsRef.current.find((c) => c.id === d.mergeId)?.name) || d.sender || "New message";
             // The chat's avatar is the notification icon (not in "hidden" mode, and the app icon stays when there is none or it is slow to load).
             void notificationIcon(d.mergeId ?? d.chatId, mode).then((icon) => {
@@ -428,9 +428,9 @@ export default function App() {
     if (chatId && matchMedia("(max-width: 720px)").matches) { setChatId(undefined); setNavOpen(true); return true; }
     return false;
   };
-  const setFlag = (id: string, patch: Partial<Pick<Chat, "pinned" | "muted" | "archived" | "unreadMark">>) => {
+  const setFlag = (id: string, patch: Partial<Pick<Chat, "pinned" | "muted" | "archived" | "unreadMark" | "starred">>) => {
     const c: Partial<Chat> | undefined = chats.find((x) => x.id === id) ?? spaces.find((x) => x.id === id); if (!c) return;
-    const next = { pinned: !!c.pinned, muted: !!c.muted, archived: !!c.archived, unreadMark: !!c.unreadMark, ...patch };
+    const next = { pinned: !!c.pinned, muted: !!c.muted, archived: !!c.archived, unreadMark: !!c.unreadMark, starred: !!c.starred, ...patch };
     setChats((cs) => cs.map((x) => (x.id === id ? { ...x, ...next } : x))); // optimistic
     setSpaces((ss) => ss.map((x) => (x.id === id ? { ...x, muted: next.muted, archived: next.archived } : x)));
     core.call("setChatFlags", { chatId: id, ...next }).catch((e) => { setError(e.message); refresh(); });
@@ -675,7 +675,7 @@ export default function App() {
     dragOver: (e: React.DragEvent, c: Chat) => { if (!filter && e.dataTransfer.types.includes(CHAT_DRAG) && (c.categoryId || !c.category)) e.preventDefault(); },
     drop: (e: React.DragEvent, c: Chat) => { const raw = e.dataTransfer.getData(CHAT_DRAG); if (!filter && raw && (c.categoryId || !c.category)) { e.preventDefault(); e.stopPropagation(); dropChatsOnCat(raw, c.categoryId ?? "none"); } },
     closeMenu: () => setMenuFor(null),
-    togglePin: (c: Chat) => togglePin(c.id), toggleMute: (c: Chat) => toggleMute(c.id), markRead: (c: Chat) => mr.markChat(c), markUnread: (c: Chat) => setFlag(c.id, { unreadMark: true }), archive: (c: Chat) => setFlag(c.id, { archived: !c.archived }),
+    togglePin: (c: Chat) => togglePin(c.id), toggleStar: (c: Chat) => setFlag(c.id, { starred: !c.starred }), toggleMute: (c: Chat) => toggleMute(c.id), markRead: (c: Chat) => mr.markChat(c), markUnread: (c: Chat) => setFlag(c.id, { unreadMark: true }), archive: (c: Chat) => setFlag(c.id, { archived: !c.archived }),
     rename: (c: Chat) => setRenaming(c), move: (c: Chat) => setMoving(c), category: (c: Chat) => setCatPick([c]), merge: (c: Chat) => setMerging(c), unmerge: (c: Chat) => unmerge(c),
   } satisfies RowApi);
   type Item = { k: "row"; c: Chat } | { k: "head"; g: CatGroup } | { k: "empty"; id: string };
@@ -712,6 +712,7 @@ export default function App() {
   return (
     <div className={"app" + (panel && chat ? " withinfo" : "") + (chat && !navOpen ? " inchat" : "")}>
       <nav className="rail">
+        <div className="railscroll">
         <Pill id="home" drop={dropOver === "home"} onDropChat={(raw) => moveMany(dragChats(raw), "personal")} setOver={setDropOver}
           onContext={(e) => setRailMenu({ x: e.clientX, y: e.clientY, space: "home" })} cls={emptyViews.has(HOME) ? "nomatch" : undefined} active={space === HOME} title="Personal chats" badge={unreadIn(HOME)} badgeDot={dotIn(HOME)} onClick={() => pick(HOME)}><ChatIcon /></Pill>
         <div className="sep" />
@@ -731,7 +732,7 @@ export default function App() {
         <div className="sep" />
         <Pill title="New folder" cls="add" onClick={() => setFolderEdit({})}><FolderPlus size={21} /></Pill>
         <Pill title="Add a community or account" cls="add" onClick={() => setDialog("addmenu")}><Plus size={22} /></Pill>
-        <div className="grow" />
+        </div>
         <div className="railbottom">
           {(archivedSpaces.length > 0 || archivedChatTotal > 0) && <Pill onContext={(e) => setArchiveMenu({ x: e.clientX, y: e.clientY })} title={(showArchived ? "Hide archived chats and communities" : `Show archived (${archivedSpaces.length + archivedChatTotal})`) + (archivedUnread ? ` · ${archivedUnread} unread` : "")} badge={archivedUnread} cls={"gear" + (showArchived ? " archiveon" : "")} active={showArchived} onClick={() => setShowArchived(!showArchived)}><Archive size={20} /></Pill>}
           <Pill title="Settings" cls="gear" onClick={() => setSettingsOpen(true)}><Gear /></Pill>

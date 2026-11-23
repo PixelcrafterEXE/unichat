@@ -2,7 +2,7 @@
 // (Android/nodejs-mobile runs an older Node and will need a different driver.)
 //
 // Encryption at rest: when a 32-byte key is supplied, every payload column that can reveal content or
-// contacts (messages, chat lists, aliases, mesh groups, account labels) is sealed with AES-256-GCM.
+// contacts (messages, chat lists, aliases, mesh groups, account labels, scheduled/queued messages) is sealed with AES-256-GCM.
 // NOT encrypted: ids, message timestamps and account/provider names (needed for ordering, paging and retention),
 // so someone with the file alone can still see roughly WHEN conversations happened, not WHAT was said or with whom.
 import { chmodSync } from "node:fs";
@@ -68,6 +68,7 @@ export class SqliteStore implements Store {
     // migration: avatars gained tombstones (tomb) for deletions that sync carries
     if (!(this.db.prepare("PRAGMA table_info(avatars)").all() as unknown as { name: string }[]).some((c) => c.name === "tomb")) this.db.exec("ALTER TABLE avatars ADD COLUMN tomb INTEGER NOT NULL DEFAULT 0");
     if (!(this.db.prepare("PRAGMA table_info(chat_flags)").all() as unknown as { name: string }[]).some((c) => c.name === "unread_mark")) this.db.exec("ALTER TABLE chat_flags ADD COLUMN unread_mark INTEGER NOT NULL DEFAULT 0");
+    if (!(this.db.prepare("PRAGMA table_info(chat_flags)").all() as unknown as { name: string }[]).some((c) => c.name === "starred")) this.db.exec("ALTER TABLE chat_flags ADD COLUMN starred INTEGER NOT NULL DEFAULT 0"); // migration: starred (prioritized) chats
     if (!(this.db.prepare("PRAGMA table_info(chat_flags)").all() as unknown as { name: string }[]).some((c) => c.name === "read_up_to")) this.db.exec("ALTER TABLE chat_flags ADD COLUMN read_up_to TEXT NOT NULL DEFAULT ''"); // migration: the persistent read mark
   }
   /** False when sealed rows exist that the supplied key cannot open (the database was sealed with a different key). Reads only; changes nothing. */
@@ -180,12 +181,12 @@ export class SqliteStore implements Store {
   }
   listChatFlags() {
     const out: Record<string, ChatFlags> = {};
-    for (const r of this.db.prepare("SELECT * FROM chat_flags").all() as unknown as { chat_id: string; pinned: number; muted: number; archived: number; unread_mark: number; read_up_to?: string }[])
-      out[r.chat_id] = { pinned: !!r.pinned, muted: !!r.muted, archived: !!r.archived, ...(r.unread_mark ? { unreadMark: true } : {}), ...(r.read_up_to ? { readUpTo: r.read_up_to } : {}) };
+    for (const r of this.db.prepare("SELECT * FROM chat_flags").all() as unknown as { chat_id: string; pinned: number; muted: number; archived: number; unread_mark: number; read_up_to?: string; starred?: number }[])
+      out[r.chat_id] = { pinned: !!r.pinned, muted: !!r.muted, archived: !!r.archived, ...(r.unread_mark ? { unreadMark: true } : {}), ...(r.starred ? { starred: true } : {}), ...(r.read_up_to ? { readUpTo: r.read_up_to } : {}) };
     return out;
   }
   setChatFlags(chatId: string, f: ChatFlags) {
-    if (f.pinned || f.muted || f.archived || f.unreadMark || f.readUpTo) this.db.prepare("INSERT OR REPLACE INTO chat_flags VALUES (?,?,?,?,?,?)").run(chatId, f.pinned ? 1 : 0, f.muted ? 1 : 0, f.archived ? 1 : 0, f.unreadMark ? 1 : 0, f.readUpTo ?? "");
+    if (f.pinned || f.muted || f.archived || f.unreadMark || f.starred || f.readUpTo) this.db.prepare("INSERT OR REPLACE INTO chat_flags (chat_id, pinned, muted, archived, unread_mark, read_up_to, starred) VALUES (?,?,?,?,?,?,?)").run(chatId, f.pinned ? 1 : 0, f.muted ? 1 : 0, f.archived ? 1 : 0, f.unreadMark ? 1 : 0, f.readUpTo ?? "", f.starred ? 1 : 0);
     else this.db.prepare("DELETE FROM chat_flags WHERE chat_id=?").run(chatId);
   }
   // ---- local folders (names are user text => sealed) and per-chat folder overrides ----
@@ -283,10 +284,11 @@ export class SqliteStore implements Store {
   // ---- jobs ----
   putJob(j: Job) {
     this.db.prepare("INSERT OR REPLACE INTO jobs VALUES (?,?,?,?,?,?,?,?)")
-      .run(j.id, j.kind, JSON.stringify(j.payload), j.runAt, j.attempts, j.maxAttempts, j.status, j.lastError ?? null);
+      .run(j.id, j.kind, this.v.enc(JSON.stringify(j.payload)), j.runAt, j.attempts, j.maxAttempts, j.status, j.lastError ?? null);
   }
-  getJob(id: string) { const r = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(id) as any; return r ? toJob(r) : undefined; }
-  dueJobs(now: number) { return this.db.prepare("SELECT * FROM jobs WHERE status='pending' AND run_at<=? ORDER BY run_at").all(now).map(toJob); }
+  private toJob(r: any) { return toJob(r, this.v); }
+  getJob(id: string) { const r = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(id) as any; return r ? this.toJob(r) : undefined; }
+  dueJobs(now: number) { return this.db.prepare("SELECT * FROM jobs WHERE status='pending' AND run_at<=? ORDER BY run_at").all(now).map((r) => this.toJob(r)); }
   nextRunAt() { return (this.db.prepare("SELECT MIN(run_at) AS t FROM jobs WHERE status='pending'").get() as { t: number | null }).t ?? undefined; }
   // ---- backup / migration: decrypted records, streamed ----
   *exportRecords(): Generator<StateRecord> {
@@ -315,11 +317,11 @@ export class SqliteStore implements Store {
   listJobs(status?: Job["status"]) {
     const q = status ? this.db.prepare("SELECT * FROM jobs WHERE status=? ORDER BY run_at").all(status)
                       : this.db.prepare("SELECT * FROM jobs ORDER BY run_at").all();
-    return q.map(toJob);
+    return q.map((r) => this.toJob(r));
   }
 }
 
-function toJob(r: any): Job {
-  return { id: r.id, kind: r.kind, payload: JSON.parse(r.payload), runAt: r.run_at, attempts: r.attempts,
+function toJob(r: any, v: Vault): Job {
+  return { id: r.id, kind: r.kind, payload: JSON.parse(v.dec(r.payload)), runAt: r.run_at, attempts: r.attempts,
     maxAttempts: r.max_attempts, status: r.status, lastError: r.last_error ?? undefined };
 }

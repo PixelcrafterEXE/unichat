@@ -135,6 +135,9 @@ export function joinMessage(a: MsgRec, b: MsgRec): MsgRec {
   const out: Message = base;
   const status = [a.m.status, b.m.status].filter(Boolean).sort((x, y) => (RANK[y!] ?? 0) - (RANK[x!] ?? 0) || String(x).localeCompare(String(y)))[0];
   if (status) out.status = status;
+  // what kind of line it is (a network notice, not a chat message) never changes: either copy that knows it keeps it
+  const system = a.m.system ?? b.m.system;
+  if (system) out.system = system;
   const x = rxJoin(rxOf(a), rxOf(b)), deleted = !!(a.m.deleted || b.m.deleted);
   if (deleted) { out.deleted = true; out.reactions = []; }
   else if (a.m.reactions || b.m.reactions || Object.keys(x).length) out.reactions = rxToReactions(x);
@@ -144,7 +147,7 @@ export function joinMessage(a: MsgRec, b: MsgRec): MsgRec {
   return { m: out, c: win.c, r: rxMaxStamp(x, a.r >= b.r ? a.r : b.r), x, ...(p ? { p } : {}) };
 }
 /** Comparable fingerprint of what a replica holds for a message (used to detect "nothing changed"). */
-export const recSig = (x: MsgRec) => canon([x.m.id, x.m.chatId, contentOf(x.m), x.m.status ?? null, !!x.m.deleted, x.m.deleted ? [] : rxOf(x), x.c, x.r, pinSig(x.m), x.p ?? ""]);
+export const recSig = (x: MsgRec) => canon([x.m.id, x.m.chatId, contentOf(x.m), x.m.system ?? null, x.m.status ?? null, !!x.m.deleted, x.m.deleted ? [] : rxOf(x), x.c, x.r, pinSig(x.m), x.p ?? ""]);
 /** Message with exactly the fields of `next`: patchMessage merges, so fields that disappeared must be sent as explicit undefined. */
 export function fullPatch(prev: Message, next: Message): Partial<Message> {
   const p: Record<string, unknown> = { ...next };

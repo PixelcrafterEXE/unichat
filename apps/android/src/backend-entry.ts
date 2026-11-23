@@ -129,7 +129,10 @@ async function handle(line: string) {
   if (typeof req.id !== "number" || typeof req.method !== "string") return;
   const t0 = Date.now(); res.pending++;
   try {
-    const result = req.method.startsWith("$") ? await control(req.method, req.params) : await up.then(() => hub.call(req.method, req.params ?? {}));
+    // The archive read of a chat (history with local: true) needs only the database, not the messengers: it answers at once even while
+    // accounts and sync are still starting, so an opened chat shows what is saved instead of "Asking your phone…" until start-up is through.
+    const archiveOnly = !initDone && req.method === "history" && (req.params as any)?.local === true;
+    const result = req.method.startsWith("$") ? await control(req.method, req.params) : archiveOnly ? await hub.call(req.method, req.params ?? {}) : await up.then(() => hub.call(req.method, req.params ?? {}));
     send({ id: req.id, result: result === undefined ? null : result });
   } catch (e: any) { send({ id: req.id, error: String(e?.message ?? e) }); }
   finally { res.pending--; const ms = Date.now() - t0; if (ms > 300 || req.method === "snapshot" || req.method === "$ping") plog("call", { method: req.method, ms, pending: res.pending }); }

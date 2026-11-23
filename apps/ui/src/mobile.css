@@ -50,7 +50,7 @@
   .app.inchat, .app.inchat.withinfo { grid-template-columns: minmax(0, 1fr); } /* a chat gets the whole width; the rail comes back with the chat list */
   .app.inchat .rail { display: none; }
   .rail .railbottom { padding-bottom: 6px; } /* the pinned icons sit at the very bottom edge of the screen (no safe-area gap below them); the rail is narrow and centred, so rounded corners do not clip them */
-  .rail { padding-top: calc(12px + env(safe-area-inset-top)); padding-bottom: 0; gap: 10px; }
+  .rail .railscroll { padding-top: calc(12px + env(safe-area-inset-top)); gap: 10px; }
   .pill { width: 48px; height: 48px; flex: none; }
   .chats > header, main > header, aside.info > header, .gsearch .gh { height: calc(52px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); }
   .chats { padding-right: env(safe-area-inset-right); }

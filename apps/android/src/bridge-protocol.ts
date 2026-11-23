@@ -8,6 +8,7 @@
 //                    {"event":"message","data":{...}}                 a Hub event (forwarded to the UI as is)
 //                    {"ctl":"ready","protocol":1,"node":"v18...","sqlite":"sqljs"}   the backend is up (never forwarded to the UI)
 //                    {"ctl":"notify","chatId","messageId","title","body","avatar"?}  show a local notification (only sent while the UI is in the background);
+//                                                                      starred = a starred (prioritized) chat: posted on the "Starred chats" channel
 //                                                                      avatar = optional base64 PNG/JPEG/WebP (<= ~64 KB) of the chat, shown as the large icon; never sent when notifyContent is "hidden"
 //                    {"ctl":"notify-clear","chatIds":[...]}           take those chats' notifications down again: they have been read (in the app, by the
 //                                                                      "Mark as read" action, or on another device). An empty list clears every message notification.
@@ -64,7 +65,7 @@ export type Frame =
   | { id: number; result?: unknown; error?: string }
   | { event: string; data: unknown }
   | { ctl: "ready"; protocol: number; node: string; sqlite: string }
-  | { ctl: "notify"; chatId: string; messageId: string; title: string; body: string; avatar?: string }
+  | { ctl: "notify"; chatId: string; messageId: string; title: string; body: string; avatar?: string; starred?: boolean }
   | { ctl: "notify-clear"; chatIds: string[] }
   | { ctl: "state"; accounts: number; sync?: boolean };
 

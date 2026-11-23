@@ -159,7 +159,7 @@ test("history paging oldest->newest, rich mapping: mentions, emoji, replies, att
     const t = (re: RegExp) => all.find((m: any) => re.test(m.text));
     const men = t(/^hi /);
     assert.equal(men.text, "hi @Me Myself and @bob @Moderators in #side-talk :party: :dance: **bold** 2023-11-14 22:13 UTC");
-    assert.equal(men.sender, "Alice Wonder", "global name when no member object is present");
+    assert.equal(men.sender, "Ally", "the server nickname, looked up when no member object is present");
     const rep = t(/^a reply/); assert.equal(rep.replyTo.messageId, m1.id); assert.equal(rep.replyTo.sender, "bob"); assert.equal(rep.replyTo.textPreview, "base message");
     const files = t(/^with files/);
     assert.deepEqual(files.attachments.map((a: any) => [a.kind, a.mime, a.name]), [["image", "image/png", "cat.png"], ["voice", "audio/ogg", "voice-message.ogg"], ["file", "application/pdf", "doc.pdf"]]);
@@ -175,7 +175,7 @@ test("history paging oldest->newest, rich mapping: mentions, emoji, replies, att
     const poll = all.find((m: any) => m.poll); assert.equal(poll.poll.question, "Lunch?"); assert.equal(poll.poll.multiple, true); assert.deepEqual(poll.poll.mine, ["1"]);
     assert.deepEqual(poll.poll.options.map((o: any) => [o.text, o.voters.length]), [["Pizza", 1], ["🍲 Soup", 0]]); assert.ok(poll.poll.options[0].voters.includes(ME));
     assert.deepEqual(poll.poll.options.map((o: any) => o.count), [3, 1], "exact counts, no fake voters");
-    const sys = all.filter((m: any) => m.system); assert.deepEqual(sys.map((m: any) => m.text), ["Alice Wonder joined the server", "Alice Wonder pinned a message", "bob started a call"]);
+    const sys = all.filter((m: any) => m.system); assert.deepEqual(sys.map((m: any) => m.text), ["Ally joined the server", "Ally pinned a message", "bob started a call"]);
     assert.ok(sys.every((m: any) => m.system.kind === "info" && !m.fromMe));
     const rx = t(/^reacted/); assert.deepEqual(rx.reactions.map((r: any) => [r.emoji, r.senderIds.length, !!r.mine]), [["👍", 1, true], [":party:", 0, false]]); assert.ok(rx.reactions[0].senderIds.includes(ME));
     assert.deepEqual(rx.reactions.map((r: any) => r.count), [3, 1]); assert.ok(!JSON.stringify(rx.reactions).includes("anon"));
@@ -305,7 +305,7 @@ test("sending: text, reply, attachments (multipart), poll, custom emoji + @usern
     assert.equal(body.content, `hello <:party:555000000000001> <@${ALICE}> and @nobody and :notanemoji: @everyone`);
     assert.deepEqual(body.allowed_mentions, { parse: ["users"], replied_user: true }, "@everyone / roles never ping");
     await new Promise((r) => setTimeout(r, 150)); assert.ok(!s.of("message").some((x: any) => x.id === m.id), "own echo is not re-emitted");
-    assert.equal((await s.conn.chats()).find((c: any) => c.id === C.general).preview, "hello :party: @Alice Wonder and @nobody and :notanemoji: @everyone");
+    assert.equal((await s.conn.chats()).find((c: any) => c.id === C.general).preview, "hello :party: @Ally and @nobody and :notanemoji: @everyone");
     const hist = await s.conn.history(C.general, { limit: 5 }); assert.equal(hist.at(-1).id, m.id);
     const r = await s.conn.send(C.general, { text: "re", replyToMessageId: m.id });
     assert.deepEqual(F.reqs(/POST \/channels\/\d+\/messages$/).pop()!.body.message_reference, { message_id: m.id, fail_if_not_exists: false });
@@ -520,7 +520,7 @@ test("user mode: human-like pacing (>= pace, jittered, never parallel); 429 back
     F.stamps.length = 0; F.maxInflight = 0;
     await Promise.all([s.conn.history(C.dm, { limit: 1 }), s.conn.history(C.general, { limit: 1 }), s.conn.history(C.gdm, { limit: 1 }), s.conn.history(C.thread, { limit: 1 })]);
     assert.equal(F.maxInflight, 1);
-    const gaps = F.stamps.slice(1).map((t, i) => t - F.stamps[i]); assert.equal(gaps.length, 3);
+    const gaps = F.stamps.slice(1).map((t, i) => t - F.stamps[i]); assert.ok(gaps.length >= 3); // + the server nickname lookups
     for (const g of gaps) assert.ok(g >= 75, `gap ${g}ms >= pace`);
     assert.ok(new Set(gaps).size > 1 || gaps.some((g) => g > 85), "jitter present");
     // 429 with Retry-After: waited out, retried once

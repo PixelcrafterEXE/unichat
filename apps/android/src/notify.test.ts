@@ -67,3 +67,14 @@ test("PostedNotifications: no snapshot, no chats, nothing posted -> nothing to c
   assert.deepEqual(p.clear(), ["a:1"]); // the UI came to the foreground
   assert.deepEqual(p.clear(), []);
 });
+
+test("starred chats: the notification says so (its own channel); a merged chat's star and mute count for its members", () => {
+  const now = new Date().toISOString();
+  const m = { id: "1", chatId: "a:x", text: "hi", sender: "Ann", time: now };
+  const snap = { chats: [{ id: "a:x", name: "Ann", kind: "dm", starred: true }, { id: "a:y", name: "Bob", kind: "dm" }, { id: "merge:1", name: "Bob (all)", kind: "dm", starred: true }, { id: "merge:2", name: "Cy", kind: "dm", muted: true }] };
+  assert.equal(buildNotification(m, snap, "full")!.starred, true);
+  assert.equal(buildNotification({ ...m, chatId: "a:y" }, snap, "full")!.starred, undefined);
+  const viaMerge = buildNotification({ ...m, chatId: "a:y", mergeId: "merge:1" }, snap, "full")!;
+  assert.equal(viaMerge.starred, true); assert.equal(viaMerge.title, "Bob (all)");
+  assert.equal(buildNotification({ ...m, chatId: "a:y", mergeId: "merge:2" }, snap, "full"), undefined, "a muted merged chat stays quiet");
+});
