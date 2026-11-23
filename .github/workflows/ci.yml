@@ -10,12 +10,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every check runs on its own runner at the same time: the slowest test shard (core or sync, about 70 s) sets the pace,
+# not the sum of typecheck + all tests + the Electron run one after another.
 jobs:
-  check:
-    name: Typecheck and unit tests
+  typecheck:
+    name: Typecheck
     if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,21 +28,71 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Typecheck
-        run: pnpm -r typecheck
-      # Bounded on purpose: a test command that hangs (apps/desktop did, printing nothing at all) used to sit here until the
-      # job's own 45-minute cap, which looks like "the tests are slow" instead of "something never exited".
+        run: pnpm -r --workspace-concurrency=4 typecheck
+
+  test:
+    name: Unit tests (${{ matrix.shard.name }})
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # every shard reports, so one failing package does not hide the results of the others
+      fail-fast: false
+      matrix:
+        shard:
+          - { name: core, filter: "--filter @unimsg/core" }
+          - { name: sync, filter: "--filter @unimsg/sync" }
+          - { name: providers, filter: "--filter './packages/provider-*' --filter @unimsg/store-sqlite --filter @unimsg/host" }
+          - { name: apps, filter: "--filter './apps/*'" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install pnpm
+        run: npm install -g pnpm@12.17.0
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # Bounded on purpose: a test command that hangs (apps/desktop did, printing nothing at all) must end the job quickly
+      # instead of sitting until a long cap, which looks like "the tests are slow" instead of "something never exited".
       - name: Unit tests
-        timeout-minutes: 20
+        timeout-minutes: 8
         env:
           TMPDIR: ${{ runner.temp }}
-        run: pnpm -r test
-      # The desktop app runs this code in Electron, whose crypto is BoringSSL, not OpenSSL. Every test above runs on plain
-      # Node, which is how a desktop that could not complete a single pairing handshake went unnoticed (core/chacha.ts).
+        run: pnpm -r --no-bail --workspace-concurrency=4 ${{ matrix.shard.filter }} test
+
+  electron:
+    # The desktop app runs this code in Electron, whose crypto is BoringSSL, not OpenSSL. Every test above runs on plain
+    # Node, which is how a desktop that could not complete a single pairing handshake went unnoticed (core/chacha.ts).
+    name: Pairing and crypto under Electron's runtime
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install pnpm
+        run: npm install -g pnpm@12.17.0
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Pairing and crypto under Electron's runtime (what the desktop app really runs)
         timeout-minutes: 10
         env:
           TMPDIR: ${{ runner.temp }}
         working-directory: packages/sync
         run: node ../../scripts/electron-node.mjs --test ../core/src/chacha.test.ts src/crypto.test.ts src/pairing.test.ts src/android.test.ts
+
+  docs:
+    name: README feature table
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - name: README feature table matches the live-test results (docs/live-results.json)
         run: node scripts/feature-table.mjs --check
