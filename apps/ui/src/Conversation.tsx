@@ -5,6 +5,7 @@ import { capsOf, cardsOf, type Account, type Attachment, type Capabilities, type
 import { measureMedia, isGif } from "./measure";
 import { placeholderOf } from "../../../packages/core/src/placeholder";
 import { hasMarkup } from "./markup";
+import { withThreadLinks } from "./threadlinks";
 import { RichText } from "./RichText";
 import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, useNearView, type Settings } from "./util";
 import { MoreHorizontal, Camera, Check, ChevronDown, Calendar, Clock3, Phone, ShoppingBag, List as ListIcon, CreditCard, ExternalLink, Users as UsersIcon, MousePointerClick, FileQuestion, BarChart3, CheckCircle2, Circle, CheckSquare, Square, Info, LogOut, MessageSquareWarning, RotateCcw, ArrowDown, AlertCircle, Ban, Copy, Download, FileText, Forward, ImageIcon, MapPin, Mic, Paperclip, Pencil, Play, Plus, Reply, SendHorizontal, Smile, SmilePlus, Trash2, User, X } from "./icons";
@@ -173,7 +174,7 @@ export default function Conversation(p: Props) {
     }
   }, [messages, chat.id, focused, settings.sendReadReceipts, caps, members]);
 
-  const shown = messages;
+  const shown = useMemo(() => withThreadLinks(messages, (cid) => (members?.find((c) => c.id === cid) ?? chat).provider), [messages, members, chat]);
   // ---- windowed message list: past WIN_MIN messages only the ones near the viewport are in the DOM (heights are measured, unmeasured ones estimated)
   const win = shown.length > WIN_MIN;
   const anchorTop = useRef(0), idxRef = useRef(new Map<string, number>()), anchor = useRef<{ k: string; o: number } | null>(null), selfScroll = useRef(0);
