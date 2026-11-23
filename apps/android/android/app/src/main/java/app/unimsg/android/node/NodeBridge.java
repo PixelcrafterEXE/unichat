@@ -175,6 +175,21 @@ public final class NodeBridge {
                 case "$notificationState":
                     replyToUi(id, new JSONObject().put("granted", MainActivity.notificationsGranted(c)).put("sdk", Build.VERSION.SDK_INT));
                     return true;
+                case "$openChannelSettings": { // {channel:"service"|"starred"|"messages"}: Android's page for one notification channel (user tap)
+                    String ch = p.optString("channel", "");
+                    if (!java.util.Arrays.asList(Notifier.CH_SERVICE, Notifier.CH_STARRED, Notifier.CH_MESSAGES).contains(ch)) { replyToUi(id, new JSONObject().put("launched", false)); return true; }
+                    Notifier.createChannels(c);
+                    boolean launched = false;
+                    Intent i = Build.VERSION.SDK_INT >= 26
+                        ? new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, c.getPackageName()).putExtra(Settings.EXTRA_CHANNEL_ID, ch)
+                        : new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + c.getPackageName()));
+                    try { c.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); launched = true; }
+                    catch (Exception e) { // some vendors lack the per-channel page: the app's notification page then
+                        try { c.startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, c.getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); launched = true; } catch (Exception ignored) { }
+                    }
+                    replyToUi(id, new JSONObject().put("launched", launched));
+                    return true;
+                }
                 case "$requestNotifications": // user tap in Settings > Notifications
                     replyToUi(id, new JSONObject().put("launched", MainActivity.requestNotifications()).put("granted", MainActivity.notificationsGranted(c)));
                     return true;
