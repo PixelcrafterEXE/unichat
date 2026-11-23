@@ -198,6 +198,17 @@ export class SyncService {
     for (const c of Object.values(cs)) { c.g = Math.max(c.g ?? 0, c.applied); c.applied = 0; }
     this.ledger.kvSet("cursors", cs); this.ledger.kvSet("repairedSystemMarks", true);
   }
+  /**
+   * Once: pull EVERYTHING again from every peer, global state included (flags, aliases, folders, merges, settings).
+   * A device that still ran an older version when a write arrived stored it without the fields it did not know (a
+   * chat's `starred` flag); repairSystemMarks above re-read only the message log. Writes that are already right are skipped.
+   */
+  private resyncKnownFields() {
+    if (this.ledger.kvGet("resyncedFields-v2")) return;
+    const cs = this.ledger.kvGet<Record<string, { ledger: string; applied: number; g?: number }>>("cursors") ?? {};
+    for (const c of Object.values(cs)) { c.g = 0; c.applied = 0; }
+    this.ledger.kvSet("cursors", cs); this.ledger.kvSet("resyncedFields-v2", true);
+  }
   private async activate() {
     if (this.disposed || !this.group) return;
     this.store.ctx = this.ctx;
@@ -205,6 +216,7 @@ export class SyncService {
     let t = Date.now(); pl("activate.begin");
     if (!this.ledger.kvGet("bootstrapped")) { const n = await this.store.bootstrap(); this.ledger.kvSet("bootstrapped", true); pl("bootstrap", { ms: Date.now() - t, entries: n }); }
     this.repairSystemMarks();
+    this.resyncKnownFields();
     this.store.adoptSettings(); // settings that became syncable later (idempotent)
     pl("adoptSettings", { ms: Date.now() - t });
     this.blobs ??= new Blobs({ ledger: this.ledger, media: this.host.media, dir: this.o.dir ?? join(process.env.TMPDIR ?? "/tmp", "unimsg-sync-" + this.me.id.slice(0, 8)), sealKey: this.sealKey, modeNone: (a) => this.modeOf(a) === "none",

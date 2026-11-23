@@ -56,6 +56,28 @@ test("a line marked as a notice afterwards (#102) reaches the other device, thou
   for (const n of [A, B]) await n.stop();
 });
 
+test("a write stored incompletely by an older version is completed when its origin sends it again (starred flag); a copy from another device is not believed", async () => {
+  const chat = "fake-st:c";
+  const A = await node("A", "memory", undefined, (s) => { s.putAccount({ id: "fake-st", provider: "fake", label: "S", status: "active" }); s.putMessages([msg(chat, "m1", "hi", "2026-01-01T00:00:00Z")]); });
+  const B = await node("B", "memory"); await pairUp(A, B);
+  await until(() => !!B.store.getMessage(chat, "m1"), "m1 on B");
+  await A.call("setChatFlags", { chatId: chat, pinned: true, muted: false, archived: false, unreadMark: false, starred: true });
+  await until(() => !!B.store.listChatFlags()[chat]?.starred, "starred on B");
+  // B "was on 0.1.16" when it arrived: it kept the write but lost the field it did not know
+  const innerB = (B.store as any).inner; innerB.setChatFlags(chat, { pinned: true, muted: false, archived: false });
+  const k = "fl\u0001" + chat, e = (A.svc as any).ledger.get(k), origin = e.hlc.split("-").slice(2).join("-");
+  const v = A.store.listChatFlags()[chat];
+  // the same write, sent again by another device with its incomplete copy: ignored
+  await B.store.applyRemote([{ k, h: e.hlc, v: { pinned: true, muted: false, archived: false } }], "someone-else");
+  assert.equal(B.store.listChatFlags()[chat]?.starred, undefined);
+  // ...and by the device that made it: applied
+  const r = await B.store.applyRemote([{ k, h: e.hlc, v }], origin);
+  assert.equal(r.applied, 1); assert.equal(B.store.listChatFlags()[chat]?.starred, true);
+  // identical again: skipped
+  assert.equal((await B.store.applyRemote([{ k, h: e.hlc, v }], origin)).skipped, 1);
+  for (const n of [A, B]) await n.stop();
+});
+
 test("chat cache: a peer's cache never overwrites a LIVE connector's account; accounts that are not live here take it", async () => {
   const mk = (id: string, name: string): { chats: Chat[]; spaces: [] } => ({ chats: [{ id: id + ":c", accountId: id, provider: "fake", kind: "dm", name } as unknown as Chat], spaces: [] });
   const A = await node("A", "memory"), B = await node("B", "memory");
