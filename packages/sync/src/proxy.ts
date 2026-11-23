@@ -211,6 +211,7 @@ export class Proxies {
       case "chats": return this.conn(acct).chats();
       case "history": return this.conn(acct).history(str(a.chatId, 2000), { limit: Math.min(500, Math.max(1, Number(a.limit) || 50)), beforeMessageId: a.beforeMessageId === undefined ? undefined : str(a.beforeMessageId, 2000) });
       case "members": return this.conn(acct).members(str(a.chatId, 2000));
+      case "aliases": { const c = this.conn(acct); return c.aliases ? c.aliases(str(a.chatId, 2000)) : []; }
       case "attachment": {
         const chat = g(a.chatId), key = `${chat}|${str(a.messageId, 2000)}|${str(a.attachmentId, 2000)}`;
         let r = H.media.get(acct, key);
@@ -224,7 +225,7 @@ export class Proxies {
           attachments: (m.attachments ?? []).map((x: any) => ({ kind: x.kind, mime: x.mime, name: x.name, durationMs: x.durationMs, waveform: x.waveform, width: x.width, height: x.height, gif: x.gif, caption: x.caption, dataBase64: x.dataBase64 })) });
         note?.(out); return this.strip(acct, out);
       }
-      case "react": case "edit": case "delete": case "setTyping": case "markRead": case "vote": case "editEvent": case "refreshChat": case "acceptRequest": case "declineRequest":
+      case "react": case "edit": case "delete": case "setTyping": case "markRead": case "vote": case "editEvent": case "refreshChat": case "openThread": case "acceptRequest": case "declineRequest":
       case "leaveChat": case "addMembers": case "removeMember": case "renameChat": case "blockChat": case "setChatPicture": case "setChatDescription": {
         const { chatId, ...rest } = a; return this.strip(acct, await H.call(op, { ...rest, chatId: g(chatId) }));
       }

@@ -1,6 +1,6 @@
 // Discord provider: REST v10 + Gateway v10, own small clients on Node's fetch and `ws`. See README.md (read the user-token warning).
 import type {
-  Capabilities, Card, Chat, Connector, Contact, CoreEvent, HistoryQuery, LoginPrompt, Message, OutgoingMessage, PrivacySetting, Profile, ProfilePatch, ProviderFactory, Space,
+  Capabilities, Card, Chat, Connector, Contact, CoreEvent, HistoryQuery, LoginPrompt, Message, OutgoingMessage, PersonAlias, PrivacySetting, Profile, ProfilePatch, ProviderFactory, Space,
 } from "@unimsg/core";
 import { Api, DEFAULT_BASE, DEFAULT_CDN, DEFAULT_GATEWAY, DcError, type CaptchaChallenge, dbg, endpoint, newIdentity, type Identity, type Mode } from "./api.js";
 import { BOT_INTENTS, Gateway, INTENT } from "./gateway.js";
@@ -237,12 +237,41 @@ class DiscordConnector implements Connector {
   private get userMode() { return this.session?.mode === "user"; }
 
   // ---------------------------------------------------------------- caches
+  /** Server nicknames, "guild/user" -> nick (null: none there, the profile name applies). From the gateway's member objects, and for REST history one member lookup per unknown author. */
+  private nicks = new Map<string, string | null>();
+  private setNick(gid: string | undefined, uid: string | undefined, nick: string | null | undefined) {
+    if (!gid || !uid) return;
+    const k = gid + "/" + uid; this.nicks.delete(k); this.nicks.set(k, nick || null);
+    if (this.nicks.size > 20000) this.nicks.delete(this.nicks.keys().next().value!);
+  }
+  /** How a person is called in a server (or anywhere, without one): the server nickname, else the profile name. */
+  private nameIn(gid: string | undefined, uid: string): string | undefined {
+    const n = gid ? this.nicks.get(gid + "/" + uid) : undefined;
+    if (n) return n;
+    const u = this.users.get(uid); return u ? userName(u) : undefined;
+  }
+  private guildOf(chatId: string) { return this.channels.get(chatId)?.guild_id; }
+  /** REST messages carry no member objects: look up the nicknames of the people in them that this server has not told us yet (a few at a time, at most 30 per batch, 10 for a user account). */
+  private async learnNicks(gid: string | undefined, ms: DcMessage[]) {
+    if (!gid || !this.api) return;
+    const want = new Set<string>();
+    for (const m of ms) {
+      if (m.webhook_id) continue; // a webhook's author is no member
+      for (const u of [m.author, ...(m.mentions ?? []), m.referenced_message?.author]) if (u?.id && !this.nicks.has(gid + "/" + u.id)) want.add(u.id);
+    }
+    const ids = [...want].slice(0, this.userMode ? 10 : 30); // a user account stays modest (its requests are paced like a person's)
+    const one = async (id: string) => {
+      try { const mem = await this.api!.get<DcMember>(`/guilds/${gid}/members/${id}`); this.setNick(gid, id, mem.nick); if (mem.user) this.cacheUser(mem.user); }
+      catch (e) { if (e instanceof DcError && e.kind === "auth") throw e; if (e instanceof DcError && (e.kind === "notfound" || e.kind === "forbidden")) this.setNick(gid, id, null); } // left the server / not allowed: the profile name
+    };
+    for (let i = 0; i < ids.length; i += 5) await Promise.all(ids.slice(i, i + 5).map(one));
+  }
   private cacheUser(u: DcUser | undefined) { if (u?.id) { this.users.delete(u.id); this.users.set(u.id, { ...this.users.get(u.id), ...u }); if (this.users.size > 8000) this.users.delete(this.users.keys().next().value!); } }
   private registerEmoji = (n: string, id: string, a: boolean) => { this.emojis.set(n, { id, animated: a }); if (this.emojis.size > 5000) this.emojis.delete(this.emojis.keys().next().value!); };
   private mctx(guildId?: string): MsgCtx {
     return {
       me: this.me!.id, accountId: this.accountId,
-      user: (id, hint) => { if (hint) this.cacheUser(hint); return hint?.member?.nick || (this.users.get(id) ? userName(this.users.get(id)) : undefined); },
+      user: (id, hint) => { if (hint) { this.cacheUser(hint); if (hint.member) this.setNick(guildId, id, hint.member.nick); } return (hint?.member?.nick || undefined) ?? this.nameIn(guildId, id); },
       role: (id) => this.guilds.get(guildId ?? "")?.roles?.find((r) => r.id === id)?.name,
       channel: (id) => this.channels.get(id)?.name,
       emoji: this.registerEmoji,
@@ -290,8 +319,8 @@ class DiscordConnector implements Connector {
     for (const e of g.emojis ?? []) if (e.id && e.name) this.registerEmoji(e.name, e.id, !!e.animated);
     for (const c of [...(g.channels ?? []), ...(g.threads ?? [])]) { this.channels.set(c.id, { ...c, guild_id: g.id }); this.baseline(c); }
     const m = ownMember ?? (g as { members?: (DcMember & { user?: DcUser })[] }).members?.find((x) => x.user?.id === this.me?.id);
-    if (m) this.ownMember.set(g.id, m);
-    for (const mem of (g as { members?: DcMember[] }).members ?? []) this.cacheUser(mem.user);
+    if (m) { this.ownMember.set(g.id, m); this.setNick(g.id, this.me?.id, m.nick); }
+    for (const mem of (g as { members?: DcMember[] }).members ?? []) { this.cacheUser(mem.user); this.setNick(g.id, mem.user?.id, mem.nick); }
   }
   /** Remember how far each chat had got the first time we saw it, so a later lost session knows what to catch up. */
   private baseline(c: DcChannel) { if (!this.lastSeen.has(c.id)) this.lastSeen.set(c.id, c.last_message_id ?? "0"); }
@@ -346,7 +375,7 @@ class DiscordConnector implements Connector {
       }
       case "GUILD_ROLE_DELETE": { const g = this.guilds.get(d.guild_id); if (g) g.roles = (g.roles ?? []).filter((r) => r.id !== d.role_id); this.touch(null); return; }
       case "GUILD_MEMBER_UPDATE": {
-        this.cacheUser(d.user);
+        this.cacheUser(d.user); this.setNick(d.guild_id, d.user?.id, d.nick);
         if (d.user?.id === this.me?.id) { this.ownMember.set(d.guild_id, { roles: d.roles ?? [], nick: d.nick, communication_disabled_until: d.communication_disabled_until }); this.touch(null); }
         return;
       }
@@ -376,6 +405,7 @@ class DiscordConnector implements Connector {
         const uid = d.user_id as string, cid = d.channel_id as string;
         if (!uid || !cid || uid === this.me?.id) return;
         if (d.member?.user) this.cacheUser(d.member.user);
+        if (d.member) this.setNick(d.guild_id, uid, d.member.nick);
         this.emit({ type: "typing", data: { chatId: cid, senderId: uid, typing: true } });
         const k = cid + "/" + uid; clearTimeout(this.typingTimers.get(k));
         this.typingTimers.set(k, setTimeout(() => this.clearTyping(cid, uid), 9000));
@@ -457,6 +487,7 @@ class DiscordConnector implements Connector {
     for (const c of cands) {
       try {
         const l = await this.api!.get<DcMessage[]>(`/channels/${c.id}/messages?after=${this.lastSeen.get(c.id)}&limit=50`, 1);
+        await this.learnNicks(c.guild_id, l);
         for (const m of l.sort((a, b) => (snowflakeGt(a.id, b.id) ? 1 : -1))) {
           const msg = this.note(m); this.previews.set(c.id, previewOf(msg) || this.previews.get(c.id) || "");
           if (!msg.fromMe) this.unread.set(c.id, (this.unread.get(c.id) ?? 0) + 1);
@@ -511,8 +542,8 @@ class DiscordConnector implements Connector {
   private reactionPatch(m: DcMessage) {
     return mapReactions(m.reactions, this.me!.id, this.registerEmoji, (k) => { const s = this.reactors.get(m.id)?.get(k); return s ? [...s] : undefined; }) ?? [];
   }
-  private async onReaction(add: boolean, d: { user_id: string; channel_id: string; message_id: string; emoji: DcEmoji; member?: { user?: DcUser } }) {
-    this.cacheUser(d.member?.user);
+  private async onReaction(add: boolean, d: { user_id: string; channel_id: string; guild_id?: string; message_id: string; emoji: DcEmoji; member?: { user?: DcUser; nick?: string | null } }) {
+    this.cacheUser(d.member?.user); if (d.member) this.setNick(d.guild_id, d.user_id, d.member.nick);
     const m = await this.fetchRaw(d.channel_id, d.message_id); if (!m) return;
     const me = this.me!.id, key = emojiKey(d.emoji);
     const list = (m.reactions ??= []);
@@ -557,12 +588,29 @@ class DiscordConnector implements Connector {
       .sort((a, b) => { const x = key(a), y = key(b); return x[0].localeCompare(y[0]) || x[1] - y[1] || x[2].localeCompare(y[2]) || x[3] - y[3] || a.id.localeCompare(b.id); }).map((c) => { const ch = this.chatOf(c), rev = c.type === CT.DM ? c.recipients?.[0]?.avatar : c.type === CT.GROUP_DM ? c.icon : undefined; return rev ? { ...ch, avatarRev: rev } : ch; }); // avatarRev = Discord's avatar / icon hash
   }
 
+  /** A thread from a "started a thread" line or a starter message. Active ones are already chats; an archived one is fetched and kept from now on. */
+  async openThread(threadId: string): Promise<Chat> {
+    const api = this.ready();
+    if (!/^\d+$/.test(threadId)) throw new Error("Unknown thread.");
+    let ch = this.channels.get(threadId);
+    if (!ch) {
+      const c = await this.forbid("open this thread", () => api.get<DcChannel>(`/channels/${threadId}`));
+      if (!isThread(c.type)) throw new Error("That is not a thread.");
+      this.channels.set(c.id, (ch = { ...c, guild_id: c.guild_id ?? this.channels.get(c.parent_id ?? "")?.guild_id }));
+      this.touch(c.id);
+    }
+    if (!isThread(ch.type)) throw new Error("That is not a thread.");
+    if (!this.visible(ch)) throw new Error("You can't see this thread.");
+    return this.chatOf(ch);
+  }
+
   async history(chatId: string, q: HistoryQuery): Promise<Message[]> {
     const api = this.ready();
     const limit = Math.max(1, Math.min(100, q.limit || 50));
     if (q.beforeMessageId && !/^\d+$/.test(q.beforeMessageId)) throw new Error("Unknown message id.");
     if (!/^\d+$/.test(chatId)) throw new Error("Unknown chat.");
     const l = await this.forbid("read this channel's history", () => api.get<DcMessage[]>(`/channels/${chatId}/messages?limit=${limit}${q.beforeMessageId ? `&before=${q.beforeMessageId}` : ""}`));
+    await this.learnNicks(this.guildOf(chatId), l);
     return l.sort((a, b) => (snowflakeGt(a.id, b.id) ? 1 : -1)).map((m) => this.note(m));
   }
 
@@ -571,6 +619,32 @@ class DiscordConnector implements Connector {
     const api = this.ready(); if (this.session?.mode !== "user" || !/^\d+$/.test(contactId)) return [];
     const p = await api.get<{ mutual_guilds?: { id: string }[] }>(`/users/${contactId}/profile?with_mutual_guilds=true&with_mutual_friends_count=false`, 1);
     return (p.mutual_guilds ?? []).map((g) => g.id).filter((id) => this.guilds.has(id));
+  }
+
+  /** The names the person of a DM goes by: profile name, @username, and their nickname in each server you share (user accounts: the profile lists them; bots: a member lookup per server, at most 10). */
+  async aliases(chatId: string): Promise<PersonAlias[]> {
+    const api = this.ready(), ch = this.channels.get(chatId);
+    if (!ch || ch.type !== CT.DM) return [];
+    const u = ch.recipients?.find((r) => r.id !== this.me!.id) ?? ch.recipients?.[0]; if (!u) return [];
+    const full = this.users.get(u.id) ?? u;
+    const out: PersonAlias[] = [];
+    if (full.global_name) out.push({ name: full.global_name, kind: "profile" });
+    out.push({ name: "@" + full.username, kind: "username" });
+    const nickIn = (gid: string, nick: string | null | undefined) => { this.setNick(gid, u.id, nick ?? null); if (nick) out.push({ name: nick, kind: "nickname", space: gid }); };
+    if (this.userMode) {
+      try {
+        const p = await api.get<{ mutual_guilds?: { id: string; nick?: string | null }[] }>(`/users/${u.id}/profile?with_mutual_guilds=true&with_mutual_friends_count=false`, 1);
+        for (const g of p.mutual_guilds ?? []) if (this.guilds.has(g.id)) nickIn(g.id, g.nick);
+      } catch (e) { if (e instanceof DcError && e.kind === "auth") throw e; }
+    } else {
+      for (const gid of [...this.guilds.keys()].slice(0, 10)) {
+        const k = gid + "/" + u.id;
+        if (this.nicks.has(k)) { const n = this.nicks.get(k); if (n) out.push({ name: n, kind: "nickname", space: gid }); continue; }
+        try { const m = await api.get<DcMember>(`/guilds/${gid}/members/${u.id}`, 1); nickIn(gid, m.nick); }
+        catch (e) { if (e instanceof DcError && e.kind === "auth") throw e; }
+      }
+    }
+    return out;
   }
 
   async members(chatId: string): Promise<Contact[]> {
@@ -586,12 +660,14 @@ class DiscordConnector implements Connector {
         for (const m of l) {
           this.cacheUser(m.user);
           const p = g ? channelPermissions(g, ch, ch.parent_id ? this.channels.get(ch.parent_id) : undefined, m.user.id, m) : undefined;
+          this.setNick(ch.guild_id, m.user.id, m.nick);
           if (p === undefined || p & P.VIEW_CHANNEL) out.set(m.user.id, toContact(m.user, m.nick));
         }
       } catch (e) { if (e instanceof DcError && e.kind === "auth") throw e; }
     }
-    for (const id of this.authors.get(chatId) ?? []) { const u = this.users.get(id); if (u && !out.has(id)) out.set(id, toContact(u)); }
-    if (!out.has(me)) out.set(me, toContact(this.me!));
+    const nick = (id: string) => (ch?.guild_id ? this.nicks.get(ch.guild_id + "/" + id) : undefined);
+    for (const id of this.authors.get(chatId) ?? []) { const u = this.users.get(id); if (u && !out.has(id)) out.set(id, toContact(u, nick(id))); }
+    if (!out.has(me)) out.set(me, toContact(this.me!, nick(me) ?? (ch?.guild_id ? this.ownMember.get(ch.guild_id)?.nick : undefined)));
     return [...out.values()];
   }
 
@@ -718,6 +794,7 @@ class DiscordConnector implements Connector {
     const api = this.ready();
     if (!/^\d+$/.test(chatId)) throw new Error("Unknown chat.");
     const l = await this.forbid("read the pinned messages", () => api.get<DcMessage[]>(`/channels/${chatId}/pins`));
+    await this.learnNicks(this.guildOf(chatId), l);
     return l.map((m) => ({ ...this.note({ ...m, pinned: true }), pinned: true }));
   }
   async edit(chatId: string, messageId: string, newText: string) {

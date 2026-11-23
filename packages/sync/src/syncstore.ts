@@ -86,7 +86,7 @@ export class SyncStore implements Store {
   }
   deleteAccountData(id: string) { this.inner.deleteAccountData(id); this.ctx?.ledger.dropAccount(id); }
   setAlias(chatId: string, name: string | null) { this.inner.setAlias(chatId, name); this.touch("al", [chatId], { tomb: !name }); }
-  setChatFlags(chatId: string, f: ChatFlags) { this.inner.setChatFlags(chatId, f); this.touch("fl", [chatId], { tomb: !(f.pinned || f.muted || f.archived || f.unreadMark || f.readUpTo) }); }
+  setChatFlags(chatId: string, f: ChatFlags) { this.inner.setChatFlags(chatId, f); this.touch("fl", [chatId], { tomb: !(f.pinned || f.muted || f.archived || f.unreadMark || f.starred || f.readUpTo) }); }
   putFolder(f: Folder) { this.inner.putFolder(f); this.touch("fo", [f.id]); }
   deleteFolder(id: string) {
     const before = this.ctx ? this.inner.listChatFolders() : {};
@@ -193,7 +193,7 @@ export class SyncStore implements Store {
     try {
       switch (kind) {
         case "al": i.setAlias(id, tomb ? null : String(v)); r.global = true; break;
-        case "fl": i.setChatFlags(id, tomb ? {} : { pinned: !!v?.pinned, muted: !!v?.muted, archived: !!v?.archived, ...(v?.unreadMark ? { unreadMark: true } : {}), ...(typeof v?.readUpTo === "string" && v.readUpTo ? { readUpTo: v.readUpTo } : {}) }); r.global = true; break;
+        case "fl": i.setChatFlags(id, tomb ? {} : { pinned: !!v?.pinned, muted: !!v?.muted, archived: !!v?.archived, ...(v?.unreadMark ? { unreadMark: true } : {}), ...(v?.starred ? { starred: true } : {}), ...(typeof v?.readUpTo === "string" && v.readUpTo ? { readUpTo: v.readUpTo } : {}) }); r.global = true; break;
         case "fo": if (tomb) i.deleteFolder(id); else i.putFolder(v as Folder); r.global = true; break;
         case "cf": i.setChatFolder(id, tomb ? null : String(v)); r.global = true; break;
         case "me": if (tomb) i.deleteMerge(id); else i.putMerge(v as ChatMerge); r.global = true; break;

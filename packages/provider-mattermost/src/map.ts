@@ -13,7 +13,7 @@ export interface MmFile { id: string; name?: string; extension?: string; size?: 
 export interface MmReaction { user_id: string; post_id: string; emoji_name: string }
 export interface MmPost {
   id: string; channel_id: string; user_id: string; root_id?: string; message: string; type?: string; create_at: number; update_at?: number;
-  edit_at?: number; delete_at?: number; is_pinned?: boolean; pending_post_id?: string; file_ids?: string[]; props?: Record<string, any>;
+  edit_at?: number; delete_at?: number; is_pinned?: boolean; reply_count?: number; pending_post_id?: string; file_ids?: string[]; props?: Record<string, any>;
   metadata?: { files?: MmFile[]; reactions?: MmReaction[]; embeds?: { type: string; url?: string; data?: any }[] };
 }
 export interface PostList { order: string[]; posts: Record<string, MmPost> }
@@ -126,6 +126,18 @@ export interface MsgCtx {
   post?(id: string): MmPost | undefined;
   /** File info for posts whose metadata lacks files (e.g. fresh upload). */
   extraFiles?: MmFile[];
+  /** Mapping for a thread's own chat (THREAD_PREFIX + root id): no reply quote of the root, no link to the thread itself. */
+  inThread?: string;
+}
+
+/** A thread is opened as a chat of its own: this prefix + the root post's id. */
+export const THREAD_PREFIX = "thread~";
+export const threadChatId = (rootId: string) => THREAD_PREFIX + rootId;
+/** The root post id of a thread chat id, or undefined for a channel id. */
+export function threadRoot(chatId: string): string | undefined {
+  if (!chatId.startsWith(THREAD_PREFIX)) return undefined;
+  const r = chatId.slice(THREAD_PREFIX.length);
+  return /^[a-z0-9]{1,64}$/i.test(r) ? r : undefined;
 }
 const preview = (s: string) => (s.length > 120 ? s.slice(0, 117) + "..." : s);
 
@@ -141,10 +153,12 @@ export function mapPost(p: MmPost, x: MsgCtx): Message | undefined {
   }
   if (p.type && p.type !== "" && p.type !== "slack_attachment" && p.type !== "me") { if (!p.message) return undefined; }
   if (p.type === "me" && base.text) base.text = `/me ${base.text}`;
-  if (p.root_id) {
+  if (x.inThread) base.chatId = x.inThread;
+  if (p.root_id && !x.inThread) {
     const root = x.post?.(p.root_id);
     base.replyTo = { messageId: p.root_id, ...(root ? { sender: x.name(root.user_id), textPreview: preview(root.message ?? "") } : {}) };
-  }
+    base.thread = { id: threadChatId(p.root_id) }; // the count is on the root
+  } else if (!p.root_id && !x.inThread && p.reply_count) base.thread = { id: threadChatId(p.id), count: p.reply_count };
   const files = p.metadata?.files ?? (p.file_ids?.length ? (x.extraFiles?.filter((f) => p.file_ids!.includes(f.id)) ?? p.file_ids.map((id) => ({ id }))) : undefined);
   if (files?.length) base.attachments = files.map(mapFile);
   const reactions = mapReactions(p.metadata?.reactions, x.me);

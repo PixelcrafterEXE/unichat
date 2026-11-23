@@ -261,7 +261,7 @@ const privacyOf = (acc: string) => (privacyState[acc] ??= accounts.find((a) => a
   : [{ id: "lastSeen", label: "Last seen", value: "contacts", options: [{ value: "all", label: "Everyone" }, { value: "contacts", label: "My contacts" }, { value: "none", label: "Nobody" }] },
      { id: "readReceipts", label: "Read receipts", description: "If off, you won't see others' read receipts either", value: "all", options: [{ value: "all", label: "On" }, { value: "none", label: "Off" }] }]);
 const aliases: Record<string, string> = {};
-const flags: Record<string, { pinned?: boolean; muted?: boolean; archived?: boolean; unreadMark?: boolean }> = { "mx-1:!old": { archived: true } };
+const flags: Record<string, { pinned?: boolean; muted?: boolean; archived?: boolean; unreadMark?: boolean; starred?: boolean }> = { "mx-1:!old": { archived: true } };
 // local folders (see packages/core/src/folders.ts: the same code the real Hub runs)
 const folders: Folder[] = [{ id: "folder:fav", name: "Favourites", color: "#e0a030", icon: "⭐" }];
 const chatFolders: Record<string, string> = { "mx-1:@bea:matrix.org": "folder:fav", "wa-1:trail": "folder:fav", "mx-1:@carl:matrix.org": "folder:fav" };
@@ -515,7 +515,7 @@ export function mockTransport() {
         case "jobs": return ((globalThis as any).__jobs ?? []).filter((j: any) => !p.status || j.status === p.status);
         case "cancelJob": { (globalThis as any).__jobs = ((globalThis as any).__jobs ?? []).filter((j: any) => j.id !== p.id); return true; }
         case "refreshChat": { await new Promise((r) => setTimeout(r, 300)); return { message: "Asked your phone to resend 1 message" }; }
-        case "setChatFlags": { const f = { pinned: !!p.pinned, muted: !!p.muted, archived: !!p.archived, unreadMark: !!p.unreadMark }; if (f.pinned || f.muted || f.archived || f.unreadMark) flags[p.chatId] = f; else delete flags[p.chatId]; emit("chats-changed", { chatId: p.chatId }); return; }
+        case "setChatFlags": { const f = { pinned: !!p.pinned, muted: !!p.muted, archived: !!p.archived, unreadMark: !!p.unreadMark, starred: p.starred === undefined ? !!flags[p.chatId]?.starred : !!p.starred }; if (f.pinned || f.muted || f.archived || f.unreadMark || f.starred) flags[p.chatId] = f; else delete flags[p.chatId]; emit("chats-changed", { chatId: p.chatId }); return; }
         case "leaveSpace": { const i = spaces.findIndex((x) => x.id === p.spaceId); if (i >= 0) spaces.splice(i, 1); for (let k = chats.length - 1; k >= 0; k--) if (chats[k].spaceId === p.spaceId) chats.splice(k, 1); emit("spaces-changed", {}); emit("chats-changed", {}); return; }
         case "vote": { const x = find(p.chatId, p.messageId); if (!x?.poll) return; const ids = new Set<string>(p.optionIds ?? []);
           x.poll = { ...x.poll, mine: [...ids], options: x.poll.options.map((o) => ({ ...o, voters: [...o.voters.filter((v) => v !== "You"), ...(ids.has(o.id) ? ["You"] : [])] })) };
@@ -526,6 +526,7 @@ export function mockTransport() {
         case "renameChat": { const c = chats.find((x) => x.id === p.chatId); if (c) { c.name = p.name; original.set(c.id, p.name); } emit("chats-changed", { chatId: p.chatId }); return; }
         case "blockChat": { const c = chats.find((x) => x.id === p.chatId); if (c) c.blocked = !!p.blocked; emit("chats-changed", { chatId: p.chatId }); return; }
         case "setAlias": { const n = (p.name ?? "").trim(); if (n) aliases[p.chatId] = n; else delete aliases[p.chatId]; emit("chats-changed", { chatId: p.chatId }); return; }
+        case "aliases": { const c = chats.find((x: Chat) => x.id === p.chatId); return { networks: c && c.kind === "dm" ? [{ chatId: c.id, provider: c.provider, account: "Personal", names: [{ name: c.name, kind: "profile" }, { name: "@" + c.name.toLowerCase().replace(/\s+/g, ""), kind: "username" }, ...(c.provider === "discord" ? [{ name: c.name.split(" ")[0] + " the Great", kind: "nickname", where: "Gamers" }] : [])] }] : [] }; }
         case "commonChats": { const gs = chats.filter((c: Chat) => c.kind === "group" && !c.mergedInto).slice(0, 2); return { groups: gs, communities: spaces.filter((s) => s.id === "wa-1:hike" || s.id === "mx-1:!self") }; } // communities you share: from the network, not only from the shared groups
         case "members": { if (isMerge(p.chatId)) return (await Promise.all(merges.get(p.chatId)!.members.map(async (cid) => (await self.call("members", { chatId: cid })).map((x: Contact) => ({ ...x, chatId: cid }))))).flat();
           const c = chats.find((x) => x.id === p.chatId);

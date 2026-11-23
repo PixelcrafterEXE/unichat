@@ -42,6 +42,27 @@ function AndroidNotifPermission() {
 }
 /** DM info: groups and communities you are both in. Asks the backend, which lists the members of your groups (and, where the network can tell, the servers you share); shows nothing while there is nothing. */
 type Common = { groups: Chat[]; communities: Space[] };
+type AliasNet = { chatId: string; provider: string; account: string; names: { name: string; kind?: string; where?: string }[] };
+const ALIAS_KIND: Record<string, string> = { profile: "profile name", username: "username", nickname: "nickname", seen: "name on messages" };
+/** The names the person goes by, per messenger: profile name, username, community nicknames (Discord servers), and names their messages carried. */
+function Aliases({ chat, provName }: { chat: Chat; provName: (p: string) => string }) {
+  const [r, setR] = useState<AliasNet[] | undefined>();
+  useEffect(() => { let on = true; setR(undefined); core.call("aliases", { chatId: chat.id }).then((x: { networks: AliasNet[] }) => on && setR(x.networks), () => on && setR([])); return () => { on = false; }; }, [chat.id]);
+  if (!r) return null;
+  const total = r.reduce((n, x) => n + x.names.length, 0);
+  if (total <= 1 && !(r[0]?.names[0] && r[0].names[0].name !== chat.name)) return null; // only the name already shown above
+  return (
+    <section className="aliassec" data-aliases><h4>Also known as</h4>
+      {r.map((net) => (
+        <div key={net.chatId} className="aliasnet" data-alias-net={net.provider}>
+          <div className="aliashead"><ProviderIcon provider={net.provider} size={18} /><b>{provName(net.provider)}</b>{r.length > 1 || net.account ? <small>{net.account}</small> : null}</div>
+          <ul>{net.names.map((n) => (
+            <li key={n.name + "|" + (n.where ?? "")} data-alias-kind={n.kind}><span className="aname">{n.name}</span><small>{n.where ? `in ${n.where}` : n.kind ? ALIAS_KIND[n.kind] ?? "" : ""}</small></li>))}
+          </ul>
+        </div>))}
+    </section>);
+}
+
 function CommonChats({ chat }: { chat: Chat }) {
   const [r, setR] = useState<Common | "loading" | "none">("loading");
   useEffect(() => { let on = true; setR("loading"); core.call("commonChats", { chatId: chat.id }).then((x: Common) => on && setR(x), () => on && setR("none")); return () => { on = false; }; }, [chat.id]);
@@ -120,6 +141,7 @@ export function ContactPanel({ place, merge, onMerge, chat, caps, messages, mute
         <ExportChatButton chat={chat} />
         <DisappearingSetting chat={chat} caps={caps} />
         {dm && !merge && caps?.verification && <PersonVerify accountId={chat.accountId} chatId={chat.id} name={chat.name} />}
+        {dm && chat.provider !== "mesh" && <Aliases chat={chat} provName={(pr) => merge?.providers.find((x) => x.name === pr)?.displayName ?? (pr === chat.provider ? providerName ?? pr : pr)} />}
         {dm && chat.provider !== "mesh" && <CommonChats chat={chat} />}
         {place && (
           <section className="placesec"><h4>Place</h4>
@@ -259,7 +281,7 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
         {show("notifications") && <div className="chapter" id="set-notifications" data-chapter="notifications">
 <h2>Notifications</h2>
           {(window as any).UnimsgNative && <AndroidNotifPermission />}
-          {(window as any).UnimsgNative && <p className="hint" data-android-notif>On Android, UniChat shows its own system notifications for messages that arrive while the app is not on screen. Turn them off per chat (mute) or in Android's settings for UniChat; there is no separate switch here.</p>}
+          {(window as any).UnimsgNative && <p className="hint" data-android-notif>On Android, UniChat shows its own system notifications for messages that arrive while the app is not on screen. Turn them off per chat (mute) or in Android's settings for UniChat; there is no separate switch here. Starred chats notify on a channel of their own (“Starred chats”), so you can give them a sound in Android's settings.</p>}
           {!(window as any).UnimsgNative && <label className="toggle"><span><b>Desktop notifications</b><small>Show a notification for messages in chats you're not looking at</small></span>
             <input type="checkbox" checked={settings.notifications} onChange={async (e) => {
               const on = e.target.checked; // read BEFORE awaiting: React resets a controlled checkbox once the handler yields
@@ -271,6 +293,8 @@ export function SettingsPage({ loading, accounts, providers, settings, onChange,
               }
               set("notifications", on);
             }} /><i /></label>}
+          {!(window as any).UnimsgNative && settings.notifications && <label className="row"><span><b>Notify for</b><small className="rowhint">Only starred chats: star a chat from its menu (★) to hear from it; the rest stay quiet.</small></span>
+            <select id="notifyScope" data-notify-scope value={settings.notifyScope ?? "all"} onChange={(e) => set("notifyScope", e.target.value as Settings["notifyScope"])}><option value="all">All chats</option><option value="starred">Only starred chats</option></select></label>}
           {notifMsg && <p className="hint err">{notifMsg}</p>}
           <label className="row"><span><b>What notifications show</b><small className="rowhint">Full: sender and text. Sender only: who wrote, not what. Hidden: just “New message”. Applies to desktop notifications and, on Android, to notifications while the app is in the background.</small></span>
             <select id="notifyContent" value={settings.notifyContent} onChange={(e) => set("notifyContent", e.target.value as Settings["notifyContent"])}><option value="full">Full</option><option value="sender">Sender only</option><option value="hidden">Hidden</option></select></label>

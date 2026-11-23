@@ -511,7 +511,7 @@ public final class NodeBridge {
                     break;
                 case "notify":
                     if (!uiForeground && app != null)
-                        Notifier.showMessage(app, o.optString("chatId"), o.optString("messageId"), o.optString("title"), o.optString("body"), notifyContent, o.optString("avatar", null));
+                        Notifier.showMessage(app, o.optString("chatId"), o.optString("messageId"), o.optString("title"), o.optString("body"), notifyContent, o.optString("avatar", null), o.optBoolean("starred", false));
                     break;
                 case "notify-clear": {
                     // The chats were read (here, through the notification action, or on another device): their notifications go away.

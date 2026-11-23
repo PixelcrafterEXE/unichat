@@ -3,6 +3,7 @@ package app.unimsg.android.node;
 import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
+import android.app.NotificationChannelGroup;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import androidx.core.app.RemoteInput;
@@ -25,35 +26,50 @@ import androidx.core.app.NotificationManagerCompat;
 import app.unimsg.android.MainActivity;
 import app.unimsg.android.R;
 
-/** Notification channels and the two kinds of notification: the persistent service one and per-chat message ones. */
+/**
+ * Notification channels and the two kinds of notification: the persistent service one and per-chat message ones.
+ * Two channel groups, so Android's settings list them apart: "Chats" (Messages, Starred chats) and "UniChat itself"
+ * (Background connection, Connection problems). The background notification is silent, minimal and in a group of its
+ * own: it never bundles with message notifications, and the user can hide its channel without touching chats.
+ */
 final class Notifier {
-    static final String CH_SERVICE = "backend", CH_MESSAGES = "messages", CH_ALERTS = "alerts";
+    /** "service" replaces the old "backend" channel: a channel's importance can't be lowered once created, so it gets a new id (the old one is deleted). */
+    static final String CH_SERVICE = "service", CH_MESSAGES = "messages", CH_STARRED = "starred", CH_ALERTS = "alerts";
+    static final String GROUP_CHATS = "chats", GROUP_APP = "app";
     static final int SERVICE_ID = 1, ALERT_ID = 3, MESSAGE_ID = 2;
 
     static void createChannels(Context c) {
         if (Build.VERSION.SDK_INT < 26) return;
         NotificationManager nm = c.getSystemService(NotificationManager.class);
-        NotificationChannel svc = new NotificationChannel(CH_SERVICE, "Background connection", NotificationManager.IMPORTANCE_LOW);
-        svc.setDescription("Keeps UniChat connected to your messengers while the app is closed");
-        svc.setShowBadge(false);
+        nm.createNotificationChannelGroup(new NotificationChannelGroup(GROUP_CHATS, "Chats"));
+        nm.createNotificationChannelGroup(new NotificationChannelGroup(GROUP_APP, "UniChat itself"));
+        try { nm.deleteNotificationChannel("backend"); } catch (RuntimeException e) { /* still carrying the running service's notification: removed on a later start */ } // the old background channel
+        NotificationChannel svc = new NotificationChannel(CH_SERVICE, "Background connection", NotificationManager.IMPORTANCE_MIN);
+        svc.setDescription("The permanent notice that keeps UniChat connected while the app is closed. You can hide it here; UniChat keeps running.");
+        svc.setShowBadge(false); svc.setSound(null, null); svc.enableVibration(false); svc.setGroup(GROUP_APP);
         NotificationChannel msg = new NotificationChannel(CH_MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH);
-        msg.setDescription("New messages");
+        msg.setDescription("New messages"); msg.setGroup(GROUP_CHATS);
+        NotificationChannel star = new NotificationChannel(CH_STARRED, "Starred chats", NotificationManager.IMPORTANCE_HIGH);
+        star.setDescription("New messages in the chats you starred. Set a sound of its own here, or let only these through Do Not Disturb.");
+        star.setGroup(GROUP_CHATS);
         NotificationChannel al = new NotificationChannel(CH_ALERTS, "Connection problems", NotificationManager.IMPORTANCE_DEFAULT);
-        al.setDescription("Shown when Android stops the background connection and UniChat needs to be opened again");
+        al.setDescription("Shown when Android stops the background connection and UniChat needs to be opened again"); al.setGroup(GROUP_APP);
         nm.createNotificationChannel(al);
         nm.createNotificationChannel(svc);
         nm.createNotificationChannel(msg);
+        nm.createNotificationChannel(star);
     }
 
     static Notification serviceNotification(Context c, String text) {
         PendingIntent open = PendingIntent.getActivity(c, 0, new Intent(c, MainActivity.class), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new NotificationCompat.Builder(c, CH_SERVICE).setSmallIcon(R.drawable.ic_stat_unimsg).setContentTitle("UniChat")
-            .setContentText(text).setOngoing(true).setOnlyAlertOnce(true).setContentIntent(open)
+            .setContentText(text).setOngoing(true).setOnlyAlertOnce(true).setContentIntent(open).setSilent(true).setShowWhen(false)
+            .setGroup("service").setPriority(NotificationCompat.PRIORITY_MIN) // its own group: Android never bundles it with chat notifications
             .setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_SECRET).build();
     }
 
-    static void showMessage(Context c, String chatId, String messageId, String title, String body, String mode, String avatarB64) {
-        post(c, chatId, messageId, title, body, mode, null, true, avatarB64);
+    static void showMessage(Context c, String chatId, String messageId, String title, String body, String mode, String avatarB64, boolean starred) {
+        post(c, chatId, messageId, title, body, mode, null, true, avatarB64, starred);
     }
 
     /** Decodes the chat picture sent by the backend (base64 PNG/JPEG/WebP, small) into a round bitmap for setLargeIcon. Returns null for anything unusable: the notification then simply has no picture. */
@@ -84,18 +100,19 @@ final class Notifier {
     static void showReplyResult(Context c, String chatId, String messageId, String sentText, boolean ok) {
         NativePrefs p = new NativePrefs(c);
         String mode = p.notifyContent();
-        if (ok && sentText != null) post(c, chatId, messageId, "UniChat", "Reply sent", mode, sentText, false, null);
-        else post(c, chatId, messageId, "UniChat", sentText == null ? "Nothing to send" : "Could not send your reply (backend not running or offline)", mode, null, false, null);
+        if (ok && sentText != null) post(c, chatId, messageId, "UniChat", "Reply sent", mode, sentText, false, null, false);
+        else post(c, chatId, messageId, "UniChat", sentText == null ? "Nothing to send" : "Could not send your reply (backend not running or offline)", mode, null, false, null, false);
     }
 
-    private static void post(Context c, String chatId, String messageId, String title, String body, String mode, String sentHistory, boolean alert, String avatarB64) {
+    private static void post(Context c, String chatId, String messageId, String title, String body, String mode, String sentHistory, boolean alert, String avatarB64, boolean starred) {
         if (Build.VERSION.SDK_INT >= 33 && c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
         boolean hidden = "hidden".equals(mode);
         // hidden: ONE generic notification for everything, no chat identity, no actions (nothing to leak through count, tag or reply target)
         String tag = hidden ? "hidden" : chatId;
         PendingIntent tap = PendingIntent.getActivity(c, tag.hashCode(), hidden ? new Intent(c, MainActivity.class) : MainActivity.openChatIntent(c, chatId), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        Notification pub = new NotificationCompat.Builder(c, CH_MESSAGES).setSmallIcon(R.drawable.ic_stat_unimsg).setContentTitle("UniChat").setContentText("New message").build();
-        NotificationCompat.Builder b = new NotificationCompat.Builder(c, CH_MESSAGES).setSmallIcon(R.drawable.ic_stat_unimsg)
+        String ch = starred && !hidden ? CH_STARRED : CH_MESSAGES; // hidden content: one generic notification, no starred identity either
+        Notification pub = new NotificationCompat.Builder(c, ch).setSmallIcon(R.drawable.ic_stat_unimsg).setContentTitle("UniChat").setContentText("New message").build();
+        NotificationCompat.Builder b = new NotificationCompat.Builder(c, ch).setSmallIcon(R.drawable.ic_stat_unimsg)
             .setContentTitle(title).setContentText(body).setStyle(new NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true).setContentIntent(tap).setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(pub) // lock screen shows the generic version

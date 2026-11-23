@@ -1042,6 +1042,32 @@ test("commonChats: communities in common come from the network's mutual servers 
   t.done();
 });
 
+test("aliases: per messenger, the network's names (community nicknames named by community) plus the names their messages carried", async () => {
+  const t = setup(); const id = await linked(t); const c = t.conns[0] as any;
+  c.spaces = async () => [{ id: "s1", accountId: "x", provider: "fake", name: "Gamers" }];
+  c.chatList = [{ id: "ann", accountId: "x", provider: "fake", kind: "dm", name: "Ann" }];
+  c.aliases = async (chat: string) => (chat === "ann" ? [{ name: "Ann Smith", kind: "profile" }, { name: "@ann", kind: "username" }, { name: "Annie", kind: "nickname", space: "s1" }, { name: "ann smith", kind: "profile" }] : []);
+  t.conns[0].emit({ type: "message", data: { ...msg("m1", "hello", "2026-01-01T10:00:00Z"), chatId: "ann", sender: "Ann S." } });
+  const r = await t.call("aliases", { chatId: `${id}:ann` });
+  assert.equal(r.networks.length, 1); assert.equal(r.networks[0].provider, "fake");
+  assert.deepEqual(r.networks[0].names, [{ name: "Ann Smith", kind: "profile" }, { name: "@ann", kind: "username" }, { name: "Annie", kind: "nickname", where: "Gamers" }, { name: "Ann", kind: "profile" }, { name: "Ann S.", kind: "seen" }]);
+  c.aliases = async () => { throw new Error("offline"); }; // the archive's names then
+  assert.deepEqual((await t.call("aliases", { chatId: `${id}:ann` })).networks[0].names.map((n: any) => n.name), ["Ann", "Ann S."]);
+  t.done();
+});
+
+test("recency: a chat whose newest lines are notices (safety number changed) sorts by its last real message", async () => {
+  const t = setup(); const id = await linked(t); const c = t.conns[0] as any;
+  c.chatList = [{ id: "ann", accountId: "x", provider: "fake", kind: "dm", name: "Ann", lastMessageAt: "2026-01-02T09:00:00Z", preview: "Your safety number with Ann has changed." },
+    { id: "bob", accountId: "x", provider: "fake", kind: "dm", name: "Bob", lastMessageAt: "2026-01-05T09:00:00Z" }];
+  t.conns[0].emit({ type: "message", data: msg("m1", "real one", "2026-01-01T10:00:00Z") });
+  t.conns[0].emit({ type: "message", data: { ...msg("m2", "Your safety number with Ann has changed.", "2026-01-02T09:00:00Z"), system: { kind: "info" } } });
+  const snap = await t.call("snapshot"), ann = snap.chats.find((x: any) => x.id === `${id}:ann`), bob = snap.chats.find((x: any) => x.id === `${id}:bob`);
+  assert.equal(ann.lastMessageAt, "2026-01-01T10:00:00Z"); assert.equal(ann.preview, "real one");
+  assert.equal(bob.lastMessageAt, "2026-01-05T09:00:00Z", "a chat whose archive is behind the network keeps the network's time");
+  t.done();
+});
+
 test("commonChats: a network that fails to list mutual servers still shows the communities of the shared groups", async () => {
   const t = setup(); const id = await linked(t); const c = t.conns[0] as any;
   c.spaces = async () => [{ id: "s2", accountId: "x", provider: "fake", name: "Server 2" }];

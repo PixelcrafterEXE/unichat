@@ -13,7 +13,7 @@ const VideoPlayer = lazy(() => import("./Video").then((m) => ({ default: m.Video
 const VoicePlayer = lazy(() => import("./Voice").then((m) => ({ default: m.VoicePlayer })));
 const VoiceRecorder = lazy(() => import("./Voice").then((m) => ({ default: m.VoiceRecorder })));
 import { EmojiPopover } from "./EmojiPicker";
-import { Pin as PinIcon, PinOff as PinOffIcon, Timer } from "./icons";
+import { Pin as PinIcon, PinOff as PinOffIcon, Timer, MessagesSquare } from "./icons";
 import { ExpiryMark } from "./Disappearing";
 import { PinnedBar, pinDurationLabel, usePins } from "./Pins";
 import { loadingLine, type LoadSource } from "./loadsource";
@@ -37,6 +37,8 @@ const PHONE_LINKED = new Set(["whatsapp", "signal", "threema-md"]);
 export interface RowCb {
   jump: (messageId: string, chatId?: string) => void; person: (senderId: string, name: string) => void; getMessages: () => Message[];
   reply: (m: Message) => void; edit: (m: Message) => void; forward: (m: Message) => void; react: (m: Message, e: string) => void; pin: (m: Message, pinned: boolean, durationSec?: number) => void;
+  /** open the thread a message started / announces (Message.thread) */
+  thread: (m: Message) => void;
   retry: (m: Message) => void; discard: (m: Message) => void; image: (i: { url: string; name?: string; video?: boolean }) => void; handle: (h: string, own: Chat) => void;
   /** multi-select (see SelectionBar): toggles this message and, from the first one, puts the timeline into selection mode */
   select: (m: Message) => void;
@@ -47,7 +49,7 @@ const MessageRow = memo(function MessageRow(p: { cb: RowCb; m: Message; grouped:
   const { cb, m } = p;
   return <MessageView onJump={cb.jump} onPerson={cb.person} m={m} grouped={p.grouped} chat={p.chat} own={p.own} net={p.net} showNet={p.showNet} caps={p.caps} settings={p.settings} getMessages={cb.getMessages}
     onReply={() => cb.reply(m)} onEdit={() => cb.edit(m)} onForward={() => cb.forward(m)} onReact={(e) => cb.react(m, e)} onPin={(pinned, d) => cb.pin(m, pinned, d)} onRetry={() => cb.retry(m)} onDiscard={() => cb.discard(m)}
-    onImage={cb.image} onMessageHandle={(h) => cb.handle(h, p.own)} selected={p.selected} selMode={p.selMode} onSelect={() => cb.select(m)} />;
+    onImage={cb.image} onMessageHandle={(h) => cb.handle(h, p.own)} onThread={() => cb.thread(m)} selected={p.selected} selMode={p.selMode} onSelect={() => cb.select(m)} />;
 }, (a, b) => a.m === b.m && a.grouped === b.grouped && a.caps === b.caps && a.settings === b.settings && a.cb === b.cb && a.net === b.net && a.showNet === b.showNet && a.selected === b.selected && a.selMode === b.selMode && sameChatBits(a.chat, b.chat) && sameChatBits(a.own, b.own));
 interface Pending { id: number; blob: Blob; name: string; mime: string; kind: Attachment["kind"]; preview?: string }
 const err = (e: any) => alert(e?.message ?? String(e));
@@ -263,11 +265,17 @@ export default function Conversation(p: Props) {
     retry: async (m: Message) => { const f = failedSends.get(m.id); if (!f) return; failedSends.delete(m.id); p.onRemove(m.id); await composerRef.current?.resend(f.payload); },
     discard: (m: Message) => { failedSends.delete(m.id); p.onRemove(m.id); }, image: setLightbox, select: toggleSel,
     handle: async (h: string, own: Chat) => { try { const c = await core.call("startChat", { accountId: own.accountId, handle: h }); p.onOpenChat(c.id); } catch (e) { err(e); } },
+    thread: async (m: Message) => {
+      if (!m.thread) return;
+      const id = `${m.accountId ?? m.chatId.slice(0, m.chatId.indexOf(":"))}:${m.thread.id}`; // the thread is a chat of the same account
+      if (!p.chats.some((c) => c.id === id)) { try { await core.call("openThread", { chatId: id }); } catch (e) { err(e); return; } } // e.g. an archived thread: the network is asked once, then it is listed
+      p.onOpenChat(id);
+    },
   } satisfies RowCb);
   const nets = useMemo(() => new Map((members ?? []).map((c) => [c.id, netOf(c, p.providers, p.accounts)])), [members, p.providers, p.accounts]);
   const renderMsg = (m: Message, i: number) => {
           const mkey = merged ? m.chatId + "|" + m.id : m.id; // native ids can repeat across member chats
-          if (m.system) return <div key={mkey} data-k={mkey}><SystemRow m={m} /></div>;
+          if (m.system) return <div key={mkey} data-k={mkey}><SystemRow m={m} onThread={m.thread ? () => cb.thread(m) : undefined} /></div>;
           const prev = shown[i - 1];
           const newDay = !prev || new Date(prev.time).toDateString() !== new Date(m.time).toDateString();
           // in a merged chat the other person has a different sender id on every network: a DM has only "me" and "them", and a switch of network starts a new group
@@ -305,6 +313,8 @@ export default function Conversation(p: Props) {
         {win && s0 > 0 && <div aria-hidden className="vgap" style={{ height: off![s0] }} />}
         {(win ? shown.slice(s0, e0) : shown).map((m, k) => renderMsg(m, (win ? s0 : 0) + k))}
         {win && e0 < shown.length && <div aria-hidden className="vgap" style={{ height: off![shown.length] - off![e0] }} />}
+        {p.loaded && p.loadState?.status === "loading" && shown.length > 0 && ( /* saved messages are on screen; the messenger's own answer is still coming */
+          <div className="refreshing" role="status" aria-label="Checking for newer messages" data-refreshing title={loadingLine(p.loadSource, 0)}><span className="spinner" aria-hidden /></div>)}
         {p.typing.length > 0 && (() => {
           const nameOf = (id: string) => messages.find((m) => m.senderId === id && !m.fromMe)?.sender || (chat.kind === "dm" ? chat.name : "");
           const names = p.typing.map(nameOf).filter(Boolean);
@@ -366,7 +376,7 @@ export function mentionsIn(text: string, picked: Map<string, string>): { id: str
 }
 /** Scheduled messages of this chat that are waiting for another device, or were too late: said once, above the composer. */
 function ScheduledNote({ ids }: { ids: string[] }) {
-  const [jobs, setJobs] = useState<{ id: string; status: string; lastError?: string; payload: { chatId?: string; waiting?: boolean; late?: boolean; aborted?: boolean } }[]>([]);
+  const [jobs, setJobs] = useState<{ id: string; status: string; lastError?: string; payload: { chatId?: string; waiting?: boolean; late?: boolean; aborted?: boolean; queued?: boolean } }[]>([]);
   const key = ids.join("|");
   useEffect(() => {
     let dead = false; const load = () => core.call("jobs").then((j: any[]) => { if (!dead) setJobs((j ?? []).filter((x) => x.kind === "send" && ids.includes(x.payload?.chatId) && ((x.status === "pending" && x.payload.waiting) || (x.status === "failed" && (x.payload.late || x.payload.aborted))))); }, () => {});
@@ -374,8 +384,10 @@ function ScheduledNote({ ids }: { ids: string[] }) {
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!jobs.length) return null;
   const w = jobs.filter((j) => j.status === "pending"), f = jobs.length - w.length;
-  return <div className="schednote" data-sched-note role="status"><Clock3 size={14} /> {w.length > 0 && <span>{w.length === 1 ? "Scheduled message" : `${w.length} scheduled messages`}: {w[0].lastError}</span>}
-    {f > 0 && <span> {f === 1 ? "1 scheduled message was" : `${f} scheduled messages were`} not sent. See Settings, Scheduled messages.</span>}</div>;
+  // a queued message (sent while the device that sends for this account was offline) is named as such, not as a scheduled one
+  const what = (n: number, queued: boolean) => queued ? (n === 1 ? "Message waiting to send" : `${n} messages waiting to send`) : n === 1 ? "Scheduled message" : `${n} scheduled messages`;
+  return <div className="schednote" data-sched-note role="status"><Clock3 size={14} /> {w.length > 0 && <span>{what(w.length, w.every((j) => j.payload.queued))}: {w[0].lastError ?? "it goes as soon as it can."}</span>}
+    {f > 0 && <span> {f === 1 ? "1 message was" : `${f} messages were`} not sent. See Settings, Scheduled messages.</span>}</div>;
 }
 interface ComposerApi { focus(): void; setText(t: string): void; addFiles(f: File[]): void; resend(payload: object): Promise<void> }
 
@@ -603,7 +615,7 @@ function MessageView(p: {
   m: Message; grouped: boolean; chat: Chat; caps?: Capabilities; settings: Settings; getMessages: () => Message[];
   onRetry: () => void; onDiscard: () => void;
   onReply: () => void; onEdit: () => void; onForward: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onImage: (i: { url: string; name?: string; video?: boolean }) => void;
-  selected?: boolean; selMode?: boolean; onSelect: () => void; onMessageHandle: (h: string) => void;
+  selected?: boolean; selMode?: boolean; onSelect: () => void; onMessageHandle: (h: string) => void; onThread: () => void;
 }) {
   const { m, chat, caps } = p;
   const [picker, setPicker] = useState(false);
@@ -614,12 +626,14 @@ function MessageView(p: {
   const reactorTitle = (r: { emoji: string; senderIds: string[]; mine?: boolean; count?: number }) =>
     (chat0Group(p.chat) && r.senderIds.length ? r.senderIds.map((id) => (r.mine && p.getMessages().some((x) => x.fromMe && x.senderId === id) ? "You" : nameOf(id))).join(", ") + (r.count && r.count > r.senderIds.length ? ` and ${r.count - r.senderIds.length} others` : "") + " · " : r.count && r.count > r.senderIds.length ? `${r.count} people · ` : "") + (r.mine ? "Click to remove your reaction · " : "") + "Right-click: who reacted";
   const pend = isPending(m); // sent a moment ago, the backend has not answered yet
+  // not on the network (pending, queued or failed): it has no id there, so reply / react / edit / delete cannot refer to it (the menu offers Retry / Discard)
+  const unsent = pend || m.id.startsWith("local-");
   const [menu, setMenu] = useState<{ x: number; y: number; sel: string }>();
   const lastLong = useRef(0); // touch: a long press opens the same menu as a right click (the browser's own contextmenu event that follows is ignored)
   const lp = useLongPress((x, y) => { lastLong.current = Date.now(); setMenu({ x, y, sel: "" }); });
   // Touch: drag a message to the right to reply to it. `swipe.on` is decided on the first moves -- false as soon as the
   // gesture is more vertical than horizontal, so the timeline keeps scrolling normally (CSS touch-action: pan-y does the rest).
-  const canSwipeReply = !!caps?.replies && !m.deleted && !pend && !p.selMode;
+  const canSwipeReply = !!caps?.replies && !m.deleted && !unsent && !p.selMode;
   const swipe = useRef({ x: 0, y: 0, on: undefined as boolean | undefined, armed: false });
   const [slide, setSlide] = useState(0);
   const SWIPE_FIRE = 56, SWIPE_MAX = 80;
@@ -668,7 +682,7 @@ function MessageView(p: {
   const attsEl = !!atts.length && <div className="atts">{atts.map((a) => <AttachmentView key={a.id} size={atts.filter((x) => x.kind === "image" || x.kind === "video" || x.gif).length > 1 ? 148 : 300} chat={p.own} m={m} a={a} auto={p.settings.autoDownloadMedia} onImage={p.onImage} />)}{metaPos === "overlay" && meta("ov")}</div>;
   const textEl = !!text && <p className="tx"><Linkified text={text} emojiScope={caps?.customEmoji ? p.own.accountId : undefined} />{m.editedAt && <small className="edited"> (edited)</small>}{metaPos === "inline" && meta("inl")}</p>;
   return (
-    <div data-mid={m.id} data-mkey={m.chatId + "|" + m.id} className={"msg k-" + chat.kind + (p.grouped ? " grouped" : "") + (m.fromMe ? " mine" : "") + (pend ? " pend" : "") + (p.net ? " merged" : "") + (p.selMode ? " selmode" : "") + (p.selected ? " sel" : "") + (!m.deleted && reactions.length ? " hasreact" : "")}
+    <div data-mid={m.id} data-mkey={m.chatId + "|" + m.id} className={"msg k-" + chat.kind + (p.grouped ? " grouped" : "") + (m.fromMe ? " mine" : "") + (pend ? " sending" : "") + (p.net ? " merged" : "") + (p.selMode ? " selmode" : "") + (p.selected ? " sel" : "") + (!m.deleted && reactions.length ? " hasreact" : "")}
       onClickCapture={(e) => { // while selecting, the whole row is one big checkbox: links, players and action buttons must not fire
         if (p.selMode) { e.stopPropagation(); e.preventDefault(); p.onSelect(); return; }
         if (lp.swallow()) { e.stopPropagation(); e.preventDefault(); } }}
@@ -705,10 +719,11 @@ function MessageView(p: {
               onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setReactors(true); }}
               onClick={() => caps?.reactions && p.onReact(r.emoji)}>{caps?.customEmoji && /^:[^:\s]+:$/.test(r.emoji) ? <CustomEmoji scope={p.own.accountId} name={r.emoji.slice(1, -1)} size={14} /> : r.emoji} <span>{r.count ?? r.senderIds.length}</span></button>))}
             {caps?.reactions && <button className="chip add" title="Add reaction" onClick={() => setFullPicker(!fullPicker)}><SmilePlus size={12} /></button>}</div>)}
+        {m.thread && !m.deleted && <button className="linkbtn threadlink" data-open-thread onClick={p.onThread}><MessagesSquare size={13} /> {m.thread.count ? `${m.thread.count} ${m.thread.count === 1 ? "reply" : "replies"}` : "Thread"}{m.thread.name && m.thread.name !== m.text ? ` · ${m.thread.name}` : ""} · Open</button>}
         {m.status === "failed" && !m.deleted && <div className="foot"><span className="failrow">{failedSends.get(m.id)?.error ?? "Failed to send"} <button className="linkbtn" onClick={p.onRetry}><RotateCcw size={12} /> Retry</button> <button className="linkbtn" onClick={p.onDiscard}>Discard</button></span></div>}
       </div>
       {!m.deleted && !pend && !p.selMode && <button className="msgmore" aria-label="Message options" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left, y: r.bottom, sel: "" }); }}><MoreHorizontal size={16} /></button>}
-      {!m.deleted && !pend && !p.selMode && (
+      {!m.deleted && !unsent && !p.selMode && (
         <div className="actions">
           {caps?.reactions && <button title="React" onClick={() => setPicker(!picker)}><SmilePlus size={16} /></button>}
           {caps?.replies && <button title="Reply" onClick={p.onReply}><Reply size={16} /></button>}
@@ -843,8 +858,8 @@ function PollCard({ m, canVote }: { m: Message; canVote: boolean }) {
 }
 
 /** Timeline marker: the account was linked / signed out / unlinked here (possible gap in history). */
-function SystemRow({ m }: { m: Message }) {
-  return <div className={"sysmsg " + (m.system?.kind ?? "")} role="note"><span>{m.system?.kind === "info" && /disappearing messages/i.test(m.text) ? <Timer size={13} data-timer-note /> : m.system?.kind === "linked" || m.system?.kind === "info" ? <Info size={13} /> : <LogOut size={13} />} {m.text}<time>{new Date(m.time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</time></span></div>;
+function SystemRow({ m, onThread }: { m: Message; onThread?: () => void }) {
+  return <div className={"sysmsg " + (m.system?.kind ?? "")} role="note"><span>{m.system?.kind === "info" && /disappearing messages/i.test(m.text) ? <Timer size={13} data-timer-note /> : m.system?.kind === "linked" || m.system?.kind === "info" ? <Info size={13} /> : <LogOut size={13} />} {m.text}{onThread && <button className="linkbtn threadlink" data-open-thread onClick={onThread}><MessagesSquare size={12} /> Open thread</button>}<time>{new Date(m.time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</time></span></div>;
 }
 
 /** Right-click menu for a message (replaces the browser's own menu; selected text still gets "Copy selection"). */
@@ -855,7 +870,9 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: 
   const [pos, setPos] = useState({ left: p.x, top: p.y });
   useLayoutEffect(() => { const r = ref.current!.getBoundingClientRect(); setPos({ left: Math.max(8, Math.min(p.x, innerWidth - r.width - 8)), top: Math.max(8, Math.min(p.y, innerHeight - r.height - 8)) }); }, [p.x, p.y]);
   useEffect(() => {
-    const close = () => p.onClose(); const key = (e: KeyboardEvent) => e.key === "Escape" && p.onClose(), sc = (e: Event) => { if (!ref.current?.contains(e.target as Node)) close(); };
+    // a scroll closes the menu, except in its first 300 ms: a chat that just opened is still settling at the bottom (images, the live answer), and that is not the user scrolling away
+    const opened = performance.now();
+    const close = () => p.onClose(); const key = (e: KeyboardEvent) => e.key === "Escape" && p.onClose(), sc = (e: Event) => { if (performance.now() - opened > 300 && !ref.current?.contains(e.target as Node)) close(); };
     addEventListener("mousedown", close); addEventListener("scroll", sc, true); addEventListener("resize", close); addEventListener("blur", close); addEventListener("keydown", key);
     return () => { removeEventListener("mousedown", close); removeEventListener("scroll", sc, true); removeEventListener("resize", close); removeEventListener("blur", close); removeEventListener("keydown", key); };
   }, []);

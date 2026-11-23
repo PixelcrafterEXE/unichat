@@ -171,12 +171,18 @@ export class FakeMM {
       return json({ order: sel.map((p) => p.id), posts });
     }
     if (path === "/posts" && m === "POST") {
+      if (body.root_id && this.postById[body.root_id]) this.postById[body.root_id].reply_count = (this.postById[body.root_id].reply_count ?? 0) + 1;
       const p = this.addPost(body.channel_id, "u_me", body.message, { root_id: body.root_id ?? "", pending_post_id: body.pending_post_id, file_ids: body.file_ids ?? [], metadata: { files: (body.file_ids ?? []).map((i: string) => this.files[i].info) } });
       this.pushPosted(p); return json(p, 201);
     }
     if (m === "POST" && (r = path.match(/^\/posts\/(\w+)\/(pin|unpin)$/))) { const p = this.postById[r[1]]; if (!p) return fail(404, "x"); p.is_pinned = r[2] === "pin"; p.update_at = (this.now += 1000); this.push("post_edited", { post: JSON.stringify(p) }, { channel_id: p.channel_id }); return json({ status: "OK" }); }
     if (m === "GET" && (r = path.match(/^\/channels\/(\w+)\/pinned$/))) { const sel = Object.values(this.postById).filter((p: any) => p.channel_id === r![1] && p.is_pinned); const posts: Record<string, any> = {}; for (const p of sel as any[]) posts[p.id] = p; return json({ order: (sel as any[]).map((p) => p.id), posts }); }
     if ((r = path.match(/^\/posts\/(\w+)\/patch$/))) { const p = this.postById[r[1]]; p.message = body.message; p.edit_at = p.update_at = (this.now += 1000); this.push("post_edited", { post: JSON.stringify(p) }, { channel_id: p.channel_id }); return json(p); }
+    if (m === "GET" && (r = path.match(/^\/posts\/(\w+)\/thread$/))) {
+      const root = this.postById[r[1]]; if (!root) return fail(404, "x");
+      const sel = [root, ...Object.values(this.postById).filter((p: any) => p.root_id === root.id)]; const posts: Record<string, any> = {}; for (const p of sel) posts[p.id] = p;
+      return json({ order: sel.map((p: any) => p.id).reverse(), posts });
+    }
     if ((r = path.match(/^\/posts\/(\w+)$/))) {
       const p = this.postById[r[1]]; if (!p) return fail(404, "x");
       if (m === "DELETE") { p.delete_at = (this.now += 1000); this.push("post_deleted", { post: JSON.stringify(p) }, { channel_id: p.channel_id }); return json({ status: "OK" }); }

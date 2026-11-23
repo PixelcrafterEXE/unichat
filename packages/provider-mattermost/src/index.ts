@@ -3,12 +3,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from "node:path";
 import WebSocket from "ws";
 import type {
-  Capabilities, Chat, Connector, Contact, CoreEvent, HistoryQuery, LoginPrompt, Message, OutgoingMessage, ProviderFactory, Profile, ProfilePatch, Space,
+  Capabilities, Chat, Connector, Contact, CoreEvent, HistoryQuery, LoginPrompt, Message, MessagePatch, OutgoingMessage, ProviderFactory, Profile, ProfilePatch, Space,
 } from "@unimsg/core";
 import { Api, MmError, dbg, normaliseServer } from "./api.js";
 import { emojiFromName, emojiToName } from "./emoji.js";
 import {
-  applyMentions, parseTeamInvite, teamSlug, iso, mapChat, mapPost, mapReactions, mapSpace, otherUserId, parseJson, profileName, userName,
+  applyMentions, parseTeamInvite, teamSlug, iso, mapChat, mapPost, mapReactions, mapSpace, otherUserId, parseJson, threadChatId, threadRoot, profileName, userName,
   type MmChannel, type MmFile, type MmMember, type MmPost, type MmReaction, type MmTeam, type MmUser, type PostList,
 } from "./map.js";
 
@@ -48,6 +48,8 @@ class MattermostConnector implements Connector {
   private missingUsers = new Set<string>();
   private previews = new Map<string, string>();
   private posts = new Map<string, MmPost>();
+  /** Threads opened as chats of their own: root post id -> channel id. */
+  private threads = new Map<string, string>();
   private files = new Map<string, MmFile>();
   private pending = new Set<string>();
   private seen = new Set<string>();
@@ -399,10 +401,13 @@ class MattermostConnector implements Connector {
       await this.ensureUsers(ps.map((p) => p.user_id));
       for (const p of ps) {
         const known = this.seen.has(p.id) || this.posts.has(p.id);
-        if (p.delete_at) { this.emit({ type: "message-update", data: { chatId: p.channel_id, messageId: p.id, patch: { deleted: true } } }); this.cachePost(p); continue; }
+        if (p.delete_at) { this.updateAll(p, { deleted: true }); this.cachePost(p); continue; }
         this.cachePost(p); this.setPreview(p);
-        if (p.create_at > since && !known) { this.rememberSeen(p.id); const m = mapPost(p, this.msgCtx()); if (m) { this.emit({ type: "message", data: m }); n++; } }
-        else this.emit({ type: "message-update", data: { chatId: p.channel_id, messageId: p.id, patch: { text: p.message, ...(p.edit_at ? { editedAt: iso(p.edit_at) } : {}), reactions: mapReactions(p.metadata?.reactions, this.me!.id) ?? [] } } });
+        if (p.create_at > since && !known) {
+          this.rememberSeen(p.id); const m = mapPost(p, this.msgCtx()); if (m) { this.emit({ type: "message", data: m }); n++; }
+          for (const t of this.threadsOf(p)) { const tm = mapPost(p, { ...this.msgCtx(), inThread: t }); if (tm) this.emit({ type: "message", data: tm }); }
+        }
+        else this.updateAll(p, { text: p.message, ...(p.edit_at ? { editedAt: iso(p.edit_at) } : {}), reactions: mapReactions(p.metadata?.reactions, this.me!.id) ?? [] });
       }
     }
     dbg(`catch-up delivered ${n} messages`);
@@ -437,9 +442,11 @@ class MattermostConnector implements Connector {
         await this.ensureUsers([p.user_id]);
         if (p.root_id && !this.posts.has(p.root_id)) { try { this.cachePost(await this.api!.get<MmPost>(`/posts/${p.root_id}`)); } catch { /* preview only */ } }
         this.cachePost(p); this.setPreview(p);
-        this.clearTyping(p.channel_id, p.user_id);
+        this.clearTyping(p.channel_id, p.user_id); if (p.root_id) this.clearTyping(threadChatId(p.root_id), p.user_id);
         const m = mapPost(p, this.msgCtx());
         if (m) this.emit({ type: "message", data: m });
+        for (const t of this.threadsOf(p)) { const tm = mapPost(p, { ...this.msgCtx(), inThread: t }); if (tm) this.emit({ type: "message", data: tm }); }
+        if (p.root_id) this.bumpReplies(p.root_id);
         return;
       }
       case "post_edited": {
@@ -448,15 +455,15 @@ class MattermostConnector implements Connector {
         if (old && !p.metadata) p.metadata = old.metadata;
         this.cachePost(p); this.setPreview(p);
         const pinChanged = !!old && !!old.is_pinned !== !!p.is_pinned, textSame = !!old && old.message === p.message && (old.edit_at ?? 0) === (p.edit_at ?? 0);
-        if (pinChanged || (!old && p.is_pinned)) this.emit({ type: "message-update", data: { chatId: p.channel_id, messageId: p.id, patch: p.is_pinned ? { pinned: true, pinnedAt: iso(p.update_at || Date.now()) } : { pinned: false } } });
+        if (pinChanged || (!old && p.is_pinned)) this.updateAll(p, p.is_pinned ? { pinned: true, pinnedAt: iso(p.update_at || Date.now()) } : { pinned: false });
         if (pinChanged && textSame) return; // pinning bumps update_at: that is not an edit
-        this.emit({ type: "message-update", data: { chatId: p.channel_id, messageId: p.id, patch: { text: p.message, editedAt: iso(p.edit_at || p.update_at || Date.now()) } } });
+        this.updateAll(p, { text: p.message, editedAt: iso(p.edit_at || p.update_at || Date.now()) });
         return;
       }
       case "post_deleted": {
         const p = parseJson<MmPost>(d.post); if (!p) return;
         this.posts.delete(p.id);
-        this.emit({ type: "message-update", data: { chatId: p.channel_id || b.channel_id, messageId: p.id, patch: { deleted: true } } });
+        this.updateAll({ ...p, channel_id: p.channel_id || b.channel_id }, { deleted: true });
         return;
       }
       case "reaction_added": case "reaction_removed": {
@@ -467,15 +474,17 @@ class MattermostConnector implements Connector {
         if (ev.event === "reaction_added") list.push(r);
         post.metadata = { ...post.metadata, reactions: list };
         this.cachePost(post);
-        this.emit({ type: "message-update", data: { chatId: post.channel_id, messageId: post.id, patch: { reactions: mapReactions(list, me) ?? [] } } });
+        this.updateAll(post, { reactions: mapReactions(list, me) ?? [] });
         return;
       }
       case "typing": {
         const uid = d.user_id as string | undefined, cid = b.channel_id as string | undefined;
-        if (!uid || !cid || uid === me || d.parent_id) return;
-        this.emit({ type: "typing", data: { chatId: cid, senderId: uid, typing: true } });
-        const k = cid + "/" + uid; clearTimeout(this.typingTimers.get(k));
-        this.typingTimers.set(k, setTimeout(() => this.clearTyping(cid, uid), 6000));
+        if (!uid || !cid || uid === me) return;
+        const at = d.parent_id ? (this.threads.has(String(d.parent_id)) ? threadChatId(String(d.parent_id)) : "") : cid; // typing in a thread shows only in that thread's chat
+        if (!at) return;
+        this.emit({ type: "typing", data: { chatId: at, senderId: uid, typing: true } });
+        const k = at + "/" + uid; clearTimeout(this.typingTimers.get(k));
+        this.typingTimers.set(k, setTimeout(() => this.clearTyping(at, uid), 6000));
         return;
       }
       case "channel_viewed": {
@@ -544,11 +553,65 @@ class MattermostConnector implements Connector {
   async spaces(): Promise<Space[]> { this.ready(); return [...this.teams.values()].map((t) => ({ ...mapSpace(t, this.accountId), ...(t.last_team_icon_update ? { avatarRev: String(t.last_team_icon_update) } : {}) })); }
   async chats(): Promise<Chat[]> {
     this.ready(); // avatarRev = the other person's last_picture_update (Mattermost bumps it on every change)
-    return [...this.channels.values()].map((c) => { const uid = otherUserId(c, this.me!.id), rev = uid ? this.users.get(uid)?.last_picture_update : undefined; return rev ? { ...this.chatOf(c), avatarRev: String(rev) } : this.chatOf(c); });
+    const list = [...this.channels.values()].map((c) => { const uid = otherUserId(c, this.me!.id), rev = uid ? this.users.get(uid)?.last_picture_update : undefined; return rev ? { ...this.chatOf(c), avatarRev: String(rev) } : this.chatOf(c); });
+    for (const [root, cid] of this.threads) { const t = this.threadChat(root, cid); if (t) list.push(t); }
+    return list;
+  }
+
+  // ---------------------------------------------------------------- threads (a root post and its replies, opened as a chat)
+  private threadChat(root: string, cid: string): Chat | undefined {
+    const c = this.channels.get(cid); if (!c) return undefined;
+    const p = this.posts.get(root), parent = this.chatOf(c);
+    const t = (p?.message ?? "").replace(/\s+/g, " ").trim();
+    const chat: Chat = { id: threadChatId(root), accountId: this.accountId, provider: "mattermost", kind: parent.kind, name: t ? (t.length > 60 ? t.slice(0, 57) + "..." : t) : "Thread", unread: 0, description: `Thread in ${parent.kind === "channel" ? "~" : ""}${parent.name}` };
+    if (parent.spaceId) chat.spaceId = parent.spaceId;
+    if (p) chat.lastMessageAt = iso(Math.max(p.create_at, (p as any).last_reply_at ?? 0));
+    if (c.delete_at) chat.readOnly = true;
+    return chat;
+  }
+  private async rootPost(root: string): Promise<MmPost> {
+    let p = this.posts.get(root);
+    if (!p) { p = await this.forbid("open this thread", () => this.ready().get<MmPost>(`/posts/${root}`)); this.cachePost(p); }
+    return p;
+  }
+  /** The channel a chat id posts to, and the thread root for a thread chat. */
+  private async target(chatId: string): Promise<{ channel: string; root?: string }> {
+    const root = threadRoot(chatId);
+    if (!root) return { channel: chatId };
+    return { channel: this.threads.get(root) ?? (await this.rootPost(root)).channel_id, root };
+  }
+  /** Thread chats a post also shows in (its own thread, if that is open). */
+  private threadsOf(p: Pick<MmPost, "id" | "root_id">): string[] {
+    const root = p.root_id || p.id;
+    return this.threads.has(root) ? [threadChatId(root)] : [];
+  }
+  async openThread(threadId: string): Promise<Chat> {
+    this.ready();
+    const root = threadRoot(threadId); if (!root) throw new Error("Unknown thread.");
+    let p = await this.rootPost(root);
+    if (p.root_id) p = await this.rootPost(p.root_id); // a reply's id: open the thread it belongs to
+    if (p.delete_at) throw new Error("This thread was deleted.");
+    if (!this.channels.has(p.channel_id) && !(await this.loadChannel(p.channel_id))) throw new Error("You can't see this thread.");
+    this.threads.set(p.id, p.channel_id);
+    await this.ensureUsers([p.user_id]);
+    return this.threadChat(p.id, p.channel_id)!;
+  }
+  private async threadHistory(root: string, q: HistoryQuery): Promise<Message[]> {
+    const api = this.ready(), limit = Math.max(1, Math.min(200, q.limit || 50));
+    const l = await this.forbid("read this thread", () => api.get<PostList>(`/posts/${root}/thread`));
+    let ps = Object.values(l.posts ?? {}).filter((p) => p.id === root || p.root_id === root).sort((a, b) => a.create_at - b.create_at);
+    if (ps[0]) this.threads.set(root, ps[0].channel_id);
+    if (q.beforeMessageId) { const i = ps.findIndex((p) => p.id === q.beforeMessageId); ps = i < 0 ? [] : ps.slice(0, i); }
+    ps = ps.slice(-limit);
+    await this.ensureUsers(ps.map((p) => p.user_id));
+    for (const p of ps) this.cachePost(p);
+    const ctx = { ...this.msgCtx(), inThread: threadChatId(root) };
+    return ps.map((p) => mapPost(p, ctx)).filter((m): m is Message => !!m);
   }
 
   async history(chatId: string, q: HistoryQuery): Promise<Message[]> {
     const api = this.ready();
+    const root = threadRoot(chatId); if (root) return this.threadHistory(root, q);
     const limit = Math.max(1, Math.min(200, q.limit || 50));
     const l = await api.get<PostList>(`/channels/${chatId}/posts?per_page=${limit}${q.beforeMessageId ? `&before=${encodeURIComponent(q.beforeMessageId)}` : ""}`);
     const ps = l.order.map((id) => l.posts[id]).filter((p): p is MmPost => !!p);
@@ -563,6 +626,7 @@ class MattermostConnector implements Connector {
 
   async members(chatId: string): Promise<Contact[]> {
     const api = this.ready();
+    chatId = (await this.target(chatId)).channel;
     const ids: string[] = [];
     for (let page = 0; page < 5; page++) {
       const got = await api.get<{ user_id: string }[]>(`/channels/${chatId}/members?page=${page}&per_page=200`);
@@ -613,6 +677,8 @@ class MattermostConnector implements Connector {
 
   async send(chatId: string, msg: OutgoingMessage): Promise<Message> {
     const api = this.ready();
+    const { channel, root } = await this.target(chatId);
+    const asked = chatId; chatId = channel;
     const c = this.channels.get(chatId);
     if (c?.delete_at) throw new Error("This channel is archived; you cannot post in it.");
     const infos: MmFile[] = [];
@@ -630,14 +696,30 @@ class MattermostConnector implements Connector {
     // Mattermost mentions are plain "@username" text (the server notifies and highlights them)
     const text = msg.mentions?.length ? applyMentions(msg.text, msg.mentions, (id) => this.users.get(id)?.username) : msg.text;
     const body: Record<string, unknown> = { channel_id: chatId, message: text, pending_post_id: pendingId };
-    if (msg.replyToMessageId) body.root_id = await this.rootOf(msg.replyToMessageId);
+    if (root) body.root_id = root;
+    else if (msg.replyToMessageId) body.root_id = await this.rootOf(msg.replyToMessageId);
     if (infos.length) body.file_ids = infos.map((f) => f.id);
     const p = await api.json<MmPost>("POST", "/posts", body);
     this.rememberSeen(p.id); this.cachePost(p); this.setPreview(p);
     if (c) { c.last_post_at = p.create_at; c.total_msg_count = (c.total_msg_count ?? 0) + (p.root_id ? 0 : 1); const m = this.chanMembers.get(c.id); if (m) m.msg_count = c.total_msg_count; }
     for (const f of infos) this.files.set(f.id, f);
     await this.ensureUsers(p.root_id ? [p.root_id && this.posts.get(p.root_id)?.user_id || ""] : []);
-    return mapPost(p, this.msgCtx(infos))!;
+    // the server's echo is skipped (rememberSeen): the other views of this post (channel / open thread) get it from here
+    const copies = [chatId, ...this.threadsOf(p)].filter((v) => v !== asked);
+    for (const v of copies) { const m = mapPost(p, { ...this.msgCtx(infos), ...(threadRoot(v) ? { inThread: v } : {}) }); if (m) this.emit({ type: "message", data: m }); }
+    if (p.root_id) this.bumpReplies(p.root_id);
+    return mapPost(p, { ...this.msgCtx(infos), ...(root ? { inThread: asked } : {}) })!;
+  }
+
+  /** A change to a post, for the channel and an open thread it shows in. */
+  private updateAll(p: MmPost, patch: MessagePatch) {
+    for (const chatId of [p.channel_id, ...this.threadsOf(p)]) this.emit({ type: "message-update", data: { chatId, messageId: p.id, patch } });
+  }
+  /** A reply arrived: the root's "N replies" link counts it. */
+  private bumpReplies(root: string) {
+    const r = this.posts.get(root); if (!r) return;
+    r.reply_count = (r.reply_count ?? 0) + 1;
+    this.emit({ type: "message-update", data: { chatId: r.channel_id, messageId: r.id, patch: { thread: { id: threadChatId(r.id), count: r.reply_count } } } });
   }
 
   async react(_chatId: string, messageId: string, emoji: string | null) {
@@ -657,10 +739,13 @@ class MattermostConnector implements Connector {
   async pin(chatId: string, messageId: string, pinned: boolean) {
     await this.ready().json("POST", `/posts/${messageId}/${pinned ? "pin" : "unpin"}`);
     const cached = this.posts.get(messageId); if (cached) this.cachePost({ ...cached, is_pinned: pinned });
-    this.emit({ type: "message-update", data: { chatId, messageId, patch: pinned ? { pinned: true, pinnedAt: new Date().toISOString(), pinnedBy: this.me?.id } : { pinned: false } } });
+    const patch = pinned ? { pinned: true, pinnedAt: new Date().toISOString(), pinnedBy: this.me?.id } : { pinned: false };
+    const p = this.posts.get(messageId);
+    if (p) this.updateAll(p, patch); else this.emit({ type: "message-update", data: { chatId, messageId, patch } });
   }
   /** GET /channels/{id}/pinned: the channel's pinned posts, newest first. */
   async pins(chatId: string): Promise<Message[]> {
+    chatId = (await this.target(chatId)).channel;
     const list = await this.ready().get<PostList>(`/channels/${chatId}/pinned`);
     const ps = Object.values(list.posts ?? {}).filter((p) => p.channel_id === chatId && !p.delete_at).sort((a, b) => b.create_at - a.create_at);
     await this.ensureUsers(ps.map((p) => p.user_id));
@@ -671,9 +756,11 @@ class MattermostConnector implements Connector {
   async delete(_chatId: string, messageId: string) { await this.ready().json("DELETE", `/posts/${messageId}`); }
   async setTyping(chatId: string, typing: boolean) {
     if (!typing || this.ws?.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify({ seq: ++this.seq, action: "user_typing", data: { channel_id: chatId, parent_id: "" } }));
+    const root = threadRoot(chatId), channel = root ? this.threads.get(root) : chatId; if (!channel) return;
+    this.ws.send(JSON.stringify({ seq: ++this.seq, action: "user_typing", data: { channel_id: channel, parent_id: root ?? "" } }));
   }
   async markRead(chatId: string, _upTo: string) {
+    if (threadRoot(chatId)) return; // a thread has no read state of its own here (its replies count in the channel)
     await this.ready().json("POST", "/channels/members/me/view", { channel_id: chatId });
     const c = this.channels.get(chatId), m = this.chanMembers.get(chatId);
     if (c && m) { m.msg_count = c.total_msg_count ?? 0; m.mention_count = 0; }
@@ -775,6 +862,8 @@ class MattermostConnector implements Connector {
 
   async refreshChat(chatId: string): Promise<string> {
     const api = this.ready();
+    const root = threadRoot(chatId);
+    if (root) { const ms = await this.threadHistory(root, { limit: 200 }); for (const m of ms) this.emit({ type: "message", data: { ...m, historical: true } }); return `Re-fetched the thread's ${ms.length} messages`; }
     const l = await api.get<PostList>(`/channels/${chatId}/posts?per_page=60`);
     const ps = l.order.map((id) => l.posts[id]).filter((p): p is MmPost => !!p).reverse();
     await this.ensureUsers(ps.map((p) => p.user_id));

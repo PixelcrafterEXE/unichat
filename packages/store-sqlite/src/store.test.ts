@@ -75,14 +75,16 @@ test("encryption at rest: payloads are sealed, ids and times stay readable, a wr
   s.putMessages([m("wa-1:c", "1", "top secret words", "2026-01-01T00:00:00Z", { sender: "Alice Example" })]);
   s.setAlias("wa-1:c", "Mum"); s.putChatCache("wa-1", { chats: [{ id: "wa-1:c", accountId: "wa-1", provider: "whatsapp", kind: "dm", name: "Alice Example" }], spaces: [] });
   s.putMeshGroup({ id: "mesh:1", name: "Secret crew", members: [] });
+  s.putJob({ id: "j1", kind: "send", payload: { chatId: "wa-1:c", text: "queued for later" }, runAt: 1, attempts: 0, maxAttempts: 6, status: "pending" });
   const raw = new DatabaseSync(t.path, { readOnly: true });
-  const dump = JSON.stringify(["messages", "aliases", "chat_cache", "mesh_groups", "accounts"].map((tb) => raw.prepare(`SELECT * FROM ${tb}`).all().map((r) => ({ ...r }))));
-  for (const secret of ["top secret words", "Alice Example", "Mum", "Secret crew", "+49 151 2345678"]) assert.equal(dump.includes(secret), false, `${secret} leaked in plaintext`);
+  const dump = JSON.stringify(["messages", "aliases", "chat_cache", "mesh_groups", "accounts", "jobs"].map((tb) => raw.prepare(`SELECT * FROM ${tb}`).all().map((r) => ({ ...r }))));
+  for (const secret of ["top secret words", "Alice Example", "Mum", "Secret crew", "+49 151 2345678", "queued for later"]) assert.equal(dump.includes(secret), false, `${secret} leaked in plaintext`);
   assert.ok(dump.includes("2026-01-01T00:00:00Z")); // time is deliberately plain (ordering / retention)
   raw.close();
   const again = new SqliteStore(t.path, key);
   assert.equal(again.getMessage("wa-1:c", "1")!.text, "top secret words"); assert.equal(again.listAliases()["wa-1:c"], "Mum");
   assert.equal(again.getChatCache("wa-1")!.chats[0].name, "Alice Example"); assert.equal(again.listAccounts()[0].label, "+49 151 2345678");
+  assert.equal((again.getJob("j1")!.payload as { text: string }).text, "queued for later"); assert.equal(again.dueJobs(2).length, 1);
   assert.throws(() => new SqliteStore(t.path, randomBytes(32)).getMessage("wa-1:c", "1"));                 // wrong key: authentication fails
   assert.throws(() => new SqliteStore(t.path).getMessage("wa-1:c", "1"), /no data key/);                   // no key
   assert.throws(() => new SqliteStore(join(t.dir, "x.db"), new Uint8Array(5)), /32 bytes/);
@@ -91,8 +93,9 @@ test("encryption at rest: payloads are sealed, ids and times stay readable, a wr
 
 test("rows written before a key existed stay readable and become encrypted when rewritten", () => {
   const t = open(); new SqliteStore(t.path).setAlias("x:1", "Plain name");
+  new SqliteStore(t.path).putJob({ id: "old", kind: "send", payload: { text: "scheduled before 0.1.17" }, runAt: 1, attempts: 0, maxAttempts: 6, status: "pending" });
   const key = randomBytes(32); const s = new SqliteStore(t.path, key);
-  assert.equal(s.listAliases()["x:1"], "Plain name"); s.setAlias("x:1", "Plain name");
+  assert.equal(s.listAliases()["x:1"], "Plain name"); assert.equal((s.getJob("old")!.payload as { text: string }).text, "scheduled before 0.1.17"); s.setAlias("x:1", "Plain name");
   const raw = new DatabaseSync(t.path, { readOnly: true });
   assert.equal(String((raw.prepare("SELECT name FROM aliases").get() as { name: string }).name).startsWith("e1:"), true); raw.close();
   t.done();
@@ -265,6 +268,7 @@ test("chat flags: unreadMark persists in the database, survives reopen and the m
   assert.deepEqual(a.listChatFlags()["x:1"], { pinned: false, muted: false, archived: false, unreadMark: true });
   a.setChatFlags("x:2", {}); assert.equal(a.listChatFlags()["x:2"], undefined);
   const b = new SqliteStore(f); assert.equal(b.listChatFlags()["x:1"]?.unreadMark, true);
+  b.setChatFlags("x:3", { starred: true }); assert.equal(new SqliteStore(f).listChatFlags()["x:3"]?.starred, true, "a starred chat stays starred");
 });
 
 test("avatars: sealed at rest, persist across reopen, list/prune, tombstones, hint, and the table is added to an old database", () => {

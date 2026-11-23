@@ -193,7 +193,8 @@ export type CoreEvent =
   | { type: "account"; data: { id: string; state: AccountState; detail?: string } }   // the Hub adds the connector's live `capabilities`
   | { type: "error"; data: { id?: string; code: string; message: string; fatal?: boolean } };
 
-export interface MessagePatch { pinned?: boolean; pinnedAt?: string; pinnedBy?: string; pinnedUntil?: string; sender?: string; text?: string; editedAt?: string; deleted?: boolean; reactions?: Reaction[]; receipts?: MessageReceipt[]; attachments?: Attachment[]; location?: Location; poll?: Poll; card?: Card; cards?: Card[] }
+export interface PersonAlias { name: string; kind?: "profile" | "username" | "nickname" | "seen"; space?: string }
+export interface MessagePatch { pinned?: boolean; pinnedAt?: string; pinnedBy?: string; pinnedUntil?: string; sender?: string; text?: string; editedAt?: string; deleted?: boolean; reactions?: Reaction[]; receipts?: MessageReceipt[]; attachments?: Attachment[]; location?: Location; poll?: Poll; card?: Card; cards?: Card[]; thread?: { id: string; name?: string; count?: number } }
 
 // ---------- requests ----------
 export interface OutgoingMessage {
@@ -263,6 +264,8 @@ export interface Connector {
   members(chatId: string): Promise<Contact[]>;
   /** Optional: the communities (native space ids) that you and this person are both members of, when the network can tell (Discord: the profile's mutual servers). Resolves to [] when it cannot. */
   mutualSpaces?(contactId: string): Promise<string[]>;
+  /** Optional: the names the person of a direct chat goes by on this network: profile name, username, and per community a nickname (`space`: native space id). */
+  aliases?(chatId: string): Promise<PersonAlias[]>;
   /** Fetch bytes of an attachment seen in a Message. */
   /** `urgent`: the user tapped this one and is waiting for it -- a provider that queues downloads puts it first. */
   downloadAttachment(chatId: string, messageId: string, attachmentId: string, opts?: { urgent?: boolean }): Promise<{ data: Uint8Array; mime: string; name?: string }>;
@@ -317,6 +320,8 @@ export interface Connector {
   /** Ask the network / primary phone again for messages missing from a chat (placeholders, unread gap). Resolves with a short
    *  human-readable result such as "Asked your phone to resend 3 messages"; new messages arrive later as normal events. */
   refreshChat?(chatId: string): Promise<string>;
+  /** Make a thread known as a chat (also an archived one the chat list does not carry) and return it; `threadId` is Message.thread.id. */
+  openThread?(threadId: string): Promise<Chat>;
   /** Cast (or change) my vote: the full set of option ids I now pick; [] retracts. Emit message-update {poll} afterwards. */
   vote?(chatId: string, messageId: string, optionIds: string[]): Promise<void>;
   /** Leave a community/space (its channels disappear from chats()); emit spaces-changed + chats-changed. */

@@ -152,16 +152,17 @@ test("home-device proxy: B lists chats, loads history, sends via A, receives eve
   // no secret crossed: B has no session file and nothing in its dirs contains it
   assert.ok(!existsSync(join(B.dir, "accounts", "sigfake-1", "session.secret")));
   const audit = (await A.call("syncStatus")).devices.find((d: any) => !d.self).audit["sigfake-1"]; assert.ok(audit.calls >= 4 && audit.byOp.send === 1);
-  // A goes offline: B keeps its archive, shows the account as unreachable, writes fail clearly
+  // A goes offline: B keeps its archive, shows the account as unreachable, a send waits for A
   await A.call("syncPause");
   await until(async () => (await B.call("syncStatus")).proxy.using[0].online === false, "B notices A is gone");
   await until(async () => (await B.call("accounts")).find((a: any) => a.id === "sigfake-1")?.state === "disconnected", "account shows disconnected");
   assert.ok((await B.call("snapshot")).chats.some((c: any) => c.id === "sigfake-1:c1"), "chat list from B's own cache");
   assert.ok((await B.call("history", { chatId: "sigfake-1:c1", limit: 20 })).some((m: any) => m.text === "live from A"), "history from B's archive");
-  await assert.rejects(B.call("send", { chatId: "sigfake-1:c1", text: "nope" }), /unreachable|read-only/);
+  assert.match((await B.call("send", { chatId: "sigfake-1:c1", text: "queued" })).id, /^pend-q-/, "a write while A is away is queued, not refused");
   await A.call("syncResume");
   await until(async () => (await B.call("accounts")).find((a: any) => a.id === "sigfake-1")?.state === "connected", "back online", 15_000);
-  await B.call("send", { chatId: "sigfake-1:c1", text: "again" }); assert.deepEqual(world.sent, ["from B", "again"]);
+  await until(() => world.sent.includes("queued"), "the queued message went out when A was back", 25_000);
+  await B.call("send", { chatId: "sigfake-1:c1", text: "again" }); assert.deepEqual(world.sent, ["from B", "queued", "again"]);
   // unshare on A: B can no longer use it
   await A.call("syncSetProxyShare", { accountId: "sigfake-1", enabled: false });
   await assert.rejects(B.call("send", { chatId: "sigfake-1:c1", text: "after unshare" }), /allow|unreachable/);

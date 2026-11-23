@@ -95,3 +95,12 @@ test("pins are their own last-writer-wins register: the later pin/unpin wins, in
   assert.equal(recSig(joinMessage(j, j)), recSig(j)); assert.equal(recSig(joinMessage(edited, joinMessage(repin, unpinned))), recSig(j));
   assert.equal(joinMessage(repin, { m: { ...base, deleted: true }, c: z, r: z }).m.pinned, undefined); // a deleted message is not pinned
 });
+
+test("a network notice stays a notice: the system mark survives the join, and a copy that has it replaces one that lost it", () => {
+  const sys: MsgRec = { m: { ...base, sender: "", senderId: "", text: "L started a thread: x", system: { kind: "info" } }, c: "0000000001000-0000-d1", r: "0000000001000-0000-d1" };
+  assert.deepEqual(joinMessage(sys, sys).m.system, { kind: "info" }); // first arrival on another device
+  const lost: MsgRec = { ...sys, m: { ...sys.m, system: undefined } };
+  assert.deepEqual(joinMessage(lost, sys).m.system, { kind: "info" });
+  assert.deepEqual(joinMessage(sys, lost).m.system, { kind: "info" });
+  assert.notEqual(recSig(joinMessage(lost, sys)), recSig(lost)); // so a re-sent copy is applied, not skipped as "nothing changed"
+});

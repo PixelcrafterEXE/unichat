@@ -61,7 +61,7 @@ Releases are numbered by CI and nothing else: `release.yml` builds `0.1.<github.
 developer's machine must never take one of those numbers -- the installed app would claim to be a release nobody published,
 and the updater would have nothing to match it against.
 
-Local builds therefore use `scripts/dev-version.mjs`, which prints `dev-0.1.<next>.<YYYYMMDDHHMM>` from the newest tag
+Local builds therefore use `scripts/dev-version.mjs`, which prints `0.1.<next>-dev.<YYYYMMDDHHMM>` from the newest tag
 (`--next` prints the release number itself). The stamp matters: without it every local build carried the same version, so
 a package manager saw nothing to upgrade and an app that had been installed but never restarted was indistinguishable
 from one that was up to date. Settings > Updates shows the string, so the running build can always be named.
@@ -69,11 +69,12 @@ from one that was up to date. Settings > Updates shows the string, so the runnin
 On Android the version code has to keep growing, or the phone refuses the update. CI builds use `2000 + run number`; local
 builds keep the default from `apps/android/package.json` (0.1.0 -> 100), so an APK from a release can always replace one
 built here. Both are signed with the same debug key: CI restores it from the `ANDROID_DEBUG_KEYSTORE_B64` secret and names
-it to Gradle explicitly (`UNICHAT_DEBUG_KEYSTORE`), and the release fails if the APK carries any other key. The `dev-` prefix is what `apps/desktop/src/updater.ts` turns into "dev", so such a build reports
-itself as a development build and never offers an update:
+it to Gradle explicitly (`UNICHAT_DEBUG_KEYSTORE`), and the release fails if the APK carries any other key. The `-dev.` part
+is a semver pre-release: a local build sorts just below the release it previews, so the updater offers that release and every
+newer one, and never an older one. (A build without any version, "dev" or `0.0.0-dev`, still never updates.)
 
 ```sh
-export UNICHAT_VERSION=$(node scripts/dev-version.mjs)       # dev-0.1.14
+export UNICHAT_VERSION=$(node scripts/dev-version.mjs)       # 0.1.14-dev.202611231530
 pnpm --filter @unimsg/ui build && pnpm --filter @unimsg/desktop exec electron-vite build
 ```
 

@@ -3,7 +3,7 @@
 import { cardsOf, type Chat, type ChatMerge, type Folder, type Message, type MessageReceipt, type Space } from "./model.js";
 import type { MeshGroup } from "./mesh.js";
 
-export interface ChatFlags { pinned?: boolean; muted?: boolean; archived?: boolean; unreadMark?: boolean; /** ISO time: everything incoming up to here was read on some device (persists a read state the provider cannot store; syncs) */ readUpTo?: string }
+export interface ChatFlags { pinned?: boolean; muted?: boolean; archived?: boolean; unreadMark?: boolean; /** starred (prioritized): its notifications go to a channel of their own (Android), or are the only ones shown (desktop setting) */ starred?: boolean; /** ISO time: everything incoming up to here was read on some device (persists a read state the provider cannot store; syncs) */ readUpTo?: string }
 export interface StoredAccount { id: string; provider: string; label: string; status?: "active" | "archived" }
 
 /** Things that happened to an account's link; they become timeline markers (possible gaps in history). */
@@ -250,7 +250,7 @@ export class MemoryStore implements Store {
   listAliases() { return { ...this.aliases }; }
   setAlias(chatId: string, name: string | null) { if (name) this.aliases[chatId] = name; else delete this.aliases[chatId]; }
   listChatFlags() { return { ...this.flags }; }
-  setChatFlags(chatId: string, f: ChatFlags) { if (f.pinned || f.muted || f.archived || f.unreadMark || f.readUpTo) this.flags[chatId] = f; else delete this.flags[chatId]; }
+  setChatFlags(chatId: string, f: ChatFlags) { if (f.pinned || f.muted || f.archived || f.unreadMark || f.starred || f.readUpTo) this.flags[chatId] = f; else delete this.flags[chatId]; }
   listFolders() { return [...this.folders.values()].map((f) => ({ ...f })); }
   putFolder(f: Folder) { this.folders.set(f.id, { ...f }); }
   deleteFolder(id: string) { this.folders.delete(id); }

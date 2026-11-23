@@ -187,12 +187,24 @@ export class SyncService {
       isLive: (a) => this.host.isLive(a), wantMedia: (m) => this.wantMedia(m), index: (m) => this.host.indexMessage?.(m) };
   }
   modeOf(acct: string): SyncMode { return this.modes[acct] ?? "archive-only"; }
+  /**
+   * Once: up to 0.1.16 a synced message lost its `system` mark on arrival, so network notices ("X started a thread",
+   * "your safety number changed") showed as chat messages on the other devices. Pulling the message log again from every
+   * peer (global state keeps its cursor) lets the fixed join put the mark back; copies that are already right are skipped.
+   */
+  private repairSystemMarks() {
+    if (this.ledger.kvGet("repairedSystemMarks")) return;
+    const cs = this.ledger.kvGet<Record<string, { ledger: string; applied: number; g?: number }>>("cursors") ?? {};
+    for (const c of Object.values(cs)) { c.g = Math.max(c.g ?? 0, c.applied); c.applied = 0; }
+    this.ledger.kvSet("cursors", cs); this.ledger.kvSet("repairedSystemMarks", true);
+  }
   private async activate() {
     if (this.disposed || !this.group) return;
     this.store.ctx = this.ctx;
     const pl = (stage: string, data?: Record<string, unknown>) => (globalThis as any).__unimsgPlog?.("sync." + stage, data);
     let t = Date.now(); pl("activate.begin");
     if (!this.ledger.kvGet("bootstrapped")) { const n = await this.store.bootstrap(); this.ledger.kvSet("bootstrapped", true); pl("bootstrap", { ms: Date.now() - t, entries: n }); }
+    this.repairSystemMarks();
     this.store.adoptSettings(); // settings that became syncable later (idempotent)
     pl("adoptSettings", { ms: Date.now() - t });
     this.blobs ??= new Blobs({ ledger: this.ledger, media: this.host.media, dir: this.o.dir ?? join(process.env.TMPDIR ?? "/tmp", "unimsg-sync-" + this.me.id.slice(0, 8)), sealKey: this.sealKey, modeNone: (a) => this.modeOf(a) === "none",

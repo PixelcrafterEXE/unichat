@@ -56,7 +56,8 @@ export interface Chat {
   muted?: boolean;
   pinned?: boolean;             // user flags (stored in the backend, apply on every device)
   archived?: boolean;
-  unreadMark?: boolean;         // user marked the chat unread by hand (shows as an unread dot until opened / marked read)
+  unreadMark?: boolean;
+  starred?: boolean;            // prioritized by the user: notifications of their own (Android channel "Starred chats"; desktop: "only starred" mode)         // user marked the chat unread by hand (shows as an unread dot until opened / marked read)
   blocked?: boolean;            // 1:1 chat with a blocked contact
   /** Disappearing-messages timer of the chat in seconds (absent / 0 = off). Needs Capabilities.disappearing to be changeable. */
   disappearing?: number;
@@ -176,6 +177,8 @@ export interface Message {
   text: string;                 // plain text; "" for attachment-only
   time: string;
   fromMe: boolean;
+  /** This message started a thread, or announces one ("X started a thread"): `id` is the thread's chat (native id, same account), opened with the `openThread` call. `count`: replies, when the network says. */
+  thread?: { id: string; name?: string; count?: number };
   replyTo?: { messageId: string; sender?: string; textPreview?: string; /** the reply belongs to a thread (Matrix m.thread); shown flat */ thread?: boolean };
   attachments?: Attachment[];
   location?: Location;

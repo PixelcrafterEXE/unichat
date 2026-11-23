@@ -11,7 +11,9 @@ a { color: #00a8fc; }
 .app.withinfo { grid-template-columns: 72px 260px 1fr 300px; }
 
 /* rail */
-.rail { background: var(--bg3); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0; overflow-y: auto; }
+.rail { background: var(--bg3); display: flex; flex-direction: column; align-items: center; padding: 0; overflow: hidden; min-height: 0; }
+/* only the communities scroll: the pinned Archive / Settings buttons below sit outside the scroll area, so nothing shows under or beside them */
+.rail .railscroll { flex: 1; min-height: 0; width: 100%; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0 8px; scrollbar-width: thin; }
 .rail .grow { flex: 1; }
 .pillwrap { position: relative; }
 .pill { width: 48px; height: 48px; border: 0; border-radius: 50%; background: var(--bg); font-weight: 600; transition: border-radius .15s, background .15s; overflow: hidden; padding: 0; display: grid; place-items: center; }
@@ -328,6 +330,9 @@ button.quote.linkquote { background: none; border-top: 0; border-right: 0; borde
 .skel i { display: block; border-radius: 6px; background: linear-gradient(90deg, var(--bg2) 25%, var(--hover) 50%, var(--bg2) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
 .skel .sa { width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; } .skel .sb { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 200px; } .skel .sb i { height: 12px; }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.threadlink { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; margin-top: 4px; } .sysmsg .threadlink { margin: 0 6px; }
+.refreshing { position: sticky; bottom: 6px; height: 0; overflow: visible; display: flex; justify-content: center; align-items: flex-end; pointer-events: none; z-index: 2; } /* zero height: appearing / going never changes the list height, so the visible messages (and an open menu on one) stay put */
+.refreshing .spinner { background: var(--bg2); border-radius: 50%; box-shadow: 0 0 0 4px var(--bg2); }
 .spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
 .loaderr { margin: 40px auto; max-width: 380px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--muted); } .loaderr svg { color: var(--danger); } .loaderr b { color: var(--fg); }
 @media (prefers-reduced-motion: reduce) { .skel i, .spinner { animation: none; } }
@@ -411,6 +416,8 @@ html:not(.bubbles) .msg.merged:not(.grouped) .foot .netbadge { display: none; } 
 .mergerow input[type=checkbox] { width: auto; margin: 0; }
 .mrtxt { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.25; } .mrtxt small { margin: 0 !important; color: var(--muted); }
 .whychip { font-size: 11px; background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--fg); padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
+.aliassec .aliasnet { margin: 4px 0 10px; } .aliassec .aliashead { display: flex; align-items: center; gap: 6px; font-size: 13px; } .aliassec .aliashead small { color: var(--muted); font-size: 12px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.aliassec ul { list-style: none; margin: 4px 0 0 24px; padding: 0; } .aliassec li { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; min-width: 0; } .aliassec .aname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; } .aliassec li small { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; }
 .netrow { display: flex; align-items: center; gap: 10px; padding: 6px 0; } .netrow .mtext { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.3; } .netrow small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .primtag { font-style: normal; font-weight: 400; font-size: 11px; color: var(--muted); } .mergebtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .sres .shead .pi { margin-left: 6px; }
@@ -456,7 +463,7 @@ html:not(.bubbles) .msg.merged:not(.grouped) .foot .netbadge { display: none; } 
 .loginlead { margin: 0 0 8px; } .loginchk { display: flex !important; flex-direction: row !important; gap: 10px; align-items: flex-start; } .loginchk input { width: auto; margin-top: 3px; } .loginchk .req { color: var(--danger); }
 .mentionpop { position: absolute; left: 6px; bottom: calc(100% + 4px); min-width: 240px; max-width: 360px; max-height: 280px; overflow-y: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px #0006; padding: 4px; z-index: 20; }
 .mentionpop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0; color: var(--fg); padding: 5px 8px; border-radius: 6px; } .mentionpop button.on { background: var(--sel); } .mentionpop small { color: var(--muted); margin-left: auto; }
-.ctext .name { display: flex; align-items: center; min-width: 0; } .ctext .name .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; } .ctext .name .reqtag, .ctext .name .inl { flex-shrink: 0; }
+.ctext .name { display: flex; align-items: center; min-width: 0; } .ctext .name .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; } .ctext .name .reqtag, .ctext .name .inl { flex-shrink: 0; } .ctext .name .starred { color: #e8b730; fill: #e8b730; margin: 0 3px 0 4px; }
 .loginwarn p { color: var(--fg); } .loginchk span { text-transform: none; letter-spacing: 0; font-size: 13.5px; font-weight: 500; color: var(--fg); line-height: 1.4; }
 
 .fieldhelp { margin: 4px 0 8px; font-size: 13px; color: var(--muted); } .fieldhelp summary { cursor: pointer; color: var(--accent); } .fieldhelp ol { margin: 6px 0 6px 18px; padding: 0; } .fieldhelp li { margin: 3px 0; } .fieldwrap { display: block; }
@@ -619,7 +626,7 @@ html:not(.bubbles) .msg.merged:not(.grouped) .foot .netbadge { display: none; } 
 .relayask p { margin: 0 0 8px; }
 
 /* the rail scrolls when there are many communities: archive + settings stay reachable at the bottom */
-.rail .railbottom { position: sticky; bottom: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; padding: 8px 0 2px; margin-top: auto; background: var(--bg3); }
+.rail .railbottom { flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; padding: 8px 0 12px; background: var(--bg3); }
 
 .schednote { margin: 0 16px 4px; font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
@@ -700,7 +707,7 @@ html:not(.bubbles) .mfoot time, html:not(.bubbles) .mfoot .netbadge { display: n
 .dtsec select:hover:not(:disabled) { border-color: var(--muted); } .dtsec select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dtsec .hint { font-size: 12px; margin: 6px 2px 0; }
 .sysmsg.info span { width: fit-content; border-radius: 999px; }
-.msg.pend{opacity:.7}
+.msg.sending{opacity:.7} /* not .pend: that is the composer's file chip (max-width 220px), which squeezed the bubble */
 
 /* captcha prompt (provider human check, hCaptcha widget or e2e stub) */
 .captchabox { display: flex; justify-content: center; align-items: center; min-height: 80px; margin: 8px 0; max-width: 100%; overflow-x: auto; }

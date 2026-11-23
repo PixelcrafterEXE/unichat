@@ -63,12 +63,16 @@ export function parseVersion(v: unknown): number[] | undefined {
   const m = typeof v === "string" ? /^v?(\d{1,9})\.(\d{1,9})(?:\.(\d{1,9}))?(?:[-+][0-9A-Za-z.+-]*)?$/.exec(v.trim()) : null;
   return m ? [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)] : undefined;
 }
-/** <0 when a is older than b. Unparseable versions count as older than everything (a "dev" build is older than any release). */
+/** <0 when a is older than b. Unparseable versions count as older than everything (a bare "dev" build is older than any release).
+ *  A pre-release is older than its release (semver): a local build "0.1.17-dev.202611231530" previews 0.1.17, so the release 0.1.17
+ *  (and anything higher) is an update for it, while 0.1.16 is not. Build metadata ("+...") does not count. */
 export function compareVersions(a: string, b: string): number {
   const x = parseVersion(a), y = parseVersion(b);
   if (!x && !y) return 0; if (!x) return -1; if (!y) return 1;
   for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
-  return 0;
+  const pre = (v: string) => /^v?\d+\.\d+(?:\.\d+)?-/.test(v.trim());
+  const pa = pre(a), pb = pre(b);
+  return pa === pb ? 0 : pa ? -1 : 1;
 }
 
 /** Validate a parsed `latest.json`. Throws a user-readable Error. */
