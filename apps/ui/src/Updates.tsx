@@ -1,6 +1,6 @@
 // Updates: Settings > About > Updates, and the small "Update 0.1.N available" banner. The backend (packages/core/src/updater.ts) does the work.
 import { useCallback, useEffect, useState } from "react";
-import { core, fmtBytes, fmtDateTime, fmtDate } from "./util";
+import { copyText, core, fmtBytes, fmtDateTime, fmtDate } from "./util";
 import { settingsNav } from "./StatusDots";
 import "./updates.css";
 
@@ -95,7 +95,7 @@ export function UpdatesSection() {
       {u.msg && <p id="upd-msg" className="hint">{u.msg}</p>}
       {manual && <div id="upd-manual"><p className="hint">{manual.message} It has to be installed by hand; run:</p>
         <pre className="notes" id="upd-manual-cmd">{manual.command}</pre>
-        <div className="btns"><button className="secondary" id="upd-manual-copy" onClick={() => { navigator.clipboard?.writeText(manual.command).then(() => u.setMsg("Command copied."), () => u.setMsg(manual.command)); }}>Copy the command</button></div></div>}
+        <div className="btns"><button className="secondary" id="upd-manual-copy" onClick={() => { copyText(manual.command).then(() => u.setMsg("Command copied."), () => u.setMsg(manual.command)); }}>Copy the command</button></div></div>}
       <p className="hint">Last checked: <span id="upd-last">{when(st?.lastChecked)}</span></p>
       {st?.state === "downloading" && st.progress && <div className="bar" id="upd-bar" role="progressbar" aria-valuenow={Math.round(100 * st.progress.done / Math.max(1, st.progress.total))}><i style={{ width: `${100 * st.progress.done / Math.max(1, st.progress.total)}%` }} /></div>}
       {st?.available && st.latest?.notes && <pre id="upd-notes" className="notes">{st.latest.notes}</pre>}

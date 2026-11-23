@@ -420,3 +420,15 @@ export function useLongPress(fire: (x: number, y: number) => void, ms = 400) {
 
 /** Square media tile of `size` px that never outgrows a phone: min(size, 70vw for 300 / 38vw for 148), always square. */
 export const sq = (size: number): React.CSSProperties => ({ width: `min(${size}px, ${size >= 200 ? 70 : 38}vw)`, aspectRatio: "1 / 1", height: "auto" });
+
+/** Copy text: the desktop app through its own bridge (the page may not write the clipboard there, #104), else the browser's
+ *  clipboard, else the old selection trick. Rejects when nothing worked, so callers can say so. */
+export async function copyText(text: string): Promise<void> {
+  const bridge = (window as any).unimsg?.copyText as ((t: string) => Promise<void>) | undefined;
+  if (bridge) { await bridge(text); return; }
+  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return; } } catch { /* try the fallback */ }
+  const ta = document.createElement("textarea"); ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  const ok = (() => { try { return document.execCommand("copy"); } catch { return false; } })(); ta.remove();
+  if (!ok) throw new Error("Copying is not allowed here.");
+}

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("unimsg", {
   showSaveDialog: (req?: { suggestedName?: string }) => ipcRenderer.invoke("dialog:save", req ?? {}),
   showOpenDialog: () => ipcRenderer.invoke("dialog:open"),
   revealInFolder: (path: string) => ipcRenderer.invoke("dialog:reveal", path),
+  copyText: (text: string) => ipcRenderer.invoke("clipboard:write", text),
   // Desktop-only shell settings (close to tray, start at login); both calls answer with the full settings.
   getSettings: () => ipcRenderer.invoke("settings:get"),
   setSettings: (patch: { keepRunningInBackground?: boolean; startAtLogin?: boolean }) => ipcRenderer.invoke("settings:set", patch),

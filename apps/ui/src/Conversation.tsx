@@ -7,7 +7,7 @@ import { placeholderOf } from "../../../packages/core/src/placeholder";
 import { hasMarkup } from "./markup";
 import { withThreadLinks } from "./threadlinks";
 import { RichText } from "./RichText";
-import { downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, useNearView, type Settings } from "./util";
+import { copyText, downloadText, icsOf, vcardOf, Avatar, CustomEmoji, Linkified, ProviderIcon, QUICK, isCoarse, sq, useLongPress, Ticks, color, core, dayLabel, fmtBytes, fmtDateTime, fmtTime, kindOf, loadAttachment, toBase64, useAttachment, useNearView, type Settings } from "./util";
 import { MoreHorizontal, Camera, Check, ChevronDown, Calendar, Clock3, Phone, ShoppingBag, List as ListIcon, CreditCard, ExternalLink, Users as UsersIcon, MousePointerClick, FileQuestion, BarChart3, CheckCircle2, Circle, CheckSquare, Square, Info, LogOut, MessageSquareWarning, RotateCcw, ArrowDown, AlertCircle, Ban, Copy, Download, FileText, Forward, ImageIcon, MapPin, Mic, Paperclip, Pencil, Play, Plus, Reply, SendHorizontal, Smile, SmilePlus, Trash2, User, X } from "./icons";
 import { ReactorsModal, loadMembers, useNames } from "./Reactors";
 import type { VoiceClip } from "./Voice";
@@ -247,7 +247,7 @@ export default function Conversation(p: Props) {
     const list = picked(), dm = chat.kind === "dm";
     const text = list.map((m) => { const body = m.text || placeholderOf(m.text) || (m.attachments?.length ? "[Attachment]" : ""); return body && !dm ? `${m.fromMe ? "You" : m.sender || m.senderId}: ${body}` : body; }).filter(Boolean).join("\n");
     if (!text) return;
-    try { await navigator.clipboard.writeText(text); clearSel(); } catch { setNote("This browser did not allow copying."); setTimeout(() => setNote(undefined), 5000); }
+    try { await copyText(text); clearSel(); } catch { setNote("This browser did not allow copying."); setTimeout(() => setNote(undefined), 5000); }
   };
   const deleteSel = async () => {
     const list = picked().filter((m) => m.fromMe && !m.deleted);
@@ -735,7 +735,7 @@ function MessageView(p: {
           {caps?.reactions && <button title="React" onClick={() => setPicker(!picker)}><SmilePlus size={16} /></button>}
           {caps?.replies && <button title="Reply" onClick={p.onReply}><Reply size={16} /></button>}
           <button title="Forward" onClick={p.onForward}><Forward size={16} /></button>
-          {m.text && <button title="Copy text" onClick={() => navigator.clipboard?.writeText(m.text)}><Copy size={16} /></button>}
+          {m.text && <button title="Copy text" onClick={() => void copyText(m.text).catch(() => {})}><Copy size={16} /></button>}
           {m.fromMe && caps?.edits && m.text && <button title="Edit" onClick={p.onEdit}><Pencil size={16} /></button>}
           {m.fromMe && caps?.deletes && <button title="Delete" onClick={del}><Trash2 size={16} /></button>}
         </div>)}
@@ -892,7 +892,7 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: 
     <div ref={ref} className="ctxmenu" style={{ left: pos.left, top: pos.top }} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()} role="menu">
       {!m.deleted && !!m.reactions?.length && <Item icon={<SmilePlus size={15} />} label="Who reacted…" onClick={p.onReactors} />}
       {!m.deleted && !failed && caps?.reactions && <div className="ctxreacts">{QUICK.map((e) => <button key={e} onClick={go(() => p.onReact(e))}>{e}</button>)}<button className="more" title="More emojis" aria-label="More emojis" onClick={go(p.onMore)}>+</button></div>}
-      {p.sel && <Item icon={<Copy size={15} />} label="Copy selection" onClick={() => navigator.clipboard?.writeText(p.sel)} />}
+      {p.sel && <Item icon={<Copy size={15} />} label="Copy selection" onClick={() => void copyText(p.sel).catch(() => {})} />}
       {failed && <><Item icon={<RotateCcw size={15} />} label="Retry sending" onClick={p.onRetry} /><Item icon={<Trash2 size={15} />} label="Discard" onClick={p.onDiscard} danger /></>}
       {!m.deleted && !failed && <>
         {caps?.replies && <Item icon={<Reply size={15} />} label="Reply" onClick={p.onReply} />}
@@ -904,7 +904,7 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: 
             <button data-pin-menu aria-expanded={pinOpen} onClick={() => setPinOpen(!pinOpen)}><PinIcon size={15} />Pin…</button>
             {pinOpen && <div className="ctxsub" role="group" aria-label="Pin for">{caps.pinDurations.map((d) => <button key={d} data-default={d === 604800 ? "" : undefined} onClick={go(() => p.onPin(true, d))}>{pinDurationLabel(d)}</button>)}</div>}</>
           : <Item icon={<PinIcon size={15} />} label="Pin" onClick={() => p.onPin(true)} />)}
-        {m.text && <Item icon={<Copy size={15} />} label="Copy text" onClick={() => navigator.clipboard?.writeText(m.text)} />}
+        {m.text && <Item icon={<Copy size={15} />} label="Copy text" onClick={() => void copyText(m.text).catch(() => {})} />}
         {copyImage && <Item icon={<Download size={15} />} label="Save image" onClick={async () => { const r = await loadAttachment(m.chatId, m.id, copyImage.id).catch(() => undefined); if (!r) return; const a = document.createElement("a"); a.href = r.url; a.download = copyImage.name ?? r.name ?? "image"; a.click(); }} />}
         {m.fromMe && caps?.edits && m.text && <Item icon={<Pencil size={15} />} label="Edit" onClick={p.onEdit} />}
         {m.fromMe && caps?.deletes && <Item icon={<Trash2 size={15} />} label="Delete for everyone" onClick={p.onDelete} danger />}

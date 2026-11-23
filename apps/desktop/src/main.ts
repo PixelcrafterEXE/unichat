@@ -1,7 +1,7 @@
 // Electron main process = the app's backend. The Hub runs right here, in-process;
 // the UI talks to it via IPC. No server, no port.
 import { execFileSync } from "node:child_process";
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, session, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, session, shell, Tray } from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { startBackend, DataKeyMismatchError, type KeyWrap } from "@unimsg/host";
@@ -207,6 +207,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("dialog:save", async (e, req: { suggestedName?: string }) => { if (!fromApp(e)) throw new Error("denied"); return dialogs.showSaveDialog(req); });
   ipcMain.handle("dialog:open", async (e) => { if (!fromApp(e)) throw new Error("denied"); return dialogs.showOpenDialog(); });
   ipcMain.handle("dialog:reveal", (e, path: unknown) => { if (!fromApp(e)) throw new Error("denied"); return dialogs.revealInFolder(path); });
+  // copying (#104): the page itself may not write the clipboard (only notifications and media are allowed), so the main process does it -- text only, bounded
+  ipcMain.handle("clipboard:write", (e, text: unknown) => { if (!fromApp(e)) throw new Error("denied"); if (typeof text !== "string" || text.length > 1_000_000) throw new Error("nothing to copy"); clipboard.writeText(text); });
   ipcMain.handle("settings:get", (e) => { if (!fromApp(e)) throw new Error("denied"); return settings!.get(); });
   ipcMain.handle("settings:set", (e, patch: unknown) => {
     if (!fromApp(e)) throw new Error("denied");

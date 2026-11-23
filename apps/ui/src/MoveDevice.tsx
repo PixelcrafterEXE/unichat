@@ -3,7 +3,7 @@
 // The file-based hand-over is still available under "Use a file instead" (BackupPanel), for devices that cannot reach each other.
 // Backend: syncMoveStart / syncMoveRespond / syncMoveCancel + the `moves` list of syncStatus (packages/sync/src/move.ts).
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ProviderIcon, core } from "./util";
+import { ProviderIcon, copyText, core } from "./util";
 import { providerName } from "./MoveLogin";
 import { Confirm, Pairing } from "./SyncPanel";
 import { AlertCircle, Check, Clock } from "./icons";
@@ -126,7 +126,7 @@ export function MoveP2P() {
           {!devices.length && !adding && <p className="sub" id="mvp-nopair">You have no other device yet. Add one first; it only takes a moment.</p>}
           <ul className="mvlist">{devices.map((x) => <li key={x.id}><label className={"mvrow pick" + (dev === x.id ? " on" : "") + (x.online ? "" : " off")} data-dev={x.name}><input type="radio" name="mvp-dev" id={`mvp-dev-${x.name.replace(/\W+/g, "-")}`} disabled={!x.online} checked={dev === x.id} onChange={() => setDev(x.id)} />
             <span className={x.online ? "dot on" : "dot"} /><span className="mvname"><b>{x.name}</b><small>{x.online ? "Online" : "Offline. Open UniChat on it while both are on the same Wi-Fi."}</small></span><Tick /></label></li>)}</ul>
-          {adding ? (st.pairing || pair) && <div className="mvp-add" id="mvp-adding"><Pairing p={pair ?? st.pairing} copied={copied} onCopy={(l) => { navigator.clipboard?.writeText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={stopAdd} /></div>
+          {adding ? (st.pairing || pair) && <div className="mvp-add" id="mvp-adding"><Pairing p={pair ?? st.pairing} copied={copied} onCopy={(l) => { copyText(l).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => {}); }} onStop={stopAdd} /></div>
             : <button className="secondary mvadd" id="mvp-add" disabled={busy} onClick={startAdd}>Add a device</button>}
         </section>
         {err && <p className="err" id="mvp-err">{err}</p>}
