@@ -7,10 +7,10 @@ import { join } from "node:path";
 import { NO_CAPABILITIES, type Chat, type Connector, type CoreEvent, type Message, type ProviderFactory } from "@unimsg/core";
 import { node, pairUp, until, type Node } from "./testkit.js";
 
-const CAPS = { ...NO_CAPABILITIES, attachments: true, backfill: true, reactions: true, edits: true, polls: true, profile: { displayName: true, about: true, avatar: true }, privacy: true } as typeof NO_CAPABILITIES;
+const CAPS = { ...NO_CAPABILITIES, attachments: true, backfill: true, reactions: true, pinMessages: true, pinDurations: [86400, 604800], edits: true, polls: true, profile: { displayName: true, about: true, avatar: true }, privacy: true } as typeof NO_CAPABILITIES;
 const ACCT = "relayfake-1", CHAT = ACCT + ":c1";
 /** a fake messenger: every device that holds the login gets its own world; `calls` records what the REAL connector was asked to do */
-interface World { threads?: Set<string>; sentTo?: string[]; prof: { displayName: string; about: string; avatar?: Uint8Array }; priv: Record<string, string>; calls: string[]; sent: string[]; emit?: (e: CoreEvent) => void; gate?: Promise<void> }
+interface World { threads?: Set<string>; pinned?: Set<string>; sentTo?: string[]; prof: { displayName: string; about: string; avatar?: Uint8Array }; priv: Record<string, string>; calls: string[]; sent: string[]; emit?: (e: CoreEvent) => void; gate?: Promise<void> }
 const mk = () => {
   const w: World = { calls: [], sent: [], prof: { displayName: "Real Name", about: "hi" }, priv: { lastSeen: "everyone" } };
   const f: ProviderFactory = { name: "relayfake", displayName: "RelayFake", login: "qr", capabilities: NO_CAPABILITIES, create: () => ({
@@ -25,6 +25,8 @@ const mk = () => {
     async avatar() { w.calls.push("avatar"); return { data: new Uint8Array([1]), mime: "image/png" }; },
     async send(chatId: string, m: { text: string }) { w.calls.push("send"); (w.sentTo ??= []).push(chatId); if (w.gate) await w.gate; w.sent.push(m.text); return { id: "s" + w.sent.length + "-" + w.sent.join("|").length, chatId, sender: "me", senderId: "me", text: m.text, time: new Date().toISOString(), fromMe: true, status: "sent" } as Message; },
     async react(_c: string, id: string, e: string | null) { w.calls.push(`react:${id}:${e}`); }, async edit(_c: string, id: string, t: string) { w.calls.push(`edit:${id}:${t}`); },
+    async pin(_c: string, id: string, on: boolean, o?: { durationSec?: number }) { w.calls.push(`pin:${id}:${on}:${o?.durationSec ?? ""}`); (w.pinned ??= new Set())[on ? "add" : "delete"](id); },
+    async pins(chatId: string) { w.calls.push("pins"); return [...(w.pinned ?? [])].map((id) => ({ id, chatId, sender: "Anna", senderId: "anna", text: "old hello", time: "2026-01-01T00:00:00Z", fromMe: false, pinned: true })); },
     async delete(_c: string, id: string) { w.calls.push(`delete:${id}`); }, async markRead(_c: string, id: string) { w.calls.push(`markRead:${id}`); },
     async getProfile() { w.calls.push("getProfile"); return { displayName: w.prof.displayName, about: w.prof.about, handle: "+49 1", ...(w.prof.avatar ? { avatar: { data: w.prof.avatar, mime: "image/png" } } : {}) }; },
     async updateProfile(p: { displayName?: string; about?: string; avatar?: { data: Uint8Array; mime: string } | null }) { w.calls.push("updateProfile"); if (p.displayName !== undefined) w.prof.displayName = p.displayName; if (p.about !== undefined) w.prof.about = p.about; if (p.avatar !== undefined) w.prof.avatar = p.avatar ? p.avatar.data : undefined; return { displayName: w.prof.displayName, about: w.prof.about, ...(w.prof.avatar ? { avatar: { data: w.prof.avatar, mime: "image/png" } } : {}) }; },
@@ -115,6 +117,22 @@ test("threads through the holder: open one (#103), it is listed, its history and
   const sent = await B.call("send", { chatId: TID, text: "reply in thread" });
   assert.equal(sent.chatId, TID); assert.deepEqual(w.sentTo, ["thread~r1"]);
   await assert.rejects(B.call("openThread", { chatId: ACCT + ":nope" }), /Unknown thread/);
+  await stop(A, B);
+});
+
+test("pins through the holder (#110): pinning and unpinning reach the holder's connector, with the duration, once each; the pin list comes from there", async () => {
+  const { n: A, w } = await holder("Laptop"); const { n: B } = await mirror("Phone");
+  await pairUp(A, B); await hasMirror(B); await allow(A, B, true);
+  await until(async () => (await acct(B))?.state === "connected" && (await acct(B))?.via?.kind === "relay", "B online via the holder", 15_000);
+  await B.call("history", { chatId: CHAT, limit: 20 });
+  await B.call("pin", { chatId: CHAT, messageId: "h1", pinned: true, durationSec: 86400 });
+  assert.deepEqual(w.calls.filter((c) => c.startsWith("pin:")), ["pin:h1:true:86400"], "pinned once on the holder, for 24 h");
+  assert.equal(B.store.getMessage(CHAT, "h1")?.pinned, true, "marked on the phone");
+  const listed = await B.call("pins", { chatId: CHAT });
+  assert.deepEqual(listed.map((m: any) => [m.chatId, m.id]), [[CHAT, "h1"]]); assert.ok(w.calls.includes("pins"), "the list came from the holder's connector");
+  await B.call("pin", { chatId: CHAT, messageId: "h1", pinned: false });
+  assert.deepEqual(w.calls.filter((c) => c.startsWith("pin:")), ["pin:h1:true:86400", "pin:h1:false:"]);
+  assert.deepEqual(await B.call("pins", { chatId: CHAT }), []);
   await stop(A, B);
 });
 

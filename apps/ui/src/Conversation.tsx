@@ -30,7 +30,7 @@ interface Props {
   onSignIn: (accountId?: string) => void; onPerson: (senderId: string, name: string) => void;
   hasMore: boolean; onLoadOlder: (limit?: number) => Promise<number | undefined>;
   jumpRef: { current: ((messageId: string, chatId?: string) => void) | undefined };
-  unreadAtOpen: number; loaded: boolean; loadState?: { status: "loading" | "error"; since: number; error?: string }; /** where the messages come from while loading */ loadSource?: LoadSource; /** the chat was read from this device only (source offline / not answering) */ loadNote?: string; onRetry: () => void; onSent: (m: Message, replaces?: string) => void; onOpenChat: (id: string) => void; onInfo: () => void;
+  unreadAtOpen: number; loaded: boolean; loadState?: { status: "loading" | "error"; since: number; error?: string }; /** where the messages come from while loading */ loadSource?: LoadSource; /** the chat was read from this device only (source offline / not answering) */ loadNote?: string; onRetry: () => void; onSent: (m: Message, replaces?: string) => void; onOpenChat: (id: string) => void; /** open a thread the list does not hold yet: the app shows that it is opening, asks the network, then lists and opens it */ onOpenThread: (ask: () => Promise<Chat>) => Promise<void>; onInfo: () => void;
 }
 /** Private replies on their way: the direct chat that opens next takes this group message as its quote. */
 const privateQuotes = new Map<string, Message>();
@@ -277,13 +277,12 @@ export default function Conversation(p: Props) {
     discard: (m: Message) => { failedSends.delete(m.id); p.onRemove(m.id); }, image: setLightbox, select: toggleSel,
     handle: async (h: string, own: Chat) => { try { const c = await core.call("startChat", { accountId: own.accountId, handle: h }); p.onOpenChat(c.id); } catch (e) { err(e); } },
     thread: async (m: Message) => {
-      if (!m.thread) { // a line saved before threads could be opened: the network is asked which thread it was
-        try { const c = await core.call("openThread", { chatId: m.chatId, messageId: m.id }) as Chat; p.onOpenChat(c.id); } catch (e) { err(e); }
-        return;
-      }
+      // a line saved before threads could be opened: the network is asked which thread it was
+      if (!m.thread) { try { await p.onOpenThread(() => core.call("openThread", { chatId: m.chatId, messageId: m.id }) as Promise<Chat>); } catch (e) { err(e); } return; }
       const id = `${m.accountId ?? m.chatId.slice(0, m.chatId.indexOf(":"))}:${m.thread.id}`; // the thread is a chat of the same account
-      if (!p.chats.some((c) => c.id === id)) { try { await core.call("openThread", { chatId: id }); } catch (e) { err(e); return; } } // e.g. an archived thread: the network is asked once, then it is listed
-      p.onOpenChat(id);
+      if (p.chats.some((c) => c.id === id)) { p.onOpenChat(id); return; }
+      // e.g. an archived thread: the network is asked once, then it is listed
+      try { await p.onOpenThread(() => core.call("openThread", { chatId: id }) as Promise<Chat>); } catch (e) { err(e); }
     },
   } satisfies RowCb);
   const nets = useMemo(() => new Map((members ?? []).map((c) => [c.id, netOf(c, p.providers, p.accounts)])), [members, p.providers, p.accounts]);

@@ -87,6 +87,8 @@ export function mapChat(ch: DcChannel, x: ChatCtx): Chat {
   const dm = ch.type === CT.DM, group = ch.type === CT.GROUP_DM;
   const c: Chat = { id: ch.id, accountId: x.accountId, provider: "discord", kind: dm ? "dm" : group ? "group" : "channel", name: dm || group ? dmName(ch, x) : (ch.name ?? "channel") };
   if (ch.guild_id) c.spaceId = ch.guild_id;
+  // a thread is folded under its channel in the list (a tree item), not a chat of its own. A forum post stays a chat: the forum itself is not one.
+  if (isThread(ch.type) && ch.parent_id && x.parent && x.parent.type !== CT.FORUM && x.parent.type !== CT.MEDIA) c.parentId = ch.parent_id;
   if (x.unread > 0) c.unread = x.unread;
   const t = ch.last_message_id ? snowflakeTime(ch.last_message_id) : undefined;
   if (t) c.lastMessageAt = new Date(t).toISOString();

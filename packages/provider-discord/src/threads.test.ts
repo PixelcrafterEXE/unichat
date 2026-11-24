@@ -27,10 +27,12 @@ test("openThread: an active thread is the known chat; an archived one is fetched
   try {
     await s.loaded();
     const t = await s.conn.openThread(C.thread); assert.equal(t.id, C.thread); assert.equal(t.name, "side-talk");
+    assert.equal(t.parentId, C.general, "a thread names its channel, so the list folds it under that channel");
+    assert.ok((await s.conn.chats()).filter((c: any) => c.id !== C.thread).every((c: any) => !c.parentId), "channels, DMs and forum posts (the forum is not a chat) have no parent");
     const OLD = "200000000000077";
     s.fake.channel({ id: OLD, type: 11, guild_id: G1, name: "old thread", parent_id: C.general, thread_metadata: { archived: true } });
     assert.ok(!(await s.conn.chats()).some((c: any) => c.id === OLD), "not in the list before (archived threads are not sent at start)");
-    const o = await s.conn.openThread(OLD); assert.equal(o.id, OLD); assert.equal(o.name, "old thread");
+    const o = await s.conn.openThread(OLD); assert.equal(o.id, OLD); assert.equal(o.name, "old thread"); assert.equal(o.parentId, C.general);
     assert.ok((await s.conn.chats()).some((c: any) => c.id === OLD), "listed after opening");
     await assert.rejects(s.conn.openThread(C.general), /not a thread/);
     await assert.rejects(s.conn.openThread("nope"), /Unknown thread/);

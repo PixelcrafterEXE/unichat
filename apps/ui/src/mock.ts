@@ -208,6 +208,8 @@ m("mx-1:@anna:matrix.org", "Anna Becker", "One more thing: I will bring the big 
 m("wa-1:hike-trips", "Tom", "Zugspitze it is then, I will book the hut tonight", 150);
 m("dc-1:general", "kit", "Thanks for the write-up!", 30);
 m("dc-1:bugs", "dana", "Same here, it only happens when the config file is empty", 45);
+// an archived Discord thread: not in the list until it is opened from its starter message (openThread below asks the "network", which takes a moment)
+m("dc-1:dev-talk", "kit", "Who wants to plan the old release?", 3000, { thread: { id: "old-plans", name: "Old release plans", count: 2 } });
 
 // ---- Discord: several embeds with preview images, exact counts, poll counts ----
 function cardImg(msgId: string, label: string, c1: string, c2: string, w = 640, h = 320) {
@@ -587,6 +589,16 @@ export function mockTransport() {
         case "setTyping": return;
         case "acceptRequest": { const c = chats.find((x) => x.id === p.chatId); if (c) { c.request = false; delete c.unreadApprox; } emit("chats-changed", { chatId: p.chatId }); return; }
         case "declineRequest": { const i = chats.findIndex((x) => x.id === p.chatId); if (i >= 0) chats.splice(i, 1); emit("chats-changed", { chatId: p.chatId }); return; }
+        case "openThread": { // only the archived Discord thread above is unknown to the list; it is fetched after a pause
+          await new Promise((r) => setTimeout(r, (globalThis as any).__threadDelayMs ?? 600));
+          const id = p.chatId === "dc-1:old-plans" || p.messageId ? "dc-1:old-plans" : p.chatId;
+          let c = chats.find((x) => x.id === id);
+          if (!c) {
+            c = mk(id, "discord", "dc-1", "Old release plans", "channel", { spaceId: "dc-1:g1", parentId: "dc-1:dev-talk", description: "Thread in #dev-talk", lastMessageAt: ago(2900) }); chats.push(c);
+            if (!store[id]) { m(id, "kit", "Who wants to plan the old release?", 3000); m(id, "dana", "I can take the changelog", 2950); m(id, "ferris", "Then I'll do the blog post", 2900); }
+          }
+          emit("chats-changed", { chatId: id }); return c;
+        }
         case "privateReply": { // the direct chat with the sender of a group message (made up when there is none)
           const src = (store[p.chatId] ?? []).find((x) => x.id === p.messageId); if (!src || src.fromMe) throw new Error("There is no one to reply to privately for this message.");
           const acct = p.chatId.slice(0, p.chatId.indexOf(":")), id = `${acct}:dm-${src.senderId.toLowerCase().replace(/\W+/g, "-")}`;
