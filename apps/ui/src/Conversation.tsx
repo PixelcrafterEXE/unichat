@@ -717,7 +717,7 @@ function MessageView(p: {
       {p.grouped ? <time className="gtime">{fmtTime(m.time)}</time>
         : (() => { const av = <Avatar name={name} size={40} of={m.fromMe ? undefined : chat.kind === "dm" ? { kind: "chat", id: chat.id } : { kind: "contact", id: `${chat.accountId}:${m.senderId}` }} />;
             return chat.kind !== "dm" && !m.fromMe && chat.provider !== "mesh" ? <button className="avbtn" title={`Show ${name}`} onClick={() => p.onPerson(m.senderId, name)}>{av}</button> : av; })()}
-      <div className={"body" + (mediaOnly && !text ? " pic" : "")}>
+      <div className={"body" + (mediaOnly && !text ? " pic" : "") + (mediaFirst ? " capt" : "")}>
         {!p.grouped && <div className="meta"><b className={chat.kind !== "dm" && !m.fromMe && chat.provider !== "mesh" ? "linkname" : ""} onClick={chat.kind !== "dm" && !m.fromMe && chat.provider !== "mesh" ? () => p.onPerson(m.senderId, name) : undefined}>{name}</b><time>{fmtTime(m.time)}</time>{badge}</div>}
         {m.forwarded && <div className="fwd"><Forward size={12} /> Forwarded</div>}
         {m.replyTo && <button className="quote linkquote" title="Show the original message" onClick={() => p.onJump(m.replyTo!.messageId, m.chatId)}><Reply size={12} /> {m.replyTo.sender && <b>{m.replyTo.sender}: </b>}{m.replyTo.textPreview}</button>}

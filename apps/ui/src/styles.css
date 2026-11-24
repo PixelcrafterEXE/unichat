@@ -731,3 +731,8 @@ html:not(.bubbles) .mfoot time, html:not(.bubbles) .mfoot .netbadge { display: n
 .chats li.threadchild::before { content: ""; position: absolute; left: 22px; top: -4px; height: 50%; width: 9px; border-left: 1.5px solid var(--border); border-bottom: 1.5px solid var(--border); border-bottom-left-radius: 6px; pointer-events: none; }
 .chats li.threadchild .hb.thr { width: 28px; height: 28px; }
 .chats li.threadchild .ctext .name { font-size: 13.5px; }
+
+/* a picture with a caption: the bubble is as wide as its pictures and the caption wraps inside it (a long caption
+   used to widen the bubble past the pictures); small pictures keep room for a readable line */
+.msg .body.capt { width: fit-content; min-width: min(240px, 100%); max-width: 100%; }
+.msg .body.capt > .tx { contain: inline-size; overflow-wrap: anywhere; } /* the caption does not size the bubble, the pictures do */
