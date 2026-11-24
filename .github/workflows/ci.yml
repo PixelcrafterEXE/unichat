@@ -56,22 +56,6 @@ jobs:
         run: pnpm install --frozen-lockfile
       # Bounded on purpose: a test command that hangs (apps/desktop did, printing nothing at all) must end the job quickly
       # instead of sitting until a long cap, which looks like "the tests are slow" instead of "something never exited".
-      # Diagnosis for the apps shard: the desktop test command has never printed a line in CI. Each file on its own,
-      # bounded, so the log names the one that stalls (and whether node starts at all).
-      - name: Desktop tests one file at a time (diagnosis)
-        if: matrix.shard.name == 'apps'
-        timeout-minutes: 6
-        working-directory: apps/desktop
-        env:
-          TMPDIR: ${{ runner.temp }}
-        run: |
-          node --version
-          timeout 20 node -e "console.log('node runs')" || echo "plain node exit $?"
-          for f in src/*.test.ts; do
-            echo "== $f"
-            timeout 45 node --experimental-strip-types --import ./test-loader.mjs --test --test-reporter=spec "$f" < /dev/null 2>&1 | tail -6
-            echo "exit ${PIPESTATUS[0]}"
-          done
       - name: Unit tests
         timeout-minutes: 8
         env:
