@@ -211,6 +211,12 @@ export class Proxies {
       case "chats": return this.conn(acct).chats();
       case "history": return this.conn(acct).history(str(a.chatId, 2000), { limit: Math.min(500, Math.max(1, Number(a.limit) || 50)), beforeMessageId: a.beforeMessageId === undefined ? undefined : str(a.beforeMessageId, 2000) });
       case "members": return this.conn(acct).members(str(a.chatId, 2000));
+      // straight to the connector: the requesting device already checked the message, and this device's archive may not hold it (read through
+      // the proxy). The network's echo (message-update) marks the pin here too.
+      case "pin": { const c = this.conn(acct); if (!c.pin) throw new Error("This account cannot pin messages.");
+        const d = a.durationSec === undefined ? undefined : Number(a.durationSec); if (d !== undefined && !(d >= 0 && d <= 10 * 365 * 86400)) throw new Error("Bad parameter.");
+        return c.pin(str(a.chatId, 2000), str(a.messageId, 2000), a.pinned !== false, d !== undefined ? { durationSec: d } : undefined); }
+      case "pins": { const c = this.conn(acct); return c.pins ? c.pins(str(a.chatId, 2000)) : []; }
       case "aliases": { const c = this.conn(acct); return c.aliases ? c.aliases(str(a.chatId, 2000)) : []; }
       case "privateChat": { const c = this.conn(acct); if (!c.privateChatWith) throw new Error("no private replies on this account"); return this.strip(acct, await c.privateChatWith(str(a.senderId, 300))); }
       case "attachment": {

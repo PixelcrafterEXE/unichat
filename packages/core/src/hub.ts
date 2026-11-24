@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
 import { isFolderId, isMergeId, PERSONAL, type Account, type AccountVia, type Chat, type ChatMerge, type Folder, type Message, type Space } from "./model.js";
 import { applyFolders } from "./folders.js";
-import type { Connector, CoreEvent, OutgoingMention, OutgoingMessage, Profile, ProfilePatch, ProviderFactory } from "./provider.js";
+import type { Capabilities, Connector, CoreEvent, OutgoingMention, OutgoingMessage, Profile, ProfilePatch, ProviderFactory } from "./provider.js";
 import { MeshRelay } from "./mesh.js";
 import { JobAbort, JobWaiting, Scheduler } from "./scheduler.js";
 import { avatarKeyId, MemoryStore, type Job, type Store } from "./store.js";
@@ -1599,6 +1599,12 @@ export class Hub {
   private resolveAccount(id: string): [Acc] {
     const a = this.accounts.get(id); if (!a) throw new Error(`unknown account ${id}`); return [a];
   }
+  /** What an account can do: its connector's own capabilities, else its provider's. An account held on another device (sync proxy) knows its
+   * capabilities only once that device has answered; until then the provider's apply, as in the UI, so an action the UI offers is not refused here. */
+  private liveCaps(a: Acc, conn?: Connector) {
+    let c: Capabilities | undefined; try { c = conn?.capabilities; } catch { /* getter */ }
+    return c ?? this.factories.get(a.info.provider)?.capabilities;
+  }
   /** Pinned messages of a chat (or of every member of a merge, newest pin first). A connector that can list pins is asked (its answer fixes the archive flags); otherwise the archive decides. */
   private async pinsOf(chatId: string): Promise<Message[]> {
     const now = Date.now(), live = (m: Message) => m.pinned && !m.deleted && !(m.pinnedUntil && Date.parse(m.pinnedUntil) <= now);
@@ -1606,7 +1612,7 @@ export class Hub {
       try {
         const [a, native] = this.resolve(cid);
         const conn = a.conn && !this.offlineKind(a) ? a.conn : undefined;
-        if (conn && typeof conn.pins === "function" && conn.capabilities?.pinMessages) {
+        if (conn && typeof conn.pins === "function" && this.liveCaps(a, conn)?.pinMessages) {
           const listed = await withTimeout(conn.pins(native), 20_000, "The messenger");
           const ids = new Set<string>();
           for (const raw of listed) {
@@ -1642,7 +1648,7 @@ export class Hub {
         return fn.call(conn, native, p.messageId, p.emoji ?? null);
       }
       case "pin": {
-        const caps = (() => { try { return conn.capabilities; } catch { return undefined; } })();
+        const caps = this.liveCaps(a, conn);
         if (!caps?.pinMessages) throw new Error(`${a.info.provider} does not support pinning messages`);
         const old = this.store.getMessage(globalId, p.messageId);
         if (!old) throw new Error("That message is not in the archive.");

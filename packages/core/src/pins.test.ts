@@ -23,10 +23,10 @@ class PFake implements Connector {
   async pin(c: string, id: string, pinned: boolean, o?: { durationSec?: number }) { this.calls.push(`pin ${c} ${id} ${pinned} ${o?.durationSec ?? "-"}`); }
   async pins(_c: string) { if (!this.listed) throw new Error("not listable"); return this.listed; }
 }
-async function setup(natives: [string, string][] = [["ann", "Ann"]], caps?: Partial<typeof NO_CAPABILITIES>) {
+async function setup(natives: [string, string][] = [["ann", "Ann"]], caps?: Partial<typeof NO_CAPABILITIES>, factoryCaps?: Partial<typeof NO_CAPABILITIES>) {
   const dir = mkdtempSync(join(tmpdir(), "hub-pins-"));
   const conns: PFake[] = [];
-  const factory: ProviderFactory = { name: "fake", displayName: "Fake", login: "qr", capabilities: { ...NO_CAPABILITIES }, create: () => { const [n, nm] = natives[conns.length]; const c = new PFake(n, nm, caps); conns.push(c); return c; } };
+  const factory: ProviderFactory = { name: "fake", displayName: "Fake", login: "qr", capabilities: { ...NO_CAPABILITIES, ...factoryCaps }, create: () => { const [n, nm] = natives[conns.length]; const c = new PFake(n, nm, caps); conns.push(c); return c; } };
   const store = new MemoryStore(), hub = new Hub(dir, [factory], store);
   const call = (m: string, p?: unknown) => hub.call(m, p) as Promise<any>;
   const ids: string[] = [], events: { type: string; data: any }[] = [];
@@ -92,5 +92,13 @@ test("merge: pin routes to the network that owns the message, pins unions all me
   const pins = await t.call("pins", { chatId: row.id });
   assert.deepEqual(pins.map((m: Message) => m.id), ["a1", "b1"]); assert.ok(pins.every((m: Message) => m.mergeId === row.id));
   await assert.rejects(t.call("pin", { chatId: row.id, messageId: "nope", pinned: true }), /not part of this merged chat/);
+  t.done();
+});
+
+test("pin: an account held on another device whose capabilities are not known yet (#110) uses its provider's, as the UI does", async () => {
+  const t = await setup([["ann", "Ann"]], undefined, { pinMessages: true, pinDurations: [86400, 604800] }); t.feed(0, "m1", "hi", "2026-01-01T10:00:00.000Z");
+  (t.conns[0] as any).capabilities = undefined; // a sync proxy before the home device answered
+  await t.call("pin", { chatId: t.A, messageId: "m1", pinned: true, durationSec: 86400 });
+  assert.deepEqual(t.conns[0].calls, ["pin ann m1 true 86400"]);
   t.done();
 });

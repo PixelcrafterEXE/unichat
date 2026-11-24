@@ -11,13 +11,13 @@ import type { Capabilities, Chat, Connector, Contact, CoreEvent, HistoryQuery, M
 
 /** Operations the home device will perform for a proxy account (an allow-list: unknown ops are rejected there). */
 export const PROXY_OPS = [
-  "info", "spaces", "chats", "history", "members", "attachment", "avatar", "send", "react", "edit", "delete", "setTyping", "markRead", "vote", "editEvent", "refreshChat", "openThread", "aliases", "privateChat",
+  "info", "spaces", "chats", "history", "members", "attachment", "avatar", "send", "react", "pin", "pins", "edit", "delete", "setTyping", "markRead", "vote", "editEvent", "refreshChat", "openThread", "aliases", "privateChat",
   "acceptRequest", "declineRequest", "leaveChat", "addMembers", "removeMember", "renameChat", "blockChat", "setChatPicture", "setChatDescription", "setDisappearing",
   "startChat", "createGroup", "createSpace", "joinSpace", "leaveSpace", "sync",
   "getProfile", "updateProfile", "getPrivacy", "setPrivacy",
 ] as const;
 /** Operations that change something on the account. Each carries a request id so the holder never executes a repeated request twice (see packages/sync proxy.ts). */
-export const PROXY_WRITE_OPS = new Set<string>(["send", "react", "edit", "delete", "vote", "editEvent", "startChat", "createGroup", "createSpace", "joinSpace", "leaveSpace", "leaveChat", "addMembers", "removeMember", "renameChat", "blockChat", "setChatPicture", "setChatDescription", "setDisappearing", "acceptRequest", "declineRequest", "updateProfile", "setPrivacy"]);
+export const PROXY_WRITE_OPS = new Set<string>(["send", "react", "pin", "edit", "delete", "vote", "editEvent", "startChat", "createGroup", "createSpace", "joinSpace", "leaveSpace", "leaveChat", "addMembers", "removeMember", "renameChat", "blockChat", "setChatPicture", "setChatDescription", "setDisappearing", "acceptRequest", "declineRequest", "updateProfile", "setPrivacy"]);
 export type ProxyOp = (typeof PROXY_OPS)[number];
 export const isProxyOp = (s: unknown): s is ProxyOp => typeof s === "string" && (PROXY_OPS as readonly string[]).includes(s);
 
@@ -87,6 +87,8 @@ export class RemoteConnector implements Connector {
     return this.c<Message>("send", { chatId, msg: { ...msg, clientId: undefined, attachments: msg.attachments?.map((a) => ({ ...a, data: undefined, dataBase64: b64(a.data) })) } }, msg.clientId);
   }
   react(chatId: string, messageId: string, emoji: string | null) { return this.c<void>("react", { chatId, messageId, emoji }); }
+  pin(chatId: string, messageId: string, pinned: boolean, opts?: { durationSec?: number }) { return this.c<void>("pin", { chatId, messageId, pinned, ...(opts?.durationSec !== undefined ? { durationSec: opts.durationSec } : {}) }); }
+  pins(chatId: string) { return this.c<Message[]>("pins", { chatId }); }
   edit(chatId: string, messageId: string, newText: string) { return this.c<void>("edit", { chatId, messageId, text: newText }); }
   delete(chatId: string, messageId: string) { return this.c<void>("delete", { chatId, messageId }); }
   setTyping(chatId: string, typing: boolean) { return this.c<void>("setTyping", { chatId, typing }); }
