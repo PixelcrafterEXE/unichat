@@ -31,6 +31,16 @@ export default [
     await t.eq("the last one lists all three, each with its sender", `window.__notes[2][2]`, "Chris: first\nDana: second\nChris: third");
   }, { init: NOTIFY_INIT }),
 
+  test("a chat that only got edits, reactions or receipts while closed still loads its whole history when opened (e.g. from a notification)", async (t) => {
+    await t.open("&chat=wa-1:anna", { settle: true });
+    await t.ev(`globalThis.__mockEmit("message-update", { chatId: "wa-1:a24", messageId: "nope", patch: { text: "x" } })`); await t.sleep(200);
+    await t.ev(`globalThis.__mockEmit("receipt", { chatId: "wa-1:a24", messageId: "nope", status: "read" })`); await t.sleep(200);
+    await t.ev(`globalThis.__mockInject('wa-1:a24','Chris','new while closed')`); await t.sleep(200);
+    await t.openRow("A24");
+    await t.waitFor(`__e2e.msg("new while closed")`);
+    await t.ok("the older history is there too, not only what arrived later", `document.querySelectorAll('.messages .msg').length > 1`);
+  }),
+
   test("a chat read somewhere else (phone, other device) takes its notification down too", async (t) => {
     await t.open("", { settle: true });
     await t.ev(`window.__notes.length=0; window.__closed.length=0; globalThis.__mockInject('wa-1:a24','Chris','ping')`);

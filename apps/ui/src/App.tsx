@@ -272,8 +272,10 @@ export default function App() {
               const nt = new Notification(title, { body, tag, ...(icon ? { icon } : {}) }); const prev = liveNotes.current.get(k); liveNotes.current.set(k, nt); prev?.close(); // replaced, not dismissed: its lines live on in `nt`
               nt.onclose = () => { if (liveNotes.current.get(k) === nt) { liveNotes.current.delete(k); noteLines.current.delete(tag); } }; nt.onclick = () => { try { window.focus(); } catch { /* ignore */ } openChatRef.current?.(d.mergeId ?? k); nt.close(); }; }); }
       }
-      if (ev === "message-update") setMsgs((m) => ({ ...m, [k]: (m[k] ?? []).map((x) => (x.id === d.messageId && x.chatId === d.chatId ? { ...x, ...d.patch, ...(d.patch.deleted ? { reactions: [], attachments: undefined, card: undefined, cards: undefined, poll: undefined, location: undefined, contacts: undefined } : {}) } : x)) }));
-      if (ev === "receipt") setMsgs((m) => ({ ...m, [k]: (m[k] ?? []).map((x) => (x.id === d.messageId && x.chatId === d.chatId && RANK.indexOf(d.status) >= RANK.indexOf(x.status ?? "sending") ? { ...x, status: d.status } : x)) }));
+      // edits, reactions and receipts touch only chats that are loaded: an empty list made for one counted as "loaded",
+      // so the chat never fetched its history and showed only what arrived later (opening it from a notification)
+      if (ev === "message-update") setMsgs((m) => !m[k] ? m : ({ ...m, [k]: m[k].map((x) => (x.id === d.messageId && x.chatId === d.chatId ? { ...x, ...d.patch, ...(d.patch.deleted ? { reactions: [], attachments: undefined, card: undefined, cards: undefined, poll: undefined, location: undefined, contacts: undefined } : {}) } : x)) }));
+      if (ev === "receipt") setMsgs((m) => !m[k] ? m : ({ ...m, [k]: m[k].map((x) => (x.id === d.messageId && x.chatId === d.chatId && RANK.indexOf(d.status) >= RANK.indexOf(x.status ?? "sending") ? { ...x, status: d.status } : x)) }));
       if (ev === "typing") {
         const key = `${d.chatId}|${d.senderId}`, drop = () => { clearTimeout(typingTimers.current.get(key)); typingTimers.current.delete(key); setTyping((t) => ({ ...t, [k]: (t[k] ?? []).filter((x) => x !== d.senderId) })); };
         if (d.typing) { clearTimeout(typingTimers.current.get(key)); typingTimers.current.set(key, setTimeout(drop, 9000)); setTyping((t) => ({ ...t, [k]: [...new Set([...(t[k] ?? []), d.senderId])] })); }
