@@ -76,7 +76,7 @@ function mediaErrText(reason: string, e: unknown): string {
 const PIN_DURATIONS = [86400, 604800, 2592000];
 const CAPS: Capabilities = {
   ...NO_CAPABILITIES,
-  spaces: true, reactions: true, pinMessages: true, pinDurations: PIN_DURATIONS, edits: true, deletes: true, replies: true, attachments: true, typing: true,
+  spaces: true, reactions: true, pinMessages: true, pinDurations: PIN_DURATIONS, edits: true, deletes: true, replies: true, privateReply: true, attachments: true, typing: true,
   readReceipts: true, voiceNotes: true, startChat: true, createGroup: true, location: true, contactCards: true, events: true, eventEdit: true, refreshChat: true, receiptDetails: true,
   createSpace: true, joinSpace: true,
   avatars: true, sync: true, profile: { displayName: true, about: true, avatar: true }, privacy: true, polls: true, leaveSpace: true,
@@ -1970,8 +1970,10 @@ class WhatsAppConnector implements Connector {
     if (!isSupportedChat(chatId)) throw new Error("unsupported chat");
     let quoted: WAMessage | undefined;
     if (msg.replyToMessageId) {
-      const q = this.store.find(chatId, msg.replyToMessageId);
-      if (q) quoted = { key: this.keyOf(chatId, q), message: quotedContent(q.m) };
+      // a private reply quotes a message of another chat (the group it came in): WhatsApp shows it as "replied privately"
+      const from = msg.replyToChatId && msg.replyToChatId !== chatId ? msg.replyToChatId : chatId;
+      const q = this.store.find(from, msg.replyToMessageId);
+      if (q) quoted = { key: this.keyOf(from, q), message: quotedContent(q.m) };
     }
     const contents: AnyMessageContent[] = [];
     // @mentions (groups only): "@Name" spans become "@<user part>" tokens + contextInfo.mentionedJid
@@ -2158,6 +2160,16 @@ class WhatsAppConnector implements Connector {
       this.store.touch();
       this.emit({ type: "chats-changed", data: { chatId } });
     }
+  }
+
+  /** The direct chat with a group member, for a private reply. Their id as on their group messages (phone number or LID). */
+  async privateChatWith(senderId: string): Promise<Chat> {
+    this.live();
+    if (!senderId || isGroupJid(senderId) || this.isMe(senderId)) throw new Error("There is no one to reply to privately.");
+    const id = this.cj(senderId);
+    const c = this.ensureChat(id); this.store.touch();
+    this.emit({ type: "chats-changed", data: { chatId: id } });
+    return this.toChat(c);
   }
 
   async startChat(handle: string): Promise<Chat> {

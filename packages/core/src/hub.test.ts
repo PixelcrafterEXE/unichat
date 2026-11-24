@@ -1056,6 +1056,20 @@ test("aliases: per messenger, the network's names (community nicknames named by 
   t.done();
 });
 
+test("reply privately: the hub finds the direct chat with the sender and hands the connector the group chat's own id", async () => {
+  const t = setup(); const id = await linked(t); const c = t.conns[0] as any;
+  c.chatList = [{ id: "grp", accountId: "x", provider: "fake", kind: "group", name: "Group" }];
+  const sends: any[] = []; c.send = async (chatId: string, m: any) => { sends.push({ chatId, ...m }); return { id: "o1", chatId, sender: "Me", senderId: "me", text: m.text, time: new Date().toISOString(), fromMe: true }; };
+  c.privateChatWith = async (who: string) => ({ id: "dm-" + who, accountId: "x", provider: "fake", kind: "dm", name: who });
+  t.conns[0].emit({ type: "message", data: { ...msg("g1", "lunch?", "2026-01-01T10:00:00Z"), chatId: "grp", senderId: "ann", sender: "Ann" } });
+  const dm = await t.call("privateReply", { chatId: `${id}:grp`, messageId: "g1" });
+  assert.equal(dm.id, `${id}:dm-ann`);
+  await t.call("send", { chatId: dm.id, text: "yes", replyToMessageId: "g1", replyToChatId: `${id}:grp` });
+  assert.deepEqual([sends[0].chatId, sends[0].replyToMessageId, sends[0].replyToChatId], ["dm-ann", "g1", "grp"]);
+  await assert.rejects(t.call("privateReply", { chatId: `${id}:grp`, messageId: "nope" }), /no one to reply to privately/);
+  t.done();
+});
+
 test("recency: a chat whose newest lines are notices (safety number changed) sorts by its last real message", async () => {
   const t = setup(); const id = await linked(t); const c = t.conns[0] as any;
   c.chatList = [{ id: "ann", accountId: "x", provider: "fake", kind: "dm", name: "Ann", lastMessageAt: "2026-01-02T09:00:00Z", preview: "Your safety number with Ann has changed." },
@@ -1065,6 +1079,11 @@ test("recency: a chat whose newest lines are notices (safety number changed) sor
   const snap = await t.call("snapshot"), ann = snap.chats.find((x: any) => x.id === `${id}:ann`), bob = snap.chats.find((x: any) => x.id === `${id}:bob`);
   assert.equal(ann.lastMessageAt, "2026-01-01T10:00:00Z"); assert.equal(ann.preview, "real one");
   assert.equal(bob.lastMessageAt, "2026-01-05T09:00:00Z", "a chat whose archive is behind the network keeps the network's time");
+  // a chat with nothing but a notice: no activity at all, so it sorts after every chat with real messages
+  c.chatList.push({ id: "lena", accountId: "x", provider: "fake", kind: "dm", name: "L", lastMessageAt: "2026-01-09T09:00:00Z" });
+  t.conns[0].emit({ type: "message", data: { ...msg("s1", "Your safety number with L has changed.", "2026-01-09T09:00:00Z"), chatId: "lena", system: { kind: "info" } } });
+  const lena = (await t.call("snapshot")).chats.find((x: any) => x.id === `${id}:lena`);
+  assert.equal(lena.lastMessageAt, undefined);
   t.done();
 });
 

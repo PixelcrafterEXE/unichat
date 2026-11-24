@@ -65,7 +65,7 @@ export type Frame =
   | { id: number; result?: unknown; error?: string }
   | { event: string; data: unknown }
   | { ctl: "ready"; protocol: number; node: string; sqlite: string }
-  | { ctl: "notify"; chatId: string; messageId: string; title: string; body: string; avatar?: string; starred?: boolean }
+  | { ctl: "notify"; chatId: string; messageId: string; title: string; body: string; avatar?: string; starred?: boolean; text?: string; sender?: string; group?: boolean; time?: number }
   | { ctl: "notify-clear"; chatIds: string[] }
   | { ctl: "state"; accounts: number; sync?: boolean };
 

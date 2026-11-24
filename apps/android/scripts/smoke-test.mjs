@@ -167,13 +167,14 @@ try {
   await build({ entryPoints: [join(root, "src/notify.ts")], outfile: out, bundle: true, format: "esm", platform: "node", logLevel: "silent" });
   const { buildNotification, summarize } = await import(pathToFileURL(out).href);
   const snap = { spaces: [{ id: "s1", muted: true }], chats: [{ id: "a:1", name: "Alice", kind: "dm" }, { id: "a:2", name: "Family", kind: "group" }, { id: "a:3", name: "Muted", kind: "dm", muted: true }, { id: "a:4", name: "InMutedSpace", kind: "group", spaceId: "s1" }] };
-  assert.deepEqual(buildNotification({ id: "m", chatId: "a:1", sender: "Alice", text: "hi" }, snap, "full"), { chatId: "a:1", messageId: "m", title: "Alice", body: "hi" });
+  const at = new Date(Date.now() - 5000).toISOString();
+  assert.deepEqual(buildNotification({ id: "m", chatId: "a:1", sender: "Alice", text: "hi", time: at }, snap, "full"), { chatId: "a:1", messageId: "m", title: "Alice", body: "hi", text: "hi", group: false, time: Date.parse(at) });
   assert.equal(buildNotification({ id: "m", chatId: "a:2", sender: "Bob", text: "yo" }, snap, "full").body, "Bob: yo");
   assert.equal(buildNotification({ id: "m", chatId: "a:3", sender: "X", text: "z" }, snap, "full"), undefined);
   assert.equal(buildNotification({ id: "m", chatId: "a:4", sender: "X", text: "z" }, snap, "full"), undefined);
   assert.equal(buildNotification({ id: "m", chatId: "a:1", fromMe: true, text: "z" }, snap, "full"), undefined);
   assert.equal(buildNotification({ id: "m", chatId: "a:1", historical: true, text: "z" }, snap, "full"), undefined);
-  assert.deepEqual(buildNotification({ id: "m", chatId: "a:1", sender: "Alice", text: "secret" }, snap, "hidden"), { chatId: "a:1", messageId: "m", title: "UniChat", body: "New message" });
+  assert.deepEqual(buildNotification({ id: "m", chatId: "a:1", sender: "Alice", text: "secret", time: at }, snap, "hidden"), { chatId: "a:1", messageId: "m", title: "UniChat", body: "New message", text: "New message", group: false, time: Date.parse(at) }); // the secret appears nowhere
   assert.equal(summarize({ attachments: [{ kind: "voice" }] }), "Voice message");
   ok("notification rules (muted chat/space, own, historical, privacy modes)");
 }

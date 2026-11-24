@@ -56,7 +56,7 @@ interface ScheduledSend {
   /** a normal send that the device holding the account could not take (offline): it goes when that device is back */
   queued?: boolean;
   /** the rest of a queued message (attachments as base64) */
-  extra?: { replyToMessageId?: string; location?: unknown; contacts?: unknown; poll?: unknown; event?: unknown; mentions?: unknown; attachments?: any[] };
+  extra?: { replyToMessageId?: string; replyToChatId?: string; location?: unknown; contacts?: unknown; poll?: unknown; event?: unknown; mentions?: unknown; attachments?: any[] };
 }
 export interface HubOptions { /** global search index bounds (see search.ts) */ search?: SearchOptions; /** pacing of "mark all read" / "download all media" (tests use 0) */ extras?: ExtrasOptions; /** 32-byte key for the on-disk media cache (the SQLite store gets its own key from the host). */ dataKey?: Uint8Array; /** backup / migration: where file paths are accepted (default: only inside "<accounts dir>/.backup") */ backup?: BackupPolicy; appVersion?: string; /** self-update (updater.ts): platform asset key, installer, test hooks; the data dir, version and event sink are the Hub's */ update?: Partial<Omit<UpdaterOptions, "dataDir" | "emit">>; /** a scheduled message that is more than this late is not sent any more (default: setting `scheduleLateHours`, 24 h) */ scheduleLateMs?: number }
 /** Some provider calls wait for a server echo (e.g. Matrix account data over sync): never let the UI hang on them. */
@@ -66,7 +66,7 @@ const fmtDate = (iso: string) => new Date(iso).toLocaleString("en-GB", { dateSty
 /** The OutgoingMessage of a `send` call (also of a queued one, which keeps the same fields). */
 function outgoingOf(p: any): OutgoingMessage {
   return {
-    text: p.text ?? "", replyToMessageId: p.replyToMessageId, location: p.location, contacts: p.contacts, poll: p.poll, event: p.event,
+    text: p.text ?? "", replyToMessageId: p.replyToMessageId, ...(typeof p.replyToChatId === "string" && p.replyToChatId ? { replyToChatId: p.replyToChatId } : {}), location: p.location, contacts: p.contacts, poll: p.poll, event: p.event,
     mentions: sanitizeMentions(p.text ?? "", p.mentions), clientId: typeof p.clientId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(p.clientId) ? p.clientId : undefined,
     attachments: p.attachments?.map((a: any) => ({ kind: a.kind, mime: a.mime, name: a.name, durationMs: a.durationMs, waveform: a.waveform, ...outgoingHints(a), data: new Uint8Array(Buffer.from(a.dataBase64, "base64")) })),
   };
@@ -228,7 +228,7 @@ export class Hub {
     try {
       const scan = this.store.scanMessages?.bind(this.store); if (!scan) return;
       for (const a of this.store.listAccounts()) {
-        const key = `notice-marks-v1:${a.id}`; if (this.store.getSetting(key)) continue;
+        const key = `notice-marks-v2:${a.id}`; if (this.store.getSetting(key)) continue; // v2: Discord's "started a thread" lines too
         let after: { chatId: string; id: string } | undefined, fixed = 0; const chats = new Set<string>();
         for (;;) {
           const page = scan({ ...(after ? { after } : {}), limit: 500, accountId: a.id });
@@ -509,9 +509,26 @@ export class Hub {
       case "cancelSignIn": return this.cancelSignIn(p.accountId);
       case "send": {
         if (MeshRelay.isMesh(p.chatId)) return this.mesh.post(p.chatId, p.text);
-        const target = this.sendTarget(p.chatId, p.via), out = outgoingOf(p);
+        const target = this.sendTarget(p.chatId, p.via);
+        let pp = p;
+        if (p.replyToChatId) { // a private reply: the quoted message is in another chat of the same account (native id for the connector)
+          const [ra, rn] = this.resolve(String(p.replyToChatId)), [ta] = this.resolve(target);
+          if (ra.info.id !== ta.info.id) throw new Error("A private reply goes out on the account the group message came in on.");
+          pp = { ...p, replyToChatId: rn };
+        }
+        const out = outgoingOf(pp);
         try { return await this.sendTo(target, out); }
         catch (e: any) { if (e?.code === "unreachable" && this.resolve(target)[0].info.via) return this.queueSend(target, p, out); throw e; } // only while another device still sends for it
+      }
+      case "privateReply": { // p: { chatId, messageId } of a group message -> the direct chat with its sender (opened or created), where the reply goes
+        const m = this.store.getMessage(String(p.chatId), String(p.messageId));
+        if (!m || m.fromMe || m.system || !m.senderId) throw new Error("There is no one to reply to privately for this message.");
+        const [a] = this.resolve(String(p.chatId)); const conn = this.need(a);
+        if (!conn.privateChatWith) throw new Error(`${a.info.provider} has no private replies.`);
+        const sender = m.senderId.startsWith(a.info.id + ":") ? m.senderId.slice(a.info.id.length + 1) : m.senderId;
+        const c = await withTimeout(conn.privateChatWith(sender), 30_000, "The messenger");
+        const chat = { ...c, id: `${a.info.id}:${c.id}`, accountId: a.info.id };
+        this.emit("chats-changed", { accountId: a.info.id, chatId: chat.id }); return chat;
       }
       case "commonChats": return this.commonChats(String(p.chatId));
       case "aliases": return this.aliases(String(p.chatId));
@@ -555,9 +572,10 @@ export class Hub {
       case "pins": return this.nameSenders(await this.pinsOf(p.chatId));
       case "openThread": { // p: { chatId: the thread's global chat id (account id + Message.thread.id) }
         const [a, native] = this.resolve(String(p.chatId)); const conn = this.need(a);
-        if (!conn.openThread) throw new Error(`${a.info.provider} threads cannot be opened here.`);
-        const c = await withTimeout(conn.openThread(native), 30_000, "The messenger");
-        const chat = { ...c, id: `${a.info.id}:${c.id}`, accountId: a.info.id, spaceId: c.spaceId && `${a.info.id}:${c.spaceId}` };
+        // p.messageId: a message whose saved copy has no thread link; p.chatId is then the message's chat (Connector.threadOf)
+        if (p.messageId ? !conn.threadOf : !conn.openThread) throw new Error(p.messageId ? `${a.info.provider} cannot look up this thread.` : `${a.info.provider} threads cannot be opened here.`);
+        const c = await withTimeout(p.messageId ? conn.threadOf!(native, String(p.messageId)) : conn.openThread!(native), 30_000, "The messenger"); // called on the connector: it needs its own this
+        const chat = { ...c, id: `${a.info.id}:${c.id}`, accountId: a.info.id, spaceId: c.spaceId && `${a.info.id}:${c.spaceId}`, ...(c.parentId ? { parentId: `${a.info.id}:${c.parentId}` } : {}) };
         this.emit("chats-changed", { accountId: a.info.id, chatId: chat.id }); return chat;
       }
       case "react": case "pin": case "edit": case "delete": case "setTyping": case "vote": case "editEvent": case "refreshChat":
@@ -758,6 +776,8 @@ export class Hub {
       const a = this.archivedActivity(c.id);
       // recency counts real messages only: when the archive is up to date with the network and its newest lines are notices ("safety number changed", "X joined"), the chat sorts by the last real message
       if (c.lastMessageAt && a.newest && a.newest >= c.lastMessageAt && a.time && a.time < c.lastMessageAt) { c.lastMessageAt = a.time; if (a.preview) c.preview = a.preview; }
+      // ...and a chat that holds nothing but notices (a contact you never wrote with whose safety number changed) has no activity: it sorts to the end
+      else if (c.lastMessageAt && a.newest && a.newest >= c.lastMessageAt && !a.time) { delete c.lastMessageAt; }
       if (c.lastMessageAt && c.preview) continue;
       if (!c.lastMessageAt && a.time) c.lastMessageAt = a.time;
       if (!c.preview && a.preview && (!c.lastMessageAt || !a.time || a.time >= c.lastMessageAt)) c.preview = a.preview;
@@ -842,7 +862,7 @@ export class Hub {
       if (!offline && a.conn) {
         try {
           const s = (await a.conn.spaces()).map((x) => ({ ...x, id: `${id}:${x.id}` }));
-          const c = (await a.conn.chats()).map((x) => ({ ...x, id: `${id}:${x.id}`, spaceId: x.spaceId && `${id}:${x.spaceId}`, ...(x.sameAs ? { sameAs: `${id}:${x.sameAs}` } : {}) }));
+          const c = (await a.conn.chats()).map((x) => ({ ...x, id: `${id}:${x.id}`, spaceId: x.spaceId && `${id}:${x.spaceId}`, ...(x.sameAs ? { sameAs: `${id}:${x.sameAs}` } : {}), ...(x.parentId ? { parentId: `${id}:${x.parentId}` } : {}) }));
           got = { spaces: s, chats: c };
           this.noteAvatarHints(c, s);
           const sig = JSON.stringify(got);
@@ -976,7 +996,7 @@ export class Hub {
    */
   private queueSend(chatId: string, p: any, out: OutgoingMessage): Message {
     const clientId = out.clientId ?? randomUUID().replace(/-/g, ""), now = Date.now();
-    const extra: ScheduledSend["extra"] = { replyToMessageId: out.replyToMessageId, location: out.location, contacts: out.contacts, poll: out.poll, event: out.event, mentions: out.mentions,
+    const extra: ScheduledSend["extra"] = { replyToMessageId: out.replyToMessageId, ...(out.replyToChatId ? { replyToChatId: out.replyToChatId } : {}), location: out.location, contacts: out.contacts, poll: out.poll, event: out.event, mentions: out.mentions,
       attachments: (p.attachments as any[] | undefined)?.map((a) => ({ ...a })) };
     const job = this.scheduler.enqueue({ kind: "send", payload: { chatId, text: out.text, clientId, due: now, queued: true, waiting: true, extra } satisfies ScheduledSend & { waiting: boolean }, runAt: now + 30_000 });
     const [a] = this.resolve(chatId);

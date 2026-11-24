@@ -589,6 +589,20 @@ class DiscordConnector implements Connector {
   }
 
   /** A thread from a "started a thread" line or a starter message. Active ones are already chats; an archived one is fetched and kept from now on. */
+  /** A "started a thread" line or starter message saved without its link: Discord still knows which thread it was. The saved copy gets the link too. */
+  async threadOf(chatId: string, messageId: string): Promise<Chat> {
+    this.ready();
+    if (!/^\d+$/.test(chatId) || !/^\d+$/.test(messageId)) throw new Error("Unknown message.");
+    this.raw.delete(messageId); // the cached copy may be the one without the link
+    const m = await this.fetchRaw(chatId, messageId);
+    if (!m) throw new Error("Discord no longer has this message.");
+    const tid = m.thread?.id ?? (m.type === 18 ? m.message_reference?.channel_id : undefined);
+    if (!tid || tid === chatId) throw new Error("This message did not start a thread.");
+    const { msg } = mapMessage(m, this.ctxFor(m));
+    if (msg.thread) this.emit({ type: "message-update", data: { chatId, messageId, patch: { thread: msg.thread } } });
+    return this.openThread(tid);
+  }
+
   async openThread(threadId: string): Promise<Chat> {
     const api = this.ready();
     if (!/^\d+$/.test(threadId)) throw new Error("Unknown thread.");

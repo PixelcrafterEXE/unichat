@@ -231,7 +231,7 @@ svg.lucide { flex-shrink: 0; }
 /* ---- message style: "Bubbles" (WhatsApp-like, your messages on the right) ---- */
 html:not(.bubbles) .msg:not(.mine) .foot { display: none; }
 .bubbles .msg { padding: 1px 16px; gap: 8px; } .bubbles .msg:hover { background: none; }
-.bubbles .msg:not(.grouped) { margin-top: 10px; } .bubbles .msg.mine { flex-direction: row-reverse; }
+.bubbles .msg:not(.grouped) { margin-top: 10px; } .samesender > .msg:not(.grouped), .bubbles .samesender > .msg:not(.grouped) { margin-top: 4px; } /* the same person again after a pause or with a reply: no full gap */ .bubbles .msg.mine { flex-direction: row-reverse; }
 .bubbles .msg .body { flex: 0 1 auto; max-width: min(72%, 620px); background: var(--bubble-other); border-radius: var(--r-bubble); padding: 6px 10px 4px; }
 .bubbles .msg:not(.mine) .body { border-bottom-left-radius: var(--r-tail); } .bubbles .msg.mine .body { background: var(--bubble-mine); color: var(--bubble-fg-mine); border-bottom-right-radius: var(--r-tail); }
 .bubbles .msg.k-dm .avatar, .bubbles .msg.mine .avatar, .bubbles .msg .gtime { display: none; }
@@ -725,3 +725,14 @@ html:not(.bubbles) .mfoot time, html:not(.bubbles) .mfoot .netbadge { display: n
 /* captcha prompt (provider human check, hCaptcha widget or e2e stub) */
 .captchabox { display: flex; justify-content: center; align-items: center; min-height: 80px; margin: 8px 0; max-width: 100%; overflow-x: auto; }
 @media (max-width: 480px) { .captchabox { justify-content: flex-start; } }
+
+/* threads folded under their chat (Chat.parentId): an indented branch, shown while that chat is open */
+.chats li.threadchild { padding-left: 34px; position: relative; min-height: 0; }
+.chats li.threadchild::before { content: ""; position: absolute; left: 22px; top: -4px; height: 50%; width: 9px; border-left: 1.5px solid var(--border); border-bottom: 1.5px solid var(--border); border-bottom-left-radius: 6px; pointer-events: none; }
+.chats li.threadchild .hb.thr { width: 28px; height: 28px; }
+.chats li.threadchild .ctext .name { font-size: 13.5px; }
+
+/* a picture with a caption: the bubble is as wide as its pictures and the caption wraps inside it (a long caption
+   used to widen the bubble past the pictures); small pictures keep room for a readable line */
+.msg .body.capt { width: fit-content; min-width: min(240px, 100%); max-width: 100%; }
+.msg .body.capt > .tx { contain: inline-size; overflow-wrap: anywhere; } /* the caption does not size the bubble, the pictures do */

@@ -381,3 +381,17 @@ test("send: the preview fields reach Baileys; no title / blocked host / no url s
     assert.equal("linkPreview" in sent[4]!.content, false);
   } finally { await s.close(); done(); }
 });
+
+test("reply privately: the direct chat with a group member opens, and the quote there is the group message (group jid + participant)", async () => {
+  const { c, p, sent, done } = setup();
+  try {
+    p.applyGroup({ id: G, subject: "G", participants: members });
+    p.intake({ key: { remoteJid: G, id: "gq1", fromMe: false, participant: BOB }, messageTimestamp: 5, message: { conversation: "lunch?" } }, true);
+    const dm = await c.privateChatWith!(BOB);
+    assert.equal(dm.kind, "dm"); assert.ok(!dm.id.endsWith("@g.us"));
+    await c.send(dm.id, { text: "yes", replyToMessageId: "gq1", replyToChatId: G });
+    const q = sent.at(-1)!.opts.quoted;
+    assert.equal(q.key.id, "gq1"); assert.equal(q.key.remoteJid, G); assert.equal(q.key.participant, BOB);
+    await assert.rejects(c.privateChatWith!(G), /no one to reply to privately/);
+  } finally { done(); }
+});

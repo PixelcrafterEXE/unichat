@@ -11,7 +11,7 @@ import type { Capabilities, Chat, Connector, Contact, CoreEvent, HistoryQuery, M
 
 /** Operations the home device will perform for a proxy account (an allow-list: unknown ops are rejected there). */
 export const PROXY_OPS = [
-  "info", "spaces", "chats", "history", "members", "attachment", "avatar", "send", "react", "edit", "delete", "setTyping", "markRead", "vote", "editEvent", "refreshChat", "openThread", "aliases",
+  "info", "spaces", "chats", "history", "members", "attachment", "avatar", "send", "react", "edit", "delete", "setTyping", "markRead", "vote", "editEvent", "refreshChat", "openThread", "aliases", "privateChat",
   "acceptRequest", "declineRequest", "leaveChat", "addMembers", "removeMember", "renameChat", "blockChat", "setChatPicture", "setChatDescription", "setDisappearing",
   "startChat", "createGroup", "createSpace", "joinSpace", "leaveSpace", "sync",
   "getProfile", "updateProfile", "getPrivacy", "setPrivacy",
@@ -94,6 +94,8 @@ export class RemoteConnector implements Connector {
   vote(chatId: string, messageId: string, optionIds: string[]) { return this.c<void>("vote", { chatId, messageId, optionIds }); }
   editEvent(chatId: string, messageId: string, patch: object) { return this.c<void>("editEvent", { chatId, messageId, patch }); }
   openThread(threadId: string) { return this.c<Chat>("openThread", { chatId: threadId }); }
+  threadOf(chatId: string, messageId: string) { return this.c<Chat>("openThread", { chatId, messageId }); }
+  privateChatWith(senderId: string) { return this.c<Chat>("privateChat", { senderId }); }
   aliases(chatId: string) { return this.c<PersonAlias[]>("aliases", { chatId }); }
   async refreshChat(chatId: string) { const r = await this.c<{ message?: string } | string>("refreshChat", { chatId }); return typeof r === "string" ? r : r?.message ?? ""; }
   acceptRequest(chatId: string) { return this.c<void>("acceptRequest", { chatId }); }

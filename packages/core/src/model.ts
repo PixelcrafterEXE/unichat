@@ -21,6 +21,8 @@ export const PERSONAL = "personal";
 
 export interface Chat {
   id: string; accountId: string; provider: string;
+  /** a thread: the chat (channel) it belongs to. Listed under that chat, not on its own (Mattermost threads). */
+  parentId?: string;
   spaceId?: string;             // EFFECTIVE folder: set => shown inside that space/folder (user moves applied, single-chat communities collapsed)
   networkSpaceId?: string;      // the space the network itself put this chat into (kept when the user moved it; "Reset to original place")
   folderId?: string;            // the user's local override: "personal" or a space / folder id (absent = follow the network)

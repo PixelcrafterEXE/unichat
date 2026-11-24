@@ -24,6 +24,23 @@ export default [
     await t.ok("and takes the notification off the system shade", `window.__closed.includes('wa-1:a24')`);
   }, { init: NOTIFY_INIT }),
 
+  test("several messages of one chat share its notification: each new one replaces it and lists them all", async (t) => {
+    await t.open("", { settle: true });
+    await t.ev(`window.__notes.length=0; globalThis.__mockInject('wa-1:a24','Chris','first'); globalThis.__mockInject('wa-1:a24','Dana','second'); globalThis.__mockInject('wa-1:a24','Chris','third')`);
+    await t.eq("three notifications for the same chat tag (each replaces the last)", `window.__notes.map(n=>n[1]).join(',')`, "wa-1:a24,wa-1:a24,wa-1:a24");
+    await t.eq("the last one lists all three, each with its sender", `window.__notes[2][2]`, "Chris: first\nDana: second\nChris: third");
+  }, { init: NOTIFY_INIT }),
+
+  test("a chat that only got edits, reactions or receipts while closed still loads its whole history when opened (e.g. from a notification)", async (t) => {
+    await t.open("&chat=wa-1:anna", { settle: true });
+    await t.ev(`globalThis.__mockEmit("message-update", { chatId: "wa-1:a24", messageId: "nope", patch: { text: "x" } })`); await t.sleep(200);
+    await t.ev(`globalThis.__mockEmit("receipt", { chatId: "wa-1:a24", messageId: "nope", status: "read" })`); await t.sleep(200);
+    await t.ev(`globalThis.__mockInject('wa-1:a24','Chris','new while closed')`); await t.sleep(200);
+    await t.openRow("A24");
+    await t.waitFor(`__e2e.msg("new while closed")`);
+    await t.ok("the older history is there too, not only what arrived later", `document.querySelectorAll('.messages .msg').length > 1`);
+  }),
+
   test("a chat read somewhere else (phone, other device) takes its notification down too", async (t) => {
     await t.open("", { settle: true });
     await t.ev(`window.__notes.length=0; window.__closed.length=0; globalThis.__mockInject('wa-1:a24','Chris','ping')`);

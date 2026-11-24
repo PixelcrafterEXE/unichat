@@ -212,6 +212,7 @@ export class Proxies {
       case "history": return this.conn(acct).history(str(a.chatId, 2000), { limit: Math.min(500, Math.max(1, Number(a.limit) || 50)), beforeMessageId: a.beforeMessageId === undefined ? undefined : str(a.beforeMessageId, 2000) });
       case "members": return this.conn(acct).members(str(a.chatId, 2000));
       case "aliases": { const c = this.conn(acct); return c.aliases ? c.aliases(str(a.chatId, 2000)) : []; }
+      case "privateChat": { const c = this.conn(acct); if (!c.privateChatWith) throw new Error("no private replies on this account"); return this.strip(acct, await c.privateChatWith(str(a.senderId, 300))); }
       case "attachment": {
         const chat = g(a.chatId), key = `${chat}|${str(a.messageId, 2000)}|${str(a.attachmentId, 2000)}`;
         let r = H.media.get(acct, key);
@@ -221,7 +222,7 @@ export class Proxies {
       }
       case "avatar": { const c = this.conn(acct); if (!c.avatar) return null; const r = await c.avatar({ kind: a.kind, id: str(a.id, 2000) }); return r ? { dataBase64: Buffer.from(r.data).toString("base64"), mime: r.mime } : null; }
       case "send": {
-        const m = a.msg ?? {}, out = await H.call("send", { chatId: g(a.chatId), text: String(m.text ?? ""), replyToMessageId: m.replyToMessageId, location: m.location, contacts: m.contacts, poll: m.poll, event: m.event, mentions: m.mentions,
+        const m = a.msg ?? {}, out = await H.call("send", { chatId: g(a.chatId), text: String(m.text ?? ""), replyToMessageId: m.replyToMessageId, ...(typeof m.replyToChatId === "string" && m.replyToChatId ? { replyToChatId: g(m.replyToChatId) } : {}), location: m.location, contacts: m.contacts, poll: m.poll, event: m.event, mentions: m.mentions,
           attachments: (m.attachments ?? []).map((x: any) => ({ kind: x.kind, mime: x.mime, name: x.name, durationMs: x.durationMs, waveform: x.waveform, width: x.width, height: x.height, gif: x.gif, caption: x.caption, dataBase64: x.dataBase64 })) });
         note?.(out); return this.strip(acct, out);
       }
@@ -243,7 +244,7 @@ export class Proxies {
   private strip(acct: string, v: any): any {
     if (!v || typeof v !== "object") return v;
     if (Array.isArray(v)) return v.map((x) => this.strip(acct, x));
-    const o = { ...v }; for (const k of ["id", "chatId", "spaceId"]) if (typeof o[k] === "string") o[k] = native(acct, o[k]);
+    const o = { ...v }; for (const k of ["id", "chatId", "spaceId", "parentId"]) if (typeof o[k] === "string") o[k] = native(acct, o[k]);
     delete o.accountId; return o;
   }
   /** A hub event of an account a device may use -> the subscribed devices. */

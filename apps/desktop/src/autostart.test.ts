@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyAutostart, desktopEntry, ENTRY_NAME, HIDDEN_FLAG, setXdgAutostart } from "./autostart.js";
@@ -47,7 +47,9 @@ test("apply: login item off Linux, desktop entry on Linux, failures stay non-fat
     assert.ok(existsSync(join(dir, ENTRY_NAME)));
     assert.equal(seen.length, 2, "Electron's login items are a no-op on Linux and are not used there");
 
-    // An unwritable location must not throw out of applyAutostart.
-    applyAutostart(true, { platform: "linux", dir: "/proc/nope/autostart", exec: "/opt/UniChat.AppImage" });
+    // An unwritable location must not throw out of applyAutostart: a folder below an ordinary file (fails at once
+    // everywhere; "/proc/nope/autostart" made Node 24's recursive mkdir hang in CI and the test never ended).
+    const file = join(home, "a-file"); writeFileSync(file, "x");
+    applyAutostart(true, { platform: "linux", dir: join(file, "autostart"), exec: "/opt/UniChat.AppImage" });
   } finally { rmSync(home, { recursive: true, force: true }); }
 });

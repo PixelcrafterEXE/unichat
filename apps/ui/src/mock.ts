@@ -23,7 +23,7 @@ const caps = (o: object = {}) => ({ spaces: false, reactions: true, edits: true,
   typing: true, readReceipts: true, startChat: true, createGroup: true, backfill: false, e2ee: true, location: true, contactCards: true, voiceNotes: true,
   leaveChat: true, manageMembers: true, renameChat: true, chatPicture: true, chatDescription: true, block: true, createSpace: true, joinSpace: true, polls: true, leaveSpace: true, ...o });
 const providers: ProviderInfo[] = [
-  { name: "whatsapp", displayName: "WhatsApp", login: "qr", capabilities: caps({ pinMessages: true, pinDurations: [86400, 604800, 2592000], spaces: true, receiptDetails: true, presence: true, profile: { displayName: true, about: true, avatar: true }, privacy: true, events: true, eventEdit: true, refreshChat: true, disappearing: true, disappearingDurations: [86400, 604800, 7776000] }) },
+  { name: "whatsapp", displayName: "WhatsApp", login: "qr", capabilities: caps({ privateReply: true, pinMessages: true, pinDurations: [86400, 604800, 2592000], spaces: true, receiptDetails: true, presence: true, profile: { displayName: true, about: true, avatar: true }, privacy: true, events: true, eventEdit: true, refreshChat: true, disappearing: true, disappearingDurations: [86400, 604800, 7776000] }) },
   { name: "signal", displayName: "Signal", login: "qr", capabilities: caps({ spaces: false, manageMembers: false, renameChat: false, leaveChat: false, createSpace: false, joinSpace: false, polls: false, leaveSpace: false, sync: true, disappearing: true, disappearingDurations: [30, 300, 3600, 28800, 86400, 604800, 2419200] }) },
   { name: "matrix", displayName: "Matrix", login: "form", capabilities: caps({ pinMessages: true, spaces: true, receiptDetails: true, backfill: true, fetchHistory: true, contactCards: false, presence: true, verification: true, profile: { displayName: true, avatar: true }, privacy: true }) },
   // Discord: the provider-level caps are the defaults; each ACCOUNT overrides them (bot vs user mode), see `accounts` below
@@ -64,6 +64,8 @@ const chats: Chat[] = [
   mk("wa-1:hike-trips", "whatsapp", "wa-1", "Trip planning", "channel", { spaceId: "wa-1:hike", unread: 5 }),
   mk("mx-1:!rust-general", "matrix", "mx-1", "general", "channel", { spaceId: "mx-1:!rust", unread: 12, description: "Everything Rust" }),
   mk("mx-1:!rust-help", "matrix", "mx-1", "help", "channel", { spaceId: "mx-1:!rust" }),
+  // a thread of #general (Chat.parentId): folded under it in the list, shown while #general is open
+  mk("mx-1:$thread-release", "matrix", "mx-1", "Release planning", "channel", { spaceId: "mx-1:!rust", parentId: "mx-1:!rust-general", description: "Thread in #general", lastMessageAt: new Date(Date.now() - 50 * 60_000).toISOString() }),
   mk("mx-1:!self-gen", "matrix", "mx-1", "chat", "channel", { spaceId: "mx-1:!self" }),
   mk("mx-1:!self-ops", "matrix", "mx-1", "ops", "channel", { spaceId: "mx-1:!self" }),
   // preview and lastMessageAt come from the seeded messages below (the loop after the seeds): a chat must never preview a message it does not have
@@ -585,6 +587,13 @@ export function mockTransport() {
         case "setTyping": return;
         case "acceptRequest": { const c = chats.find((x) => x.id === p.chatId); if (c) { c.request = false; delete c.unreadApprox; } emit("chats-changed", { chatId: p.chatId }); return; }
         case "declineRequest": { const i = chats.findIndex((x) => x.id === p.chatId); if (i >= 0) chats.splice(i, 1); emit("chats-changed", { chatId: p.chatId }); return; }
+        case "privateReply": { // the direct chat with the sender of a group message (made up when there is none)
+          const src = (store[p.chatId] ?? []).find((x) => x.id === p.messageId); if (!src || src.fromMe) throw new Error("There is no one to reply to privately for this message.");
+          const acct = p.chatId.slice(0, p.chatId.indexOf(":")), id = `${acct}:dm-${src.senderId.toLowerCase().replace(/\W+/g, "-")}`;
+          let c = chats.find((x) => x.id === id);
+          if (!c) { c = { id, accountId: acct, provider: chats.find((x) => x.id === p.chatId)!.provider, kind: "dm", name: src.sender }; chats.push(c); store[id] ??= []; }
+          emit("chats-changed", { chatId: id }); return c;
+        }
         case "startChat": { const a = accounts.find((x) => x.id === p.accountId)!; const name = p.handle.replace(/^@|:.*$/g, "");
           if (a.provider === "instagram") { // Instagram creates the thread only with the first message: a provisional chat that the first send() resolves
             const h = String(p.handle).replace(/^@/, "").toLowerCase(); const ex = chats.find((c) => c.accountId === a.id && c.kind === "dm" && c.name.toLowerCase().includes(h)); if (ex) return ex;
