@@ -64,6 +64,8 @@ const chats: Chat[] = [
   mk("wa-1:hike-trips", "whatsapp", "wa-1", "Trip planning", "channel", { spaceId: "wa-1:hike", unread: 5 }),
   mk("mx-1:!rust-general", "matrix", "mx-1", "general", "channel", { spaceId: "mx-1:!rust", unread: 12, description: "Everything Rust" }),
   mk("mx-1:!rust-help", "matrix", "mx-1", "help", "channel", { spaceId: "mx-1:!rust" }),
+  // a thread of #general (Chat.parentId): folded under it in the list, shown while #general is open
+  mk("mx-1:$thread-release", "matrix", "mx-1", "Release planning", "channel", { spaceId: "mx-1:!rust", parentId: "mx-1:!rust-general", description: "Thread in #general", lastMessageAt: new Date(Date.now() - 50 * 60_000).toISOString() }),
   mk("mx-1:!self-gen", "matrix", "mx-1", "chat", "channel", { spaceId: "mx-1:!self" }),
   mk("mx-1:!self-ops", "matrix", "mx-1", "ops", "channel", { spaceId: "mx-1:!self" }),
   // preview and lastMessageAt come from the seeded messages below (the loop after the seeds): a chat must never preview a message it does not have

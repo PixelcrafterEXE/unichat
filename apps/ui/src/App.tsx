@@ -325,8 +325,9 @@ export default function App() {
     return (c: Chat) => matchesFilters(c, filters, { members: c.mergeMembers?.map((id) => byId.get(id)).filter((x): x is Chat => !!x), isMuted: (x) => muted.has(x.id) });
   }, [filters, nFilters, chats, muted]);
   const inView = (c: Chat, v: string) => (v === HOME ? !c.spaceId : c.spaceId === v) && (showArchived || !c.archived);
+  // threads (Chat.parentId) are not chats of their own in the list: they fold under their chat, shown while it (or one of them) is open; the name search still finds them
   const visible = useMemo(() => listChats
-    .filter((c) => (filter ? c.name.toLowerCase().includes(filter.toLowerCase()) : inView(c, space) && passes(c)))
+    .filter((c) => (filter ? c.name.toLowerCase().includes(filter.toLowerCase()) : !c.parentId && inView(c, space) && passes(c)))
     .sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)) || (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "")), [listChats, space, filter, pinned, showArchived, passes]);
   /** Rail icons of views without a single matching chat are dimmed (still clickable) while filters are on. */
   const emptyViews = useMemo(() => {
@@ -678,13 +679,17 @@ export default function App() {
     togglePin: (c: Chat) => togglePin(c.id), toggleStar: (c: Chat) => setFlag(c.id, { starred: !c.starred }), toggleMute: (c: Chat) => toggleMute(c.id), markRead: (c: Chat) => mr.markChat(c), markUnread: (c: Chat) => setFlag(c.id, { unreadMark: true }), archive: (c: Chat) => setFlag(c.id, { archived: !c.archived }),
     rename: (c: Chat) => setRenaming(c), move: (c: Chat) => setMoving(c), category: (c: Chat) => setCatPick([c]), merge: (c: Chat) => setMerging(c), unmerge: (c: Chat) => unmerge(c),
   } satisfies RowApi);
-  type Item = { k: "row"; c: Chat } | { k: "head"; g: CatGroup } | { k: "empty"; id: string };
-  const items = useMemo<Item[]>(() => groups.flatMap((g): Item[] => g.name === undefined ? g.chats.map((c) => ({ k: "row", c })) : [{ k: "head", g },
-    ...(collapsedCats.has(g.key) ? [] : [...(g.id && !g.chats.length ? [{ k: "empty", id: g.id } as Item] : []), ...g.chats.map((c): Item => ({ k: "row", c }))])]), [groups, collapsedCats]);
+  type Item = { k: "row"; c: Chat; child?: boolean } | { k: "head"; g: CatGroup } | { k: "empty"; id: string };
+  // the open chat's threads, newest first, folded in right below it
+  const openParent = useMemo(() => { const c = listChats.find((x) => x.id === chatId); return c?.parentId ?? chatId; }, [listChats, chatId]);
+  const threadsOf = useMemo(() => filter || !openParent ? [] : listChats.filter((t) => t.parentId === openParent).sort((a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "")), [listChats, openParent, filter]);
+  const rowsOf = (cs: Chat[]): Item[] => cs.flatMap((c): Item[] => [{ k: "row", c }, ...(c.id === openParent ? threadsOf.map((t): Item => ({ k: "row", c: t, child: true })) : [])]);
+  const items = useMemo<Item[]>(() => groups.flatMap((g): Item[] => g.name === undefined ? rowsOf(g.chats) : [{ k: "head", g },
+    ...(collapsedCats.has(g.key) ? [] : [...(g.id && !g.chats.length ? [{ k: "empty", id: g.id } as Item] : []), ...rowsOf(g.chats)])]), [groups, collapsedCats, threadsOf, openParent]); // eslint-disable-line react-hooks/exhaustive-deps
   const focusIndex = useMemo(() => items.findIndex((it) => it.k === "row" && it.c.id === chatId), [items, chatId]);
   const renderItem = (it: Item) => {
     if (it.k === "row") { const c = it.c, origin = spaceById.get(c.collapsedFrom ?? c.networkSpaceId ?? "");
-      return <ChatRow c={c} api={rowApi} active={c.id === chatId} menuOpen={menuFor === c.id} selected={selSet.has(c.id)} selMode={selMode} muted={muted.has(c.id)} pinned={pinned.has(c.id)}
+      return <ChatRow c={c} child={it.child} api={rowApi} active={c.id === chatId} menuOpen={menuFor === c.id} selected={selSet.has(c.id)} selMode={selMode} muted={muted.has(c.id)} pinned={pinned.has(c.id)}
         noOffline={c.offline ? (c.mergeMembers ? c.mergeMembers.reduce((t, id) => t + (offlineMedia[id] ?? 0), 0) : offlineMedia[c.id] ?? 0) : 0} origin={origin}
         memberProviders={c.mergeMembers ? dotOrder(c, memberChats(c)) : undefined} coarse={coarse} online={isOnline(c, memberChats(c))} />; }
     if (it.k === "empty") return <li className="catempty" data-catempty={it.id}>Drop chats here</li>;

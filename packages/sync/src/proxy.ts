@@ -243,7 +243,7 @@ export class Proxies {
   private strip(acct: string, v: any): any {
     if (!v || typeof v !== "object") return v;
     if (Array.isArray(v)) return v.map((x) => this.strip(acct, x));
-    const o = { ...v }; for (const k of ["id", "chatId", "spaceId"]) if (typeof o[k] === "string") o[k] = native(acct, o[k]);
+    const o = { ...v }; for (const k of ["id", "chatId", "spaceId", "parentId"]) if (typeof o[k] === "string") o[k] = native(acct, o[k]);
     delete o.accountId; return o;
   }
   /** A hub event of an account a device may use -> the subscribed devices. */

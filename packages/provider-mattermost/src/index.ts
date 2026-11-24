@@ -563,7 +563,7 @@ class MattermostConnector implements Connector {
     const c = this.channels.get(cid); if (!c) return undefined;
     const p = this.posts.get(root), parent = this.chatOf(c);
     const t = (p?.message ?? "").replace(/\s+/g, " ").trim();
-    const chat: Chat = { id: threadChatId(root), accountId: this.accountId, provider: "mattermost", kind: parent.kind, name: t ? (t.length > 60 ? t.slice(0, 57) + "..." : t) : "Thread", unread: 0, description: `Thread in ${parent.kind === "channel" ? "~" : ""}${parent.name}` };
+    const chat: Chat = { id: threadChatId(root), parentId: cid, accountId: this.accountId, provider: "mattermost", kind: parent.kind, name: t ? (t.length > 60 ? t.slice(0, 57) + "..." : t) : "Thread", unread: 0, description: `Thread in ${parent.kind === "channel" ? "~" : ""}${parent.name}` };
     if (parent.spaceId) chat.spaceId = parent.spaceId;
     if (p) chat.lastMessageAt = iso(Math.max(p.create_at, (p as any).last_reply_at ?? 0));
     if (c.delete_at) chat.readOnly = true;

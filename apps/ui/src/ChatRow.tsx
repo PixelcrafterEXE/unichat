@@ -1,7 +1,7 @@
 import { memo } from "react";
 import type { Chat, Space } from "./types";
 import { Avatar, ProviderIcon, useLongPress } from "./util";
-import { Archive, ArchiveRestore, Bell, BellOff, CloudOff, FolderInput, GitMerge, Hash, LogOut, MoreHorizontal, Pencil, Pin, PinOff, MarkRead, Star, StarOff, Tag, Unlink } from "./icons";
+import { Archive, ArchiveRestore, Bell, BellOff, CloudOff, FolderInput, GitMerge, Hash, LogOut, MoreHorizontal, Pencil, Pin, PinOff, MarkRead, MessagesSquare, Star, StarOff, Tag, Unlink } from "./icons";
 
 /** Everything a row needs from the app. ONE stable object whose members are always the latest closures, so a row only re-renders when ITS data changes. */
 export interface RowApi {
@@ -22,22 +22,24 @@ export interface RowProps {
   /** the community the chat left (or its own), when known */ origin?: Space;
   /** providers of the members of a merged chat, joined by "," */ memberProviders?: string;
   coarse: boolean;
+  /** a thread folded under its chat (Chat.parentId) */ child?: boolean;
   /** green presence dot (DM contact online; merged rows: any member) */ online?: boolean;
 }
 
-export const ChatRow = memo(function ChatRow({ c, api, active, menuOpen, selected, selMode, muted, pinned, noOffline, origin, memberProviders, coarse, online }: RowProps) {
+export const ChatRow = memo(function ChatRow({ c, api, active, menuOpen, selected, selMode, muted, pinned, noOffline, origin, memberProviders, coarse, online, child }: RowProps) {
   const lp = useLongPress(() => api.longPress(c));
   const away = !!origin && origin.id !== c.spaceId && !c.mergeMembers;
   return (
     <li data-chat={c.id} draggable={!coarse} aria-selected={selected || undefined} onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
       onDragOver={(e) => api.dragOver(e, c)} onDrop={(e) => api.drop(e, c)} onDragStart={(e) => api.dragStart(e, c)}
-      className={(active ? "active" : "") + (c.archived ? " archivedrow" : "") + (menuOpen ? " menuopen" : "") + (selected ? " selected" : "") + (selMode ? " selmode" : "")}
+      className={(active ? "active" : "") + (child ? " threadchild" : "") + (c.archived ? " archivedrow" : "") + (menuOpen ? " menuopen" : "") + (selected ? " selected" : "") + (selMode ? " selmode" : "")}
       onClick={(e) => { if (lp.swallow()) return; api.click(e, c); }}
       onTouchStart={lp.onTouchStart} onTouchMove={lp.onTouchMove} onTouchEnd={lp.onTouchEnd} onTouchCancel={lp.onTouchCancel}
       onContextMenu={(e) => { e.preventDefault(); api.context(e.clientX, e.clientY, c); }}>
       {selMode && <span className={"selbox" + (selected ? " on" : "")} aria-hidden />}
       {/* a chat that left its community looks like a normal group: its own picture, else the community's */}
-      {(c.kind === "channel" && !away) ? <span className="hash hb"><Hash size={18} /><span className="avbadge"><ProviderIcon provider={c.provider} size={13} /></span></span>
+      {child ? <span className="hash hb thr" aria-hidden><MessagesSquare size={16} /></span>
+        : (c.kind === "channel" && !away) ? <span className="hash hb"><Hash size={18} /><span className="avbadge"><ProviderIcon provider={c.provider} size={13} /></span></span>
         : <Avatar name={away && c.kind === "channel" ? origin!.name : c.name} url={c.avatarUrl} of={{ kind: "chat", id: c.id }} size={36} provider={c.provider} online={online}
             providers={memberProviders ? memberProviders.split(",") : undefined} fallback={away ? { kind: "space", id: origin!.id, url: origin!.iconUrl } : undefined} />}
       <span className="ctext"><span className="name"><span className="nm">{c.name}</span>{muted && <BellOff size={12} className="inl" />}</span>{(c.preview || c.request) && <small>{c.request && <em className="reqtag">Message request</em>}{c.preview}</small>}</span>

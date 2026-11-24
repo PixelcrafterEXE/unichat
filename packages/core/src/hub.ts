@@ -559,7 +559,7 @@ export class Hub {
         const c = p.messageId
           ? await withTimeout((conn.threadOf ?? (() => { throw new Error(`${a.info.provider} cannot look up this thread.`); }))(native, String(p.messageId)), 30_000, "The messenger")
           : await withTimeout((conn.openThread ?? (() => { throw new Error(`${a.info.provider} threads cannot be opened here.`); }))(native), 30_000, "The messenger");
-        const chat = { ...c, id: `${a.info.id}:${c.id}`, accountId: a.info.id, spaceId: c.spaceId && `${a.info.id}:${c.spaceId}` };
+        const chat = { ...c, id: `${a.info.id}:${c.id}`, accountId: a.info.id, spaceId: c.spaceId && `${a.info.id}:${c.spaceId}`, ...(c.parentId ? { parentId: `${a.info.id}:${c.parentId}` } : {}) };
         this.emit("chats-changed", { accountId: a.info.id, chatId: chat.id }); return chat;
       }
       case "react": case "pin": case "edit": case "delete": case "setTyping": case "vote": case "editEvent": case "refreshChat":
@@ -846,7 +846,7 @@ export class Hub {
       if (!offline && a.conn) {
         try {
           const s = (await a.conn.spaces()).map((x) => ({ ...x, id: `${id}:${x.id}` }));
-          const c = (await a.conn.chats()).map((x) => ({ ...x, id: `${id}:${x.id}`, spaceId: x.spaceId && `${id}:${x.spaceId}`, ...(x.sameAs ? { sameAs: `${id}:${x.sameAs}` } : {}) }));
+          const c = (await a.conn.chats()).map((x) => ({ ...x, id: `${id}:${x.id}`, spaceId: x.spaceId && `${id}:${x.spaceId}`, ...(x.sameAs ? { sameAs: `${id}:${x.sameAs}` } : {}), ...(x.parentId ? { parentId: `${id}:${x.parentId}` } : {}) }));
           got = { spaces: s, chats: c };
           this.noteAvatarHints(c, s);
           const sig = JSON.stringify(got);
