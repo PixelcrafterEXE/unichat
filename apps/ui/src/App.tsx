@@ -225,13 +225,14 @@ export default function App() {
   const mrRef = useRef<Map<string, string>>();
   const resolvedRef = useRef(new Map<string, string>()); // provisional chat id -> real chat id
   const liveNotes = useRef(new Map<string, Notification>()); // shown desktop notifications by chat: dismissed again once that chat is opened
-  useEffect(() => { const seen = () => { if (chatId && document.hasFocus()) { liveNotes.current.get(chatId)?.close(); liveNotes.current.delete(chatId); } }; seen(); addEventListener("focus", seen); return () => removeEventListener("focus", seen); }, [chatId]);
+  const noteLines = useRef(new Map<string, { lines: string[]; n: number }>()); // a chat's unread messages, all in its one notification (reset when it goes)
+  useEffect(() => { const seen = () => { if (chatId && document.hasFocus()) { liveNotes.current.get(chatId)?.close(); liveNotes.current.delete(chatId); noteLines.current.delete(chatId); } }; seen(); addEventListener("focus", seen); return () => removeEventListener("focus", seen); }, [chatId]);
   // A notification whose chat is not unread any more has been read: here, through "Mark as read", or on another device (sync).
   // Leaving it standing is what made them pile up; the list is the authority, so this covers every way a chat can become read.
   useEffect(() => {
     for (const [id, note] of [...liveNotes.current]) {
       const c = chats.find((x) => x.id === id);
-      if (c && !c.unread && !c.unreadMark) { note.close(); liveNotes.current.delete(id); }
+      if (c && !c.unread && !c.unreadMark) { note.close(); liveNotes.current.delete(id); noteLines.current.delete(id); }
     }
   }, [chats]);
   const listReadyRef = useMemoRef(listReady); // no notification before the chat list (and with it the mute / archive state) has loaded
@@ -262,7 +263,14 @@ export default function App() {
           { const mode = settingsRef.current.notifyContent; const title = mode === "hidden" ? "UniChat" : (d.mergeId && chatsRef.current.find((c) => c.id === d.mergeId)?.name) || d.sender || "New message";
             // The chat's avatar is the notification icon (not in "hidden" mode, and the app icon stays when there is none or it is slow to load).
             void notificationIcon(d.mergeId ?? d.chatId, mode).then((icon) => {
-              const nt = new Notification(title, { body: mode === "full" ? d.text || "Attachment" : "New message", tag: mode === "hidden" ? "unichat" : k, ...(icon ? { icon } : {}) }); liveNotes.current.get(k)?.close(); liveNotes.current.set(k, nt); nt.onclose = () => { if (liveNotes.current.get(k) === nt) liveNotes.current.delete(k); }; nt.onclick = () => { try { window.focus(); } catch { /* ignore */ } openChatRef.current?.(d.mergeId ?? k); nt.close(); }; }); }
+              // one notification per chat that collects its unread messages (newest last; "+N more" above the last five)
+              const tag = mode === "hidden" ? "unichat" : k, acc = noteLines.current.get(tag) ?? { lines: [], n: 0 };
+              const kind = chatsRef.current.find((c) => c.id === k)?.kind, inGroup = kind === "group" || kind === "channel";
+              acc.n++; if (mode === "full") { acc.lines.push((inGroup && d.sender ? d.sender + ": " : "") + (d.text || "Attachment")); if (acc.lines.length > 5) acc.lines.shift(); }
+              noteLines.current.set(tag, acc);
+              const body = mode === "full" ? (acc.n > acc.lines.length ? `+${acc.n - acc.lines.length} more\n` : "") + acc.lines.join("\n") : acc.n > 1 ? `${acc.n} new messages` : "New message";
+              const nt = new Notification(title, { body, tag, ...(icon ? { icon } : {}) }); const prev = liveNotes.current.get(k); liveNotes.current.set(k, nt); prev?.close(); // replaced, not dismissed: its lines live on in `nt`
+              nt.onclose = () => { if (liveNotes.current.get(k) === nt) { liveNotes.current.delete(k); noteLines.current.delete(tag); } }; nt.onclick = () => { try { window.focus(); } catch { /* ignore */ } openChatRef.current?.(d.mergeId ?? k); nt.close(); }; }); }
       }
       if (ev === "message-update") setMsgs((m) => ({ ...m, [k]: (m[k] ?? []).map((x) => (x.id === d.messageId && x.chatId === d.chatId ? { ...x, ...d.patch, ...(d.patch.deleted ? { reactions: [], attachments: undefined, card: undefined, cards: undefined, poll: undefined, location: undefined, contacts: undefined } : {}) } : x)) }));
       if (ev === "receipt") setMsgs((m) => ({ ...m, [k]: (m[k] ?? []).map((x) => (x.id === d.messageId && x.chatId === d.chatId && RANK.indexOf(d.status) >= RANK.indexOf(x.status ?? "sending") ? { ...x, status: d.status } : x)) }));

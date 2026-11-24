@@ -5,12 +5,18 @@ import { buildNotification, PostedNotifications, summarize, withAvatar, MAX_AVAT
 const snap = { spaces: [{ id: "s1", muted: true }], chats: [{ id: "a:1", name: "Alice", kind: "dm" }, { id: "a:2", name: "Family", kind: "group" }, { id: "a:3", name: "Muted", kind: "dm", muted: true }, { id: "a:4", name: "InMutedSpace", kind: "group", spaceId: "s1" }] };
 
 test("notification rules: muted chat/space, own, historical, privacy modes", () => {
-  assert.deepEqual(buildNotification({ id: "m", chatId: "a:1", sender: "Alice", text: "hi" }, snap, "full"), { chatId: "a:1", messageId: "m", title: "Alice", body: "hi" });
+  const at = new Date(Date.now() - 5000).toISOString(), ms = Date.parse(at);
+  assert.deepEqual(buildNotification({ id: "m", chatId: "a:1", sender: "Alice", text: "hi", time: at }, snap, "full"), { chatId: "a:1", messageId: "m", title: "Alice", body: "hi", text: "hi", group: false, time: ms });
   assert.equal(buildNotification({ id: "m", chatId: "a:2", sender: "Bob", text: "yo" }, snap, "full")?.body, "Bob: yo");
   assert.equal(buildNotification({ id: "m", chatId: "a:3", sender: "X", text: "z" }, snap, "full"), undefined);
   assert.equal(buildNotification({ id: "m", chatId: "a:4", sender: "X", text: "z" }, snap, "full"), undefined);
   assert.equal(buildNotification({ id: "m", chatId: "a:1", fromMe: true, text: "z" }, snap, "full"), undefined);
-  assert.deepEqual(buildNotification({ id: "m", chatId: "a:1", sender: "Alice", text: "secret" }, snap, "hidden"), { chatId: "a:1", messageId: "m", title: "UniChat", body: "New message" });
+  assert.deepEqual(buildNotification({ id: "m", chatId: "a:1", sender: "Alice", text: "secret", time: at }, snap, "hidden"), { chatId: "a:1", messageId: "m", title: "UniChat", body: "New message", text: "New message", group: false, time: ms });
+  // one notification per chat lists its messages: in a group each line names its sender, in full mode only
+  const g = buildNotification({ id: "m", chatId: "a:2", sender: "Bob", text: "yo" }, snap, "full")!;
+  assert.deepEqual([g.text, g.sender, g.group], ["yo", "Bob", true]);
+  const gs = buildNotification({ id: "m", chatId: "a:2", sender: "Bob", text: "yo" }, snap, "sender")!;
+  assert.deepEqual([gs.text, gs.sender], ["New message", undefined], "sender mode does not reveal the text");
   assert.equal(summarize({ id: "x", chatId: "c", attachments: [{ kind: "voice" }] }), "Voice message");
 });
 

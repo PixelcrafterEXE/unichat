@@ -21,6 +21,7 @@ import android.os.Build;
 import android.util.Base64;
 
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.Person;
 import androidx.core.app.NotificationManagerCompat;
 
 import app.unimsg.android.MainActivity;
@@ -68,8 +69,25 @@ final class Notifier {
             .setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_SECRET).build();
     }
 
-    static void showMessage(Context c, String chatId, String messageId, String title, String body, String mode, String avatarB64, boolean starred) {
-        post(c, chatId, messageId, title, body, mode, null, true, avatarB64, starred);
+    /** What a chat's one notification shows: its unread messages (newest last), its title and picture. Kept until the chat is read. */
+    private static final class Line { final String sender, text; final long time; final boolean me; Line(String s, String t, long w, boolean m) { sender = s; text = t; time = w; me = m; } }
+    private static final class ChatNote { String title = "UniChat", avatar; boolean group, starred; int count; String lastMessage = ""; final java.util.ArrayList<Line> lines = new java.util.ArrayList<>(); }
+    private static final java.util.Map<String, ChatNote> notes = new java.util.HashMap<>();
+    private static final int MAX_LINES = 20;
+
+    static void showMessage(Context c, String chatId, String messageId, String title, String body, String mode, String avatarB64, boolean starred,
+                            String text, String sender, boolean group, long time) {
+        boolean hidden = "hidden".equals(mode);
+        String tag = hidden ? "hidden" : chatId;
+        ChatNote n;
+        synchronized (notes) {
+            n = notes.get(tag); if (n == null) { n = new ChatNote(); notes.put(tag, n); }
+            n.count++; n.title = title; n.group = group; n.starred = starred; n.lastMessage = messageId;
+            if (!hidden && avatarB64 != null && !avatarB64.isEmpty()) n.avatar = avatarB64;
+            n.lines.add(new Line(sender, text != null && !text.isEmpty() ? text : body, time > 0 ? time : System.currentTimeMillis(), false));
+            while (n.lines.size() > MAX_LINES) n.lines.remove(0);
+        }
+        post(c, chatId, messageId, title, hidden && n.count > 1 ? n.count + " new messages" : body, mode, null, true, hidden ? null : n.avatar, starred, hidden ? null : n);
     }
 
     /** Decodes the chat picture sent by the backend (base64 PNG/JPEG/WebP, small) into a round bitmap for setLargeIcon. Returns null for anything unusable: the notification then simply has no picture. */
@@ -100,11 +118,15 @@ final class Notifier {
     static void showReplyResult(Context c, String chatId, String messageId, String sentText, boolean ok) {
         NativePrefs p = new NativePrefs(c);
         String mode = p.notifyContent();
-        if (ok && sentText != null) post(c, chatId, messageId, "UniChat", "Reply sent", mode, sentText, false, null, false);
-        else post(c, chatId, messageId, "UniChat", sentText == null ? "Nothing to send" : "Could not send your reply (backend not running or offline)", mode, null, false, null, false);
+        ChatNote n; synchronized (notes) { n = "hidden".equals(mode) ? null : notes.get(chatId); }
+        if (ok && sentText != null && n != null) { // the conversation goes on in the same notification: your reply is its last line
+            synchronized (notes) { n.lines.add(new Line(null, sentText, System.currentTimeMillis(), true)); while (n.lines.size() > MAX_LINES) n.lines.remove(0); }
+            post(c, chatId, messageId, n.title, "Reply sent", mode, null, false, n.avatar, n.starred, n);
+        } else if (ok && sentText != null) post(c, chatId, messageId, "UniChat", "Reply sent", mode, sentText, false, null, false, null);
+        else post(c, chatId, messageId, n != null ? n.title : "UniChat", sentText == null ? "Nothing to send" : "Could not send your reply (backend not running or offline)", mode, null, false, n != null ? n.avatar : null, n != null && n.starred, null);
     }
 
-    private static void post(Context c, String chatId, String messageId, String title, String body, String mode, String sentHistory, boolean alert, String avatarB64, boolean starred) {
+    private static void post(Context c, String chatId, String messageId, String title, String body, String mode, String sentHistory, boolean alert, String avatarB64, boolean starred, ChatNote note) {
         if (Build.VERSION.SDK_INT >= 33 && c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
         boolean hidden = "hidden".equals(mode);
         // hidden: ONE generic notification for everything, no chat identity, no actions (nothing to leak through count, tag or reply target)
@@ -117,7 +139,16 @@ final class Notifier {
             .setAutoCancel(true).setContentIntent(tap).setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(pub) // lock screen shows the generic version
             .setGroup("messages").setPriority(NotificationCompat.PRIORITY_HIGH).setOnlyAlertOnce(!alert);
-        if (!hidden) { Bitmap av = avatarBitmap(avatarB64); if (av != null) b.setLargeIcon(av); } // hidden: never a personal picture
+        if (!hidden) { Bitmap av = avatarBitmap(avatarB64); if (av != null) b.setLargeIcon(av); } // the chat's (or group's) picture; hidden: never a personal one
+        if (!hidden && note != null) { // all of the chat's unread messages in this one notification, one line each (a group's lines name their sender)
+            NotificationCompat.MessagingStyle st = new NotificationCompat.MessagingStyle(new Person.Builder().setName("You").build());
+            if (note.group) st.setConversationTitle(note.title).setGroupConversation(true);
+            Person chatPerson = new Person.Builder().setName(note.title).build();
+            synchronized (notes) {
+                for (Line l : note.lines) st.addMessage(l.text, l.time, l.me ? null : l.sender != null && !l.sender.isEmpty() ? new Person.Builder().setName(l.sender).build() : chatPerson);
+            }
+            b.setStyle(st).setNumber(note.count);
+        }
         if (!hidden && sentHistory != null) b.setRemoteInputHistory(new CharSequence[]{sentHistory});
         if (!hidden) {
             int flagsMut = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0); // RemoteInput needs a mutable PI
@@ -140,6 +171,7 @@ final class Notifier {
     static void clearChat(Context c, String chatId) {
         if (chatId == null || chatId.isEmpty()) return;
         NotificationManagerCompat m = NotificationManagerCompat.from(c);
+        synchronized (notes) { notes.remove(chatId); notes.remove("hidden"); }
         m.cancel(chatId, MESSAGE_ID);
         if ("hidden".equals(new NativePrefs(c).notifyContent())) m.cancel("hidden", MESSAGE_ID); // one shared notification, no chat identity
     }
@@ -148,7 +180,7 @@ final class Notifier {
      * The message notification that carries no chat id ("hidden" content mode). Never cancelAll(): that would take the
      * foreground-service notification with it, and the service must keep one.
      */
-    static void clearMessages(Context c) { NotificationManagerCompat.from(c).cancel("hidden", MESSAGE_ID); }
+    static void clearMessages(Context c) { synchronized (notes) { notes.remove("hidden"); } NotificationManagerCompat.from(c).cancel("hidden", MESSAGE_ID); }
 
     /** Alert shown when the system stopped/refused our foreground service (timeout, boot restriction). Tap opens the app, which can always restart it. */
     static void showReconnectNeeded(Context c, String text) {

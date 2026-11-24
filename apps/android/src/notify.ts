@@ -16,7 +16,7 @@ export function summarize(m: Msg): string {
   return "New message";
 }
 
-export function buildNotification(m: Msg, snap: Snapshot | undefined, mode: NotifyContent): { chatId: string; messageId: string; title: string; body: string; starred?: boolean } | undefined {
+export function buildNotification(m: Msg, snap: Snapshot | undefined, mode: NotifyContent): { chatId: string; messageId: string; title: string; body: string; starred?: boolean; text: string; sender?: string; group: boolean; time: number } | undefined {
   if (m.fromMe || m.historical || m.deleted || m.system) return undefined;
   if (m.time && Date.now() - Date.parse(m.time) > 2 * 60_000) return undefined; // delivered or synced late: not news any more (the device that got it live already notified)
   const chat = snap?.chats?.find((c) => c.id === m.chatId);
@@ -26,7 +26,10 @@ export function buildNotification(m: Msg, snap: Snapshot | undefined, mode: Noti
   const group = chat?.kind === "group" || chat?.kind === "channel";
   const title = mode === "hidden" ? "UniChat" : (chat?.name || m.sender || "New message");
   const body = mode === "hidden" ? "New message" : mode === "sender" ? "New message" : group && m.sender ? `${m.sender}: ${summarize(m)}` : summarize(m);
-  return { chatId: m.chatId, messageId: m.id, title: merged && mode !== "hidden" ? merged.name || title : title, body, ...(chat?.starred || merged?.starred ? { starred: true } : {}) };
+  // text / sender / time: the phone lists a chat's unread messages in ONE notification (one line each); never more than `body` reveals
+  const text = mode === "full" ? summarize(m) : "New message", sender = mode === "full" && group && m.sender ? m.sender : undefined;
+  const t = m.time ? Date.parse(m.time) : NaN;
+  return { chatId: m.chatId, messageId: m.id, title: merged && mode !== "hidden" ? merged.name || title : title, body, ...(chat?.starred || merged?.starred ? { starred: true } : {}), text, ...(sender ? { sender } : {}), group, time: Number.isFinite(t) ? t : Date.now() };
 }
 
 /**
