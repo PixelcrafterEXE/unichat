@@ -32,6 +32,8 @@ interface Props {
   jumpRef: { current: ((messageId: string, chatId?: string) => void) | undefined };
   unreadAtOpen: number; loaded: boolean; loadState?: { status: "loading" | "error"; since: number; error?: string }; /** where the messages come from while loading */ loadSource?: LoadSource; /** the chat was read from this device only (source offline / not answering) */ loadNote?: string; onRetry: () => void; onSent: (m: Message, replaces?: string) => void; onOpenChat: (id: string) => void; onInfo: () => void;
 }
+/** Private replies on their way: the direct chat that opens next takes this group message as its quote. */
+const privateQuotes = new Map<string, Message>();
 const NET_GAP = 15 * 60_000; // merged chats: show the messenger indicator again after this long a pause
 const WIN_MIN = 300; // below this the whole timeline is rendered (no windowing)
 /** Messengers whose history comes from a phone: only there "waiting for your phone" makes sense. */
@@ -39,7 +41,7 @@ const PHONE_LINKED = new Set(["whatsapp", "signal", "threema-md"]);
 
 export interface RowCb {
   jump: (messageId: string, chatId?: string) => void; person: (senderId: string, name: string) => void; getMessages: () => Message[];
-  reply: (m: Message) => void; edit: (m: Message) => void; forward: (m: Message) => void; react: (m: Message, e: string) => void; pin: (m: Message, pinned: boolean, durationSec?: number) => void;
+  reply: (m: Message) => void; replyPrivately: (m: Message) => void; edit: (m: Message) => void; forward: (m: Message) => void; react: (m: Message, e: string) => void; pin: (m: Message, pinned: boolean, durationSec?: number) => void;
   /** open the thread a message started / announces (Message.thread) */
   thread: (m: Message) => void;
   retry: (m: Message) => void; discard: (m: Message) => void; image: (i: { url: string; name?: string; video?: boolean }) => void; handle: (h: string, own: Chat) => void;
@@ -51,7 +53,7 @@ const sameChatBits = (a: Chat, b: Chat) => a === b || (a.id === b.id && a.name =
 const MessageRow = memo(function MessageRow(p: { cb: RowCb; m: Message; grouped: boolean; chat: Chat; own: Chat; net?: { provider: string; name: string; account: string; title: string }; showNet?: boolean; caps?: Capabilities; settings: Settings; selected?: boolean; selMode?: boolean }) {
   const { cb, m } = p;
   return <MessageView onJump={cb.jump} onPerson={cb.person} m={m} grouped={p.grouped} chat={p.chat} own={p.own} net={p.net} showNet={p.showNet} caps={p.caps} settings={p.settings} getMessages={cb.getMessages}
-    onReply={() => cb.reply(m)} onEdit={() => cb.edit(m)} onForward={() => cb.forward(m)} onReact={(e) => cb.react(m, e)} onPin={(pinned, d) => cb.pin(m, pinned, d)} onRetry={() => cb.retry(m)} onDiscard={() => cb.discard(m)}
+    onReply={() => cb.reply(m)} onReplyPrivately={!m.fromMe && !m.system && (p.own.kind === "group" || p.own.kind === "channel") ? () => cb.replyPrivately(m) : undefined} onEdit={() => cb.edit(m)} onForward={() => cb.forward(m)} onReact={(e) => cb.react(m, e)} onPin={(pinned, d) => cb.pin(m, pinned, d)} onRetry={() => cb.retry(m)} onDiscard={() => cb.discard(m)}
     onImage={cb.image} onMessageHandle={(h) => cb.handle(h, p.own)} onThread={() => cb.thread(m)} selected={p.selected} selMode={p.selMode} onSelect={() => cb.select(m)} />;
 }, (a, b) => a.m === b.m && a.grouped === b.grouped && a.caps === b.caps && a.settings === b.settings && a.cb === b.cb && a.net === b.net && a.showNet === b.showNet && a.selected === b.selected && a.selMode === b.selMode && sameChatBits(a.chat, b.chat) && sameChatBits(a.own, b.own));
 interface Pending { id: number; blob: Blob; name: string; mime: string; kind: Attachment["kind"]; preview?: string }
@@ -65,6 +67,7 @@ const failedSends = new Map<string, { payload: any; error: string }>();
 export default function Conversation(p: Props) {
   const { chat, messages, settings } = p;
   const [reply, setReply] = useState<Message>();
+  useEffect(() => { const q = privateQuotes.get(chat.id); if (q) { privateQuotes.delete(chat.id); setReply(q); } }, [chat.id]); // opened by "Reply privately"
   const [editing, setEditing] = useState<Message>();
   const [forwarding, setForwarding] = useState<Message>(); const [fwdMany, setFwdMany] = useState(false);
   // multi-select: the keys of the picked messages (chat id + message id, because a merged chat can repeat native ids).
@@ -263,6 +266,10 @@ export default function Conversation(p: Props) {
   Object.assign(cb, {
     jump: jumpTo, person: p.onPerson, getMessages: () => messages,
     reply: (m: Message) => { setReply(m); setEditing(undefined); composerRef.current?.focus(); },
+    // a private reply: the direct chat with the sender opens (created when needed) with this group message as its quote
+    replyPrivately: async (m: Message) => {
+      try { const c = await core.call("privateReply", { chatId: m.chatId, messageId: m.id }) as Chat; privateQuotes.set(c.id, m); p.onOpenChat(c.id); } catch (e) { err(e); }
+    },
     edit: (m: Message) => { setEditing(m); setReply(undefined); composerRef.current?.setText(m.text); composerRef.current?.focus(); },
     forward: (m: Message) => setForwarding(m), react,
     pin: (m: Message, pinned: boolean, durationSec?: number) => { core.call("pin", { chatId: m.chatId, messageId: m.id, pinned, ...(durationSec !== undefined ? { durationSec } : {}) }).catch(err); },
@@ -455,7 +462,7 @@ function Composer({ chat, target, viaSelect, caps, settings, reply, editing, kno
 
   const sendRaw = async (payload: object) => {
     // clientId: one id per message; a Retry sends the SAME payload, so a send through another device happens once even if the first answer was lost
-    const full = { chatId: target.id, replyToMessageId: reply?.id, clientId: newClientId(), ...payload } as any;
+    const full = { chatId: target.id, replyToMessageId: reply?.id, ...(reply && !chat.mergeMembers && reply.chatId !== target.id ? { replyToChatId: reply.chatId } : {}), clientId: newClientId(), ...payload } as any; // a quote from another chat: a private reply
     // show it right away (pending); the real message replaces it when the backend answers (App matches by chat + text, or by this id)
     const pid = "pend-" + full.clientId;
     onSent({ id: pid, chatId: target.id, sender: "You", senderId: "me", fromMe: true, status: "sending", time: new Date().toISOString(), text: full.text ?? "", location: full.location, contacts: full.contacts,
@@ -622,7 +629,7 @@ function MessageView(p: {
   own: Chat; net?: { provider: string; name: string; account: string; title: string }; showNet?: boolean;
   m: Message; grouped: boolean; chat: Chat; caps?: Capabilities; settings: Settings; getMessages: () => Message[];
   onRetry: () => void; onDiscard: () => void;
-  onReply: () => void; onEdit: () => void; onForward: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onImage: (i: { url: string; name?: string; video?: boolean }) => void;
+  onReply: () => void; onReplyPrivately?: () => void; onEdit: () => void; onForward: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onImage: (i: { url: string; name?: string; video?: boolean }) => void;
   selected?: boolean; selMode?: boolean; onSelect: () => void; onMessageHandle: (h: string) => void; onThread: () => void;
 }) {
   const { m, chat, caps } = p;
@@ -746,7 +753,7 @@ function MessageView(p: {
         </div>)}
       {reactors && createPortal(<ReactorsModal chat={p.own} m={m} messages={p.getMessages()} onClose={() => setReactors(false)} />, document.body)}
       {info && createPortal(<Suspense fallback={null}><MessageInfoModal chat={p.own} m={m} messages={p.getMessages()} details={!!caps?.receiptDetails} onClose={() => setInfo(false)} /></Suspense>, document.body)}
-      {menu && <MessageMenu {...menu} onReactors={() => setReactors(true)} m={m} caps={caps} onClose={() => setMenu(undefined)} onSelect={p.onSelect} canShare={canShare} onShare={() => void share()} onMore={() => setFullPicker(true)} onReact={p.onReact} onPin={p.onPin} onReply={p.onReply} onForward={p.onForward} onEdit={p.onEdit} onDelete={del} onRetry={p.onRetry} onDiscard={p.onDiscard} />}
+      {menu && <MessageMenu {...menu} onReactors={() => setReactors(true)} m={m} caps={caps} onClose={() => setMenu(undefined)} onSelect={p.onSelect} canShare={canShare} onShare={() => void share()} onMore={() => setFullPicker(true)} onReact={p.onReact} onPin={p.onPin} onReply={p.onReply} onReplyPrivately={p.onReplyPrivately} onForward={p.onForward} onEdit={p.onEdit} onDelete={del} onRetry={p.onRetry} onDiscard={p.onDiscard} />}
       {fullPicker && <EmojiPopover onClose={() => setFullPicker(false)} onPick={(e) => p.onReact(e)} />}
       {picker && (
         <div className="reactpick" onMouseLeave={() => { pickTimer.current = setTimeout(() => setPicker(false), 600); }} onMouseEnter={() => clearTimeout(pickTimer.current)}>
@@ -875,7 +882,7 @@ function SystemRow({ m, onThread }: { m: Message; onThread?: () => void }) {
 }
 
 /** Right-click menu for a message (replaces the browser's own menu; selected text still gets "Copy selection"). */
-function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: () => void; canShare?: boolean; onShare: () => void; x: number; y: number; sel: string; m: Message; caps?: Capabilities; onClose: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onReply: () => void; onForward: () => void; onEdit: () => void; onDelete: () => void; onRetry: () => void; onDiscard: () => void }) {
+function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: () => void; canShare?: boolean; onShare: () => void; x: number; y: number; sel: string; m: Message; caps?: Capabilities; onClose: () => void; onReact: (e: string) => void; onPin: (pinned: boolean, durationSec?: number) => void; onReply: () => void; onReplyPrivately?: () => void; onForward: () => void; onEdit: () => void; onDelete: () => void; onRetry: () => void; onDiscard: () => void }) {
   const { m, caps } = p;
   const [pinOpen, setPinOpen] = useState(false); // networks with expiring pins: the length is chosen right in the menu
   const ref = useRef<HTMLDivElement>(null);
@@ -901,6 +908,7 @@ function MessageMenu(p: { onMore: () => void; onReactors: () => void; onSelect: 
       {failed && <><Item icon={<RotateCcw size={15} />} label="Retry sending" onClick={p.onRetry} /><Item icon={<Trash2 size={15} />} label="Discard" onClick={p.onDiscard} danger /></>}
       {!m.deleted && !failed && <>
         {caps?.replies && <Item icon={<Reply size={15} />} label="Reply" onClick={p.onReply} />}
+        {caps?.privateReply && p.onReplyPrivately && <Item icon={<Reply size={15} />} label="Reply privately" onClick={p.onReplyPrivately} />}
         <Item icon={<Forward size={15} />} label="Forward" onClick={p.onForward} />
         {p.canShare && <Item icon={<ExternalLink size={15} />} label="Share…" onClick={p.onShare} />}
         <Item icon={<CheckSquare size={15} />} label="Select" onClick={p.onSelect} />

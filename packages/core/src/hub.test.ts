@@ -1056,6 +1056,20 @@ test("aliases: per messenger, the network's names (community nicknames named by 
   t.done();
 });
 
+test("reply privately: the hub finds the direct chat with the sender and hands the connector the group chat's own id", async () => {
+  const t = setup(); const id = await linked(t); const c = t.conns[0] as any;
+  c.chatList = [{ id: "grp", accountId: "x", provider: "fake", kind: "group", name: "Group" }];
+  const sends: any[] = []; c.send = async (chatId: string, m: any) => { sends.push({ chatId, ...m }); return { id: "o1", chatId, sender: "Me", senderId: "me", text: m.text, time: new Date().toISOString(), fromMe: true }; };
+  c.privateChatWith = async (who: string) => ({ id: "dm-" + who, accountId: "x", provider: "fake", kind: "dm", name: who });
+  t.conns[0].emit({ type: "message", data: { ...msg("g1", "lunch?", "2026-01-01T10:00:00Z"), chatId: "grp", senderId: "ann", sender: "Ann" } });
+  const dm = await t.call("privateReply", { chatId: `${id}:grp`, messageId: "g1" });
+  assert.equal(dm.id, `${id}:dm-ann`);
+  await t.call("send", { chatId: dm.id, text: "yes", replyToMessageId: "g1", replyToChatId: `${id}:grp` });
+  assert.deepEqual([sends[0].chatId, sends[0].replyToMessageId, sends[0].replyToChatId], ["dm-ann", "g1", "grp"]);
+  await assert.rejects(t.call("privateReply", { chatId: `${id}:grp`, messageId: "nope" }), /no one to reply to privately/);
+  t.done();
+});
+
 test("recency: a chat whose newest lines are notices (safety number changed) sorts by its last real message", async () => {
   const t = setup(); const id = await linked(t); const c = t.conns[0] as any;
   c.chatList = [{ id: "ann", accountId: "x", provider: "fake", kind: "dm", name: "Ann", lastMessageAt: "2026-01-02T09:00:00Z", preview: "Your safety number with Ann has changed." },

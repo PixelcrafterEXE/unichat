@@ -35,6 +35,8 @@ export interface Capabilities {
   edits: boolean;
   deletes: boolean;
   replies: boolean;
+  /** "Reply privately": quote a group message in the direct chat with its sender (WhatsApp). Needs Connector.privateChatWith. */
+  privateReply?: boolean;
   attachments: boolean;
   typing: boolean;
   readReceipts: boolean;
@@ -202,6 +204,8 @@ export interface OutgoingMessage {
   /** Stable id the app made up for THIS send (the same on every Retry). Connectors may ignore it; a relaying connector uses it so a repeated send is never executed twice. */
   clientId?: string;
   replyToMessageId?: string;
+  /** The chat the quoted message is in, when it is not the chat this goes to: a private reply to a group message (native id, same account). */
+  replyToChatId?: string;
   attachments?: OutgoingAttachment[];
   location?: Location;
   contacts?: SharedContact[];
@@ -324,6 +328,8 @@ export interface Connector {
   openThread?(threadId: string): Promise<Chat>;
   /** The thread a message started or announces, when the saved copy lacks its link (fetched before threads could be opened): asks the network, then opens it like openThread. */
   threadOf?(chatId: string, messageId: string): Promise<Chat>;
+  /** The direct chat with a group member (`senderId` as on their messages), created when there is none yet: where a private reply goes. */
+  privateChatWith?(senderId: string): Promise<Chat>;
   /** Cast (or change) my vote: the full set of option ids I now pick; [] retracts. Emit message-update {poll} afterwards. */
   vote?(chatId: string, messageId: string, optionIds: string[]): Promise<void>;
   /** Leave a community/space (its channels disappear from chats()); emit spaces-changed + chats-changed. */
