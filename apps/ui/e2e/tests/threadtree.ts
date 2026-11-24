@@ -19,4 +19,14 @@ export default [
     await t.ev(`(()=>{const i=document.querySelector('.chats input'); i.focus(); __e2e.setv(i,'Release')})()`);
     await t.ok("the name search finds a thread like any chat", `!!${row(T)}`);
   }),
+  test("discord: an archived thread opens on the first click, says it is opening, shows its messages and sits under its channel", async (t) => {
+    await t.open("&chat=dc-1:dev-talk");
+    await t.waitFor(`__e2e.msg("Who wants to plan the old release?")`);
+    await t.not("the archived thread is not listed yet", row("dc-1:old-plans"));
+    await t.ev(`__e2e.msg("Who wants to plan the old release?").querySelector('[data-open-thread]').click()`);
+    await t.waitFor(`/Opening the thread/.test(document.querySelector('.notice')?.textContent ?? '')`, { desc: "feedback while the network is asked" });
+    await t.waitFor(`__e2e.msg("Then I'll do the blog post")`, { desc: "the thread's messages on the first open" });
+    await t.ok("the thread is the open chat", `document.querySelector('main header')?.textContent.includes('Old release plans')`);
+    await t.ok("listed under its channel, as a tree item", `(()=>{const p=${row("dc-1:dev-talk")}, c=${row("dc-1:old-plans")}; return !!c && c.classList.contains('threadchild') && p?.nextElementSibling===c})()`);
+  }),
 ];

@@ -422,7 +422,16 @@ export default function App() {
   const dotIn = (id: string) => !(unreadAgg.exact.get(id) ?? 0) && (unreadAgg.approx.get(id) ?? 0) > 0;
   const unreadIn = (id: string) => unreadAgg.exact.get(id) ?? 0;
   const pick = (id: string) => { setSel([]); setSpace(id); setChatId(undefined); setNavOpen(true); setPanel(undefined); };
-  const openChat = (id0: string) => { const id = chats.find((x) => x.id === id0)?.mergedInto ?? id0; const c = chats.find((x) => x.id === id); if (c) { setSpace(c.spaceId ?? HOME); setOpenedUnread((o) => ({ ...o, [id]: c.unreadApprox || c.unreadMark ? 0 : c.unread ?? 0 })); /* only a real count can say that messages are missing: a dot or a hand-set mark has none */ if (c.unreadMark) setFlag(id, { unreadMark: false }); } setChatId(id); setNavOpen(false); };
+  const openChat = (id0: string, known?: Chat) => { const id = chats.find((x) => x.id === id0)?.mergedInto ?? id0; const c = chats.find((x) => x.id === id) ?? (known?.id === id ? known : undefined); if (c) { setSpace(c.spaceId ?? HOME); setOpenedUnread((o) => ({ ...o, [id]: c.unreadApprox || c.unreadMark ? 0 : c.unread ?? 0 })); /* only a real count can say that messages are missing: a dot or a hand-set mark has none */ if (c.unreadMark) setFlag(id, { unreadMark: false }); } setChatId(id); setNavOpen(false); };
+  /** A thread the list does not hold yet (e.g. an archived Discord thread): asking the network takes a moment, so say so at once. The answer is
+   * listed right away and opened with its history: waiting for the list's own refresh opened a chat the app did not know yet, which stayed empty. */
+  const openThread = async (ask: () => Promise<Chat>) => {
+    say("Opening the thread…");
+    const c = await ask();
+    setChats((cs) => (cs.some((x) => x.id === c.id) ? cs : [...cs, c]));
+    setMsgs((m) => { if (!m[c.id]?.length) { const n = { ...m }; delete n[c.id]; return n; } return m; }); // an empty copy from an earlier try would stop the load
+    setNotice(undefined); openChat(c.id, c); void refresh();
+  };
   openChatRef.current = openChat; pickRef.current = pick;
   useEffect(() => { const h = (e: Event) => openChatRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-chat", h); return () => window.removeEventListener("unichat-open-chat", h); }, []);
   useEffect(() => { const h = (e: Event) => pickRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-space", h); return () => window.removeEventListener("unichat-open-space", h); }, []); // a community listed in a contact's info // e.g. a group listed in a contact's info
@@ -812,7 +821,7 @@ export default function App() {
         {error && <div className="error" onClick={() => setError(undefined)}>{error} <small>(click to dismiss)</small></div>}
         {chat
           ? <Conversation onPerson={(senderId, name) => setPerson({ chat, senderId, name })} key={chat.id} chat={chat} messages={msgs[chat.id] ?? []} typing={typing[chat.id] ?? []} caps={chat.offline ? undefined : capsFor(chat)} settings={settings} members={memberChats(chat)} providers={providers} accounts={accounts} onSignIn={(aid) => { const a = accounts.find((x) => x.id === (aid ?? chat.accountId)); if (a) accountAction("signin", a); }}
-              chats={listChats} jumpRef={jumpRef} unreadAtOpen={openedUnread[chat.id] ?? 0} loaded={msgs[chat.id] !== undefined} loadState={hist[chat.id]} loadSource={sourceFor(chat.id)} loadNote={loadNote[chat.id]} onRetry={() => loadChat(chat.id)} onInfo={() => setInfo(true)} onOpenChat={openChat} hasMore={!!more[chat.id]} onLoadOlder={(n) => loadOlder(chat.id, n)} onRemove={(id) => setMsgs((s) => ({ ...s, [chat.id]: (s[chat.id] ?? []).filter((x) => x.id !== id) }))}
+              chats={listChats} jumpRef={jumpRef} unreadAtOpen={openedUnread[chat.id] ?? 0} loaded={msgs[chat.id] !== undefined} loadState={hist[chat.id]} loadSource={sourceFor(chat.id)} loadNote={loadNote[chat.id]} onRetry={() => loadChat(chat.id)} onInfo={() => setInfo(true)} onOpenChat={openChat} onOpenThread={openThread} hasMore={!!more[chat.id]} onLoadOlder={(n) => loadOlder(chat.id, n)} onRemove={(id) => setMsgs((s) => ({ ...s, [chat.id]: (s[chat.id] ?? []).filter((x) => x.id !== id) }))}
               onSent={(m, r) => setMsgs((s) => { const k = resolvedRef.current.get(chat.id) ?? chat.id; return { ...s, [k]: upsert(s[k] ?? [], m, r) }; })} onRequest={(accept) => requestAnswer(chat, accept)} />
           : <div className="placeholder" data-loading={!listReady ? "main" : undefined}>{!listReady ? <span className="hint"><span className="spin" /> {slowStart ? "Still starting…" : "Loading…"}</span> : hasAccount ? "Select a chat" : "Add an account to get started"}</div>}
       </main>
