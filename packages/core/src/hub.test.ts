@@ -1065,6 +1065,11 @@ test("recency: a chat whose newest lines are notices (safety number changed) sor
   const snap = await t.call("snapshot"), ann = snap.chats.find((x: any) => x.id === `${id}:ann`), bob = snap.chats.find((x: any) => x.id === `${id}:bob`);
   assert.equal(ann.lastMessageAt, "2026-01-01T10:00:00Z"); assert.equal(ann.preview, "real one");
   assert.equal(bob.lastMessageAt, "2026-01-05T09:00:00Z", "a chat whose archive is behind the network keeps the network's time");
+  // a chat with nothing but a notice: no activity at all, so it sorts after every chat with real messages
+  c.chatList.push({ id: "lena", accountId: "x", provider: "fake", kind: "dm", name: "L", lastMessageAt: "2026-01-09T09:00:00Z" });
+  t.conns[0].emit({ type: "message", data: { ...msg("s1", "Your safety number with L has changed.", "2026-01-09T09:00:00Z"), chatId: "lena", system: { kind: "info" } } });
+  const lena = (await t.call("snapshot")).chats.find((x: any) => x.id === `${id}:lena`);
+  assert.equal(lena.lastMessageAt, undefined);
   t.done();
 });
 

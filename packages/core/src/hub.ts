@@ -758,6 +758,8 @@ export class Hub {
       const a = this.archivedActivity(c.id);
       // recency counts real messages only: when the archive is up to date with the network and its newest lines are notices ("safety number changed", "X joined"), the chat sorts by the last real message
       if (c.lastMessageAt && a.newest && a.newest >= c.lastMessageAt && a.time && a.time < c.lastMessageAt) { c.lastMessageAt = a.time; if (a.preview) c.preview = a.preview; }
+      // ...and a chat that holds nothing but notices (a contact you never wrote with whose safety number changed) has no activity: it sorts to the end
+      else if (c.lastMessageAt && a.newest && a.newest >= c.lastMessageAt && !a.time) { delete c.lastMessageAt; }
       if (c.lastMessageAt && c.preview) continue;
       if (!c.lastMessageAt && a.time) c.lastMessageAt = a.time;
       if (!c.preview && a.preview && (!c.lastMessageAt || !a.time || a.time >= c.lastMessageAt)) c.preview = a.preview;
