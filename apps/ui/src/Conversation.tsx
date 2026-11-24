@@ -110,7 +110,8 @@ export default function Conversation(p: Props) {
   const pins = usePins(chat.id, messages, canPin);
   const pickVia = (cid: string) => { setManual({ via: cid, after: lastMsg?.id }); setReply(undefined); core.call("setMergeVia", { mergeId: chat.id, chatId: cid }).catch(err); };
   const viaSelect = merged ? <ViaSelect members={members!} value={via.id} accounts={p.accounts} providers={p.providers} onPick={pickVia} /> : undefined;
-  const incomingTail = (() => { let n = 0; for (let i = messages.length - 1; i >= 0; i--) { const m = messages[i]; if (m.fromMe) break; if (!m.system) n++; } return n; })();
+  // incoming lines since your last message; notices count too: a network's unread counter may include them (a changed safety number), so leaving them out reported "missing" messages that were there
+  const incomingTail = (() => { let n = 0; for (let i = messages.length - 1; i >= 0; i--) { const m = messages[i]; if (m.fromMe) break; n++; } return n; })();
   const missingUnread = Math.max(0, p.unreadAtOpen - incomingTail);
   useEffect(() => { if (!p.loaded || missingUnread <= 0 || !p.hasMore || autoGap.current >= 6) return; autoGap.current++; void p.onLoadOlder(100).catch(() => {}); }, [p.loaded, missingUnread, p.hasMore, messages.length]);
   /** Scroll to a message and flash it. If it is older than what is loaded, keep loading earlier history until it turns up. */

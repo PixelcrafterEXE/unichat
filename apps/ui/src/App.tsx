@@ -412,7 +412,7 @@ export default function App() {
   const dotIn = (id: string) => !(unreadAgg.exact.get(id) ?? 0) && (unreadAgg.approx.get(id) ?? 0) > 0;
   const unreadIn = (id: string) => unreadAgg.exact.get(id) ?? 0;
   const pick = (id: string) => { setSel([]); setSpace(id); setChatId(undefined); setNavOpen(true); setPanel(undefined); };
-  const openChat = (id0: string) => { const id = chats.find((x) => x.id === id0)?.mergedInto ?? id0; const c = chats.find((x) => x.id === id); if (c) { setSpace(c.spaceId ?? HOME); setOpenedUnread((o) => ({ ...o, [id]: c.unread ?? 0 })); if (c.unreadMark) setFlag(id, { unreadMark: false }); } setChatId(id); setNavOpen(false); };
+  const openChat = (id0: string) => { const id = chats.find((x) => x.id === id0)?.mergedInto ?? id0; const c = chats.find((x) => x.id === id); if (c) { setSpace(c.spaceId ?? HOME); setOpenedUnread((o) => ({ ...o, [id]: c.unreadApprox || c.unreadMark ? 0 : c.unread ?? 0 })); /* only a real count can say that messages are missing: a dot or a hand-set mark has none */ if (c.unreadMark) setFlag(id, { unreadMark: false }); } setChatId(id); setNavOpen(false); };
   openChatRef.current = openChat; pickRef.current = pick;
   useEffect(() => { const h = (e: Event) => openChatRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-chat", h); return () => window.removeEventListener("unichat-open-chat", h); }, []);
   useEffect(() => { const h = (e: Event) => pickRef.current?.((e as CustomEvent<string>).detail); window.addEventListener("unichat-open-space", h); return () => window.removeEventListener("unichat-open-space", h); }, []); // a community listed in a contact's info // e.g. a group listed in a contact's info
