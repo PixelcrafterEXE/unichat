@@ -556,9 +556,8 @@ export class Hub {
       case "openThread": { // p: { chatId: the thread's global chat id (account id + Message.thread.id) }
         const [a, native] = this.resolve(String(p.chatId)); const conn = this.need(a);
         // p.messageId: a message whose saved copy has no thread link; p.chatId is then the message's chat (Connector.threadOf)
-        const c = p.messageId
-          ? await withTimeout((conn.threadOf ?? (() => { throw new Error(`${a.info.provider} cannot look up this thread.`); }))(native, String(p.messageId)), 30_000, "The messenger")
-          : await withTimeout((conn.openThread ?? (() => { throw new Error(`${a.info.provider} threads cannot be opened here.`); }))(native), 30_000, "The messenger");
+        if (p.messageId ? !conn.threadOf : !conn.openThread) throw new Error(p.messageId ? `${a.info.provider} cannot look up this thread.` : `${a.info.provider} threads cannot be opened here.`);
+        const c = await withTimeout(p.messageId ? conn.threadOf!(native, String(p.messageId)) : conn.openThread!(native), 30_000, "The messenger"); // called on the connector: it needs its own this
         const chat = { ...c, id: `${a.info.id}:${c.id}`, accountId: a.info.id, spaceId: c.spaceId && `${a.info.id}:${c.spaceId}`, ...(c.parentId ? { parentId: `${a.info.id}:${c.parentId}` } : {}) };
         this.emit("chats-changed", { accountId: a.info.id, chatId: chat.id }); return chat;
       }
