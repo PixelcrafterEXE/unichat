@@ -55,6 +55,7 @@ export class FakeMM {
   addPost(channel: string, user: string, message: string, extra: Record<string, any> = {}): any {
     const p = { id: "p" + ++this.seq, channel_id: channel, user_id: user, message, create_at: (this.now += 1000), update_at: this.now, edit_at: 0, delete_at: 0, root_id: "", type: "", props: {}, metadata: {}, ...extra };
     (this.posts[channel] ??= []).push(p); this.postById[p.id] = p;
+    if (p.root_id && this.postById[p.root_id]) { const r = this.postById[p.root_id]; r.reply_count = (r.reply_count ?? 0) + 1; r.last_reply_at = p.create_at; } // like the server: the root counts its replies
     this.channels[channel].last_post_at = p.create_at;
     return p;
   }

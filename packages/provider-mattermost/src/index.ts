@@ -404,7 +404,10 @@ class MattermostConnector implements Connector {
         if (p.delete_at) { this.updateAll(p, { deleted: true }); this.cachePost(p); continue; }
         this.cachePost(p); this.setPreview(p);
         if (p.create_at > since && !known) {
-          this.rememberSeen(p.id); const m = mapPost(p, this.msgCtx()); if (m) { this.emit({ type: "message", data: m }); n++; }
+          this.rememberSeen(p.id);
+          if (p.root_id && this.noteThread(p.root_id, p.channel_id)) this.emit({ type: "chats-changed", data: { chatId: threadChatId(p.root_id) } });
+          const m = p.root_id ? undefined : mapPost(p, this.msgCtx()); if (m) this.emit({ type: "message", data: m }); // a reply: only in its thread
+          if (m || p.root_id) n++;
           for (const t of this.threadsOf(p)) { const tm = mapPost(p, { ...this.msgCtx(), inThread: t }); if (tm) this.emit({ type: "message", data: tm }); }
         }
         else this.updateAll(p, { text: p.message, ...(p.edit_at ? { editedAt: iso(p.edit_at) } : {}), reactions: mapReactions(p.metadata?.reactions, this.me!.id) ?? [] });
@@ -443,7 +446,9 @@ class MattermostConnector implements Connector {
         if (p.root_id && !this.posts.has(p.root_id)) { try { this.cachePost(await this.api!.get<MmPost>(`/posts/${p.root_id}`)); } catch { /* preview only */ } }
         this.cachePost(p); this.setPreview(p);
         this.clearTyping(p.channel_id, p.user_id); if (p.root_id) this.clearTyping(threadChatId(p.root_id), p.user_id);
-        const m = mapPost(p, this.msgCtx());
+        // a reply belongs to its thread only (listed under the chat from now on), not to the chat itself
+        if (p.root_id && this.noteThread(p.root_id, p.channel_id)) this.emit({ type: "chats-changed", data: { chatId: threadChatId(p.root_id) } });
+        const m = p.root_id ? undefined : mapPost(p, this.msgCtx());
         if (m) this.emit({ type: "message", data: m });
         for (const t of this.threadsOf(p)) { const tm = mapPost(p, { ...this.msgCtx(), inThread: t }); if (tm) this.emit({ type: "message", data: tm }); }
         if (p.root_id) this.bumpReplies(p.root_id);
@@ -580,7 +585,9 @@ class MattermostConnector implements Connector {
     if (!root) return { channel: chatId };
     return { channel: this.threads.get(root) ?? (await this.rootPost(root)).channel_id, root };
   }
-  /** Thread chats a post also shows in (its own thread, if that is open). */
+  /** A thread of a chat became known (a reply arrived, or its root has replies): true when it is new, so the list should be refreshed. */
+  private noteThread(root: string, cid: string): boolean { if (this.threads.has(root)) return false; this.threads.set(root, cid); return true; }
+  /** Thread chats a post also shows in (its own thread, once known). */
   private threadsOf(p: Pick<MmPost, "id" | "root_id">): string[] {
     const root = p.root_id || p.id;
     return this.threads.has(root) ? [threadChatId(root)] : [];
@@ -613,8 +620,11 @@ class MattermostConnector implements Connector {
     const api = this.ready();
     const root = threadRoot(chatId); if (root) return this.threadHistory(root, q);
     const limit = Math.max(1, Math.min(200, q.limit || 50));
-    const l = await api.get<PostList>(`/channels/${chatId}/posts?per_page=${limit}${q.beforeMessageId ? `&before=${encodeURIComponent(q.beforeMessageId)}` : ""}`);
-    const ps = l.order.map((id) => l.posts[id]).filter((p): p is MmPost => !!p);
+    // collapsed threads: the chat holds the root posts only, a thread's replies are in its own chat (listed under this one)
+    const l = await api.get<PostList>(`/channels/${chatId}/posts?per_page=${limit}&collapsedThreads=true${q.beforeMessageId ? `&before=${encodeURIComponent(q.beforeMessageId)}` : ""}`);
+    const ps = l.order.map((id) => l.posts[id]).filter((p): p is MmPost => !!p && !p.root_id);
+    let found = false; for (const p of ps) if (p.reply_count && !p.delete_at && this.noteThread(p.id, p.channel_id)) found = true;
+    if (found) this.emit({ type: "chats-changed", data: {} });
     await this.ensureUsers(ps.map((p) => p.user_id));
     for (const p of Object.values(l.posts)) this.cachePost(p);
     const missing = [...new Set(ps.map((p) => p.root_id).filter((r): r is string => !!r && !this.posts.has(r)))].slice(0, 10);
@@ -700,12 +710,13 @@ class MattermostConnector implements Connector {
     else if (msg.replyToMessageId) body.root_id = await this.rootOf(msg.replyToMessageId);
     if (infos.length) body.file_ids = infos.map((f) => f.id);
     const p = await api.json<MmPost>("POST", "/posts", body);
+    if (p.root_id && this.noteThread(p.root_id, p.channel_id)) this.emit({ type: "chats-changed", data: { chatId: threadChatId(p.root_id) } }); // a reply from the chat itself starts / joins its thread
     this.rememberSeen(p.id); this.cachePost(p); this.setPreview(p);
     if (c) { c.last_post_at = p.create_at; c.total_msg_count = (c.total_msg_count ?? 0) + (p.root_id ? 0 : 1); const m = this.chanMembers.get(c.id); if (m) m.msg_count = c.total_msg_count; }
     for (const f of infos) this.files.set(f.id, f);
     await this.ensureUsers(p.root_id ? [p.root_id && this.posts.get(p.root_id)?.user_id || ""] : []);
     // the server's echo is skipped (rememberSeen): the other views of this post (channel / open thread) get it from here
-    const copies = [chatId, ...this.threadsOf(p)].filter((v) => v !== asked);
+    const copies = [...(p.root_id ? [] : [chatId]), ...this.threadsOf(p)].filter((v) => v !== asked); // a reply's only view is its thread
     for (const v of copies) { const m = mapPost(p, { ...this.msgCtx(infos), ...(threadRoot(v) ? { inThread: v } : {}) }); if (m) this.emit({ type: "message", data: m }); }
     if (p.root_id) this.bumpReplies(p.root_id);
     return mapPost(p, { ...this.msgCtx(infos), ...(root ? { inThread: asked } : {}) })!;
@@ -713,7 +724,7 @@ class MattermostConnector implements Connector {
 
   /** A change to a post, for the channel and an open thread it shows in. */
   private updateAll(p: MmPost, patch: MessagePatch) {
-    for (const chatId of [p.channel_id, ...this.threadsOf(p)]) this.emit({ type: "message-update", data: { chatId, messageId: p.id, patch } });
+    for (const chatId of [...(p.root_id ? [] : [p.channel_id]), ...this.threadsOf(p)]) this.emit({ type: "message-update", data: { chatId, messageId: p.id, patch } });
   }
   /** A reply arrived: the root's "N replies" link counts it. */
   private bumpReplies(root: string) {

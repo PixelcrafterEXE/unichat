@@ -121,7 +121,7 @@ test("name format 'username' from the user preference overrides server default",
   try { await waitFor(s.connected); assert.equal((await s.conn.chats()).find((c: any) => c.id === "c_dm")!.name, "bob"); } finally { await s.close(); }
 });
 
-test("history: paging backwards, threads flat with replyTo, attachments, reactions, link card, system posts", async () => {
+test("history: paging backwards, replies left to their threads, attachments, reactions, link card, system posts", async () => {
   const s = await setup(factory, { prep: (f) => {
     const root = f.addPost("c_town", "u_bob", "root text");
     f.addPost("c_town", "u_carol", "second", { metadata: { files: [{ id: "f9", name: "doc.pdf", size: 12, mime_type: "application/pdf" }, { id: "f8", name: "p.png", mime_type: "image/png", width: 4, height: 3 }], reactions: [{ user_id: "u_me", post_id: "x", emoji_name: "+1" }, { user_id: "u_bob", post_id: "x", emoji_name: "thumbsup" }, { user_id: "u_bob", post_id: "x", emoji_name: "partyparrot" }] } });
@@ -134,10 +134,8 @@ test("history: paging backwards, threads flat with replyTo, attachments, reactio
     await waitFor(s.connected);
     const page1 = await s.conn.history("c_town", { limit: 3 });
     assert.ok(s.fake.reqs(/channels\/c_town\/posts/).some((l) => l.query.get("per_page") === "3" && !l.query.has("before")));
-    assert.deepEqual(page1.map((m: any) => m.text), ["answer", "see https://x.org"]);
-    const me = page1[1]; assert.equal(me.fromMe, true); assert.equal(me.status, "sent"); assert.equal(me.card.kind, "link"); assert.equal(me.card.title, "X Org"); assert.ok(me.editedAt);
-    assert.deepEqual(page1[0].replyTo, { messageId: page1[0].replyTo.messageId, sender: "Bob Builder", textPreview: "root text" });
-    assert.equal(page1[0].sender, "carol");
+    assert.deepEqual(page1.map((m: any) => m.text), ["see https://x.org"], "a reply is in its thread, not in the chat");
+    const me = page1[0]; assert.equal(me.fromMe, true); assert.equal(me.status, "sent"); assert.equal(me.card.kind, "link"); assert.equal(me.card.title, "X Org"); assert.ok(me.editedAt);
     const oldestId = (await s.conn.history("c_town", { limit: 3 }))[0].id;
     const page2 = await s.conn.history("c_town", { limit: 10, beforeMessageId: oldestId });
     assert.ok(s.fake.reqs(/channels\/c_town\/posts/).pop()!.query.get("before") === oldestId);
@@ -151,17 +149,18 @@ test("history: paging backwards, threads flat with replyTo, attachments, reactio
 });
 
 test("send / reply to a reply uses root / attachment / edit / delete / react; no duplicate echo", async () => {
-  const s = await setup(factory, { prep: (f) => { const r = f.addPost("c_town", "u_bob", "root"); f.addPost("c_town", "u_carol", "reply", { root_id: r.id }); } });
+  let replyId = "", rootId = "";
+  const s = await setup(factory, { prep: (f) => { const r = f.addPost("c_town", "u_bob", "root"); rootId = r.id; replyId = f.addPost("c_town", "u_carol", "reply", { root_id: r.id }).id; } });
   try {
     await waitFor(s.connected);
-    const hist = await s.conn.history("c_town", { limit: 10 });
-    const replyId = hist[1].id, rootId = hist[0].id;
+    await s.conn.history("c_town", { limit: 10 });
     const sent = await s.conn.send("c_town", { text: "**hi** @bob", replyToMessageId: replyId });
     const post = s.fake.reqs(/^POST \/posts$/)[0];
     assert.equal(post.body.message, "**hi** @bob"); assert.equal(post.body.root_id, rootId); assert.equal(sent.replyTo.messageId, rootId);
     assert.equal(sent.fromMe, true); assert.equal(sent.status, "sent"); assert.equal(sent.text, "**hi** @bob");
     await new Promise((r) => setTimeout(r, 200));
-    assert.equal(s.of("message").length, 0, "own echo must not be emitted");
+    // no echo: the only message event is the reply's copy in its thread (a reply's view)
+    assert.deepEqual(s.of("message").map((m: any) => [m.chatId, m.id]), [[`thread~${rootId}`, sent.id]], "own echo must not be emitted");
     // attachment
     const att = await s.conn.send("c_town", { text: "", attachments: [{ kind: "file", mime: "text/plain", name: "n.txt", data: new Uint8Array([65, 66]) }] });
     const up = s.fake.reqs(/^POST \/files/)[0]; assert.equal(up.query.get("channel_id"), "c_town"); assert.match(up.raw, /filename="n.txt"/);
