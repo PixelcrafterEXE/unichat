@@ -322,6 +322,8 @@ export interface Connector {
   refreshChat?(chatId: string): Promise<string>;
   /** Make a thread known as a chat (also an archived one the chat list does not carry) and return it; `threadId` is Message.thread.id. */
   openThread?(threadId: string): Promise<Chat>;
+  /** The thread a message started or announces, when the saved copy lacks its link (fetched before threads could be opened): asks the network, then opens it like openThread. */
+  threadOf?(chatId: string, messageId: string): Promise<Chat>;
   /** Cast (or change) my vote: the full set of option ids I now pick; [] retracts. Emit message-update {poll} afterwards. */
   vote?(chatId: string, messageId: string, optionIds: string[]): Promise<void>;
   /** Leave a community/space (its channels disappear from chats()); emit spaces-changed + chats-changed. */

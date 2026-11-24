@@ -36,3 +36,19 @@ test("openThread: an active thread is the known chat; an archived one is fetched
     await assert.rejects(s.conn.openThread("nope"), /Unknown thread/);
   } finally { await s.close(); }
 });
+
+test("threadOf: a 'started a thread' line saved without its link asks Discord which thread it was, opens it and fixes the saved copy", async () => {
+  let line = "", plain = "";
+  const s = await setup(factory, { prep: (f) => {
+    line = f.say(C.general, ALICE, "side-talk", { type: 18, message_reference: { channel_id: C.thread, guild_id: G1 } as any }).id;
+    plain = f.say(C.general, ALICE, "just text").id;
+  } });
+  try {
+    await s.loaded();
+    const t = await s.conn.threadOf(C.general, line);
+    assert.equal(t.id, C.thread);
+    assert.ok(s.ev.some((e: any) => e.type === "message-update" && e.data.messageId === line && e.data.patch.thread?.id === C.thread), "the saved line gets its link");
+    await assert.rejects(s.conn.threadOf(C.general, plain), /did not start a thread/);
+    await assert.rejects(s.conn.threadOf(C.general, "x"), /Unknown message/);
+  } finally { await s.close(); }
+});

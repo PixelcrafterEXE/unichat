@@ -20,6 +20,8 @@ test("looksLikeNotice: Signal's own notice lines only, never someone's message",
   assert.ok(!looksLikeNotice("signal", msg("x5", "Your safety number with L has changed.", { replyTo: { messageId: "x" } })), "a quote: someone wrote it");
   assert.ok(!looksLikeNotice("signal", msg("x6", "You pinned a message", { attachments: [{ id: "a", kind: "image", mime: "image/png" }] })));
   assert.ok(!looksLikeNotice("whatsapp", msg("x7", "Your safety number with L has changed.")), "other networks: never guessed");
+  assert.ok(looksLikeNotice("discord", msg("1194699613043708056", "Lion started a thread: Kann jemand die Mail bezüglich")));
+  assert.ok(!looksLikeNotice("discord", msg("1194699613043708057", "who started a thread about this?")), "a question is no notice");
   assert.ok(!looksLikeNotice("signal", msg("x8", "Your safety number with L has changed.", { system: { kind: "info" } })), "already marked");
 });
 
@@ -32,7 +34,7 @@ test("the hub marks such lines again once per account, and leaves other messages
   assert.deepEqual(s.getMessage("signal-1:ann", "safety.ann.1")?.system, { kind: "info" });
   assert.deepEqual(s.getMessage("signal-1:ann", "m3")?.system, { kind: "info" });
   assert.equal(s.getMessage("signal-1:ann", "m2")?.system, undefined);
-  assert.equal(s.getSetting("notice-marks-v1:signal-1"), "1", "done once");
+  assert.equal(s.getSetting("notice-marks-v2:signal-1"), "1", "done once");
   s.putMessages([msg("safety.ann.2", "Your safety number with L has changed.")]); // later lines come from the connector, marked
   await h.shutdown?.();
 });

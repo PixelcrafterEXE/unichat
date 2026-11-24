@@ -228,7 +228,7 @@ export class Hub {
     try {
       const scan = this.store.scanMessages?.bind(this.store); if (!scan) return;
       for (const a of this.store.listAccounts()) {
-        const key = `notice-marks-v1:${a.id}`; if (this.store.getSetting(key)) continue;
+        const key = `notice-marks-v2:${a.id}`; if (this.store.getSetting(key)) continue; // v2: Discord's "started a thread" lines too
         let after: { chatId: string; id: string } | undefined, fixed = 0; const chats = new Set<string>();
         for (;;) {
           const page = scan({ ...(after ? { after } : {}), limit: 500, accountId: a.id });
@@ -555,8 +555,10 @@ export class Hub {
       case "pins": return this.nameSenders(await this.pinsOf(p.chatId));
       case "openThread": { // p: { chatId: the thread's global chat id (account id + Message.thread.id) }
         const [a, native] = this.resolve(String(p.chatId)); const conn = this.need(a);
-        if (!conn.openThread) throw new Error(`${a.info.provider} threads cannot be opened here.`);
-        const c = await withTimeout(conn.openThread(native), 30_000, "The messenger");
+        // p.messageId: a message whose saved copy has no thread link; p.chatId is then the message's chat (Connector.threadOf)
+        const c = p.messageId
+          ? await withTimeout((conn.threadOf ?? (() => { throw new Error(`${a.info.provider} cannot look up this thread.`); }))(native, String(p.messageId)), 30_000, "The messenger")
+          : await withTimeout((conn.openThread ?? (() => { throw new Error(`${a.info.provider} threads cannot be opened here.`); }))(native), 30_000, "The messenger");
         const chat = { ...c, id: `${a.info.id}:${c.id}`, accountId: a.info.id, spaceId: c.spaceId && `${a.info.id}:${c.spaceId}` };
         this.emit("chats-changed", { accountId: a.info.id, chatId: chat.id }); return chat;
       }

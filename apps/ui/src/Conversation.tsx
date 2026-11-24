@@ -269,7 +269,10 @@ export default function Conversation(p: Props) {
     discard: (m: Message) => { failedSends.delete(m.id); p.onRemove(m.id); }, image: setLightbox, select: toggleSel,
     handle: async (h: string, own: Chat) => { try { const c = await core.call("startChat", { accountId: own.accountId, handle: h }); p.onOpenChat(c.id); } catch (e) { err(e); } },
     thread: async (m: Message) => {
-      if (!m.thread) return;
+      if (!m.thread) { // a line saved before threads could be opened: the network is asked which thread it was
+        try { const c = await core.call("openThread", { chatId: m.chatId, messageId: m.id }) as Chat; p.onOpenChat(c.id); } catch (e) { err(e); }
+        return;
+      }
       const id = `${m.accountId ?? m.chatId.slice(0, m.chatId.indexOf(":"))}:${m.thread.id}`; // the thread is a chat of the same account
       if (!p.chats.some((c) => c.id === id)) { try { await core.call("openThread", { chatId: id }); } catch (e) { err(e); return; } } // e.g. an archived thread: the network is asked once, then it is listed
       p.onOpenChat(id);
@@ -278,7 +281,7 @@ export default function Conversation(p: Props) {
   const nets = useMemo(() => new Map((members ?? []).map((c) => [c.id, netOf(c, p.providers, p.accounts)])), [members, p.providers, p.accounts]);
   const renderMsg = (m: Message, i: number) => {
           const mkey = merged ? m.chatId + "|" + m.id : m.id; // native ids can repeat across member chats
-          if (m.system) return <div key={mkey} data-k={mkey}><SystemRow m={m} onThread={m.thread ? () => cb.thread(m) : undefined} /></div>;
+          if (m.system) return <div key={mkey} data-k={mkey}><SystemRow m={m} onThread={m.thread || (memberOf(m.chatId).provider === "discord" && / started a thread/.test(m.text)) ? () => cb.thread(m) : undefined} /></div>;
           const prev = shown[i - 1];
           const newDay = !prev || new Date(prev.time).toDateString() !== new Date(m.time).toDateString();
           // in a merged chat the other person has a different sender id on every network: a DM has only "me" and "them", and a switch of network starts a new group
