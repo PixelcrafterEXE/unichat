@@ -283,12 +283,13 @@ export default function Conversation(p: Props) {
           const newDay = !prev || new Date(prev.time).toDateString() !== new Date(m.time).toDateString();
           // in a merged chat the other person has a different sender id on every network: a DM has only "me" and "them", and a switch of network starts a new group
           const sameSender = merged ? prev?.fromMe === m.fromMe && prev?.chatId === m.chatId : prev?.senderId === m.senderId;
-          const grouped = !newDay && !prev.system && sameSender && !m.replyTo && +new Date(m.time) - +new Date(prev.time) < 5 * 60_000;
+          const grouped = !newDay && !prev.system && sameSender && !m.replyTo && +new Date(m.time) - +new Date(prev.time) < NET_GAP;
+          const same = !grouped && !newDay && !!prev && !prev.system && sameSender; // same sender, but a reply or a long pause: a new block, close to the last one
           const own = merged ? memberOf(m.chatId) : chat;
           // the messenger indicator marks the START of a run: after a day divider, a sender or network change, or a pause of 15 minutes or more
           const showNet = !!(merged && (!prev || prev.system || newDay || prev.chatId !== m.chatId || prev.fromMe !== m.fromMe || +new Date(m.time) - +new Date(prev.time) >= NET_GAP));
           return (
-            <div key={mkey} data-k={mkey}>
+            <div key={mkey} data-k={mkey} className={same ? "samesender" : undefined}>
               {newDay && <div className="daysep"><span>{dayLabel(m.time)}</span></div>}
               <MessageRow cb={cb} m={m} grouped={grouped} chat={chat} own={own} net={merged ? nets.get(own.id) : undefined} showNet={showNet} caps={capsOfMsg(m)} settings={settings} selMode={sel.size > 0} selected={sel.has(m.chatId + "|" + m.id)} />
             </div>
