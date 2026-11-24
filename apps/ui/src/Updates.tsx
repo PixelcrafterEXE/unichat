@@ -135,8 +135,10 @@ export function UpdateBanner({ onOpen }: { onOpen: () => void }) {
   return (
     <div id="upd-banner" className="updbanner" role="status">
       <span>Update {v} available{st.state === "downloading" ? " · downloading…" : st.state === "ready" ? " · ready" : ""}{st.latest.asset ? <small> ({fmtBytes(st.latest.asset.size)})</small> : null}</span>
-      <button id="upd-banner-go" onClick={() => { settingsNav.section = "updates"; updatesNav.pending = true; onOpen(); dismiss(); }}>Update</button>
-      <button id="upd-banner-later" className="secondary" onClick={dismiss}>Later</button>
+      {/* the button says what it does now: start, follow the download, or install what is ready */}
+      <button id="upd-banner-go" data-state={st.state} onClick={() => { settingsNav.section = "updates"; updatesNav.pending = true; onOpen(); dismiss(); }}>
+        {st.state === "downloading" ? "Show progress" : st.state === "ready" ? (st.installMode === "manual" ? "How to install" : "Install") : "Update"}</button>
+      <button id="upd-banner-later" className="secondary" onClick={dismiss}>{st.state === "downloading" ? "Hide" : "Later"}</button>
     </div>
   );
 }
