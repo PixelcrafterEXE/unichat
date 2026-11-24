@@ -24,7 +24,7 @@
     "dist:win": "electron-vite build && electron-builder --win",
     "start": "electron-vite preview",
     "typecheck": "tsc -p .",
-    "test": "tsx --test --test-force-exit --test-timeout=30000 --test-reporter=spec --test-concurrency=1 src/autostart.test.ts src/log.test.ts src/dialogs.test.ts src/settings.test.ts src/updater.test.ts"
+    "test": "node --experimental-strip-types --import ./test-loader.mjs --test --test-force-exit --test-timeout=30000 src/autostart.test.ts src/log.test.ts src/dialogs.test.ts src/settings.test.ts src/updater.test.ts"
   },
   "description": "UniChat desktop app (Electron)",
   "author": "UniChat",
